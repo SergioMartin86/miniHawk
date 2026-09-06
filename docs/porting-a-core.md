@@ -232,6 +232,16 @@ cost a red release:
   from whichever clone that path names, not the one being built - and nowhere
   else. Use `${CMAKE_CURRENT_LIST_DIR}` and friends. Grep for your home
   directory before pushing.
+- **Do not guess at `$HOME`.** A build step that falls back to
+  `$HOME/chimera/extern/tools/...` for the guest toolchain works on the machine
+  that wrote the fallback and nowhere else; on a runner `$HOME` is not the
+  checkout. Pass the miniBox path down from `build-package.sh` and stop with a
+  message if the toolchain is not there.
+- **The bundle sends each core's stdout to `/dev/null`.** cmake and autoconf
+  write their errors there, so a build that fails for a stdout reason fails
+  SILENTLY - a step that takes four tenths of a second and prints nothing is
+  this, every time. Reproduce with
+  `env HOME=/tmp/empty ./waterbox/build-package.sh -r <chimera> > /dev/null`.
 - If a dependency takes hours (an LLVM, a Mesa), give it a cache key of its own
   in `.github/workflows/release.yml`. The broad core cache is keyed on every
   core's pin, so bumping any core throws it away.
