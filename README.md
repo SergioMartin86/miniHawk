@@ -54,6 +54,7 @@ The officially maintained cores currently offered for Chimera are:
 | MS-DOS | [DOSBox-X](https://github.com/ToolAssisted-run/chimera-core-dosbox-x) |
 | Windows 3.1 / 95 / 98 | [DOSBox-X](https://github.com/ToolAssisted-run/chimera-core-dosbox-x) |
 | Flash | [Ruffle](https://github.com/ToolAssisted-run/chimera-core-ruffle) |
+| Symbian / Nokia N-Gage | [EKA2L1](https://github.com/ToolAssisted-run/chimera-core-eka2l1) |
 
 ## Getting a build
 
