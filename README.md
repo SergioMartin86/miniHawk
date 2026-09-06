@@ -99,7 +99,7 @@ To run: `build\Chimera.exe` on Windows, `build/ChimeraMono.sh` on Linux, then
 `File > New Project...` and pick a core. To play a rom with no project, pass
 `--core=<package> <rom>` on the command line.
 
-The witness gate runs with `tests/synth/run-witness.sh`. The engineering log (objectives, procedure, and the sharp edges found along the way) is in [docs/design-principles.md](docs/design-principles.md); the engine migration is chronicled in [docs/engine-migration.md](docs/engine-migration.md).
+The witness gate runs with `tests/synth/run-witness.sh`. The engineering log (objectives, procedure, and the sharp edges found along the way) is in [docs/design-principles.md](docs/design-principles.md); the engine migration is chronicled in [docs/engine-migration.md](docs/engine-migration.md). Building a new core, and joining it to this bundle, is [docs/porting-a-core.md](docs/porting-a-core.md).
 
 ## Contributing
 
