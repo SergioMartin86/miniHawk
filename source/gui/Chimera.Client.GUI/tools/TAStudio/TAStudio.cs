@@ -318,6 +318,7 @@ namespace Chimera.Client.GUI
 		{
 			var main = MainWindow;
 			if (main is null) return;
+			if (!MainWindowHasRealPosition(main)) return;
 			var wasDocked = Math.Abs(Left - _lastMainRight) <= UIHelper.ScaleX(12);
 			_lastMainRight = main.Right;
 			if (!wasDocked || !ShouldMovePair(main)) return;
@@ -338,6 +339,11 @@ namespace Chimera.Client.GUI
 		{
 			var main = MainWindow;
 			if (main is null) return;
+			// A minimised main window reports the (-32000,-32000) sentinel (and
+			// per MainForm can read it even while WindowState still says Normal).
+			// Recording that as our reference would make restoring the main
+			// window fling TAStudio ~32000px off-screen - it "never comes back".
+			if (!MainWindowHasRealPosition(main)) return;
 			var delta = new Size(main.Location.X - _lastMain.X, main.Location.Y - _lastMain.Y);
 			_lastMain = main.Location;
 			if (!ShouldMovePair(main)) return;
@@ -352,6 +358,17 @@ namespace Chimera.Client.GUI
 				_movingPair = false;
 			}
 		}
+
+		/// <summary>
+		/// A minimised main window reports the (-32000,-32000) sentinel - and per
+		/// MainForm can read it even while WindowState still says Normal. Its
+		/// position and size mean nothing there, so we neither follow it nor take
+		/// it as our reference point (which is what left TAStudio off-screen after
+		/// the main window was minimised and restored).
+		/// </summary>
+		private static bool MainWindowHasRealPosition(Form main)
+			=> main.WindowState is FormWindowState.Normal
+				&& main.Location is not { X: -32000, Y: -32000 };
 
 		/// <summary>
 		/// The main window's move is followed unless it was one WE made, the user
