@@ -102,3 +102,6 @@
 	path = extern/cores/eka2l1
 	url = https://github.com/ToolAssisted-run/chimera-core-eka2l1.git
 	branch = main
+[submodule "extern/cores/ruffle-src"]
+	path = extern/cores/ruffle-src
+	url = https://github.com/ruffle-rs/ruffle.git
