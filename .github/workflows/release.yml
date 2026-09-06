@@ -134,6 +134,24 @@ jobs:
             extern/cores/*/waterbox/bin
           key: cores-${{ hashFiles('core-pins.txt') }}-${{ runner.os }}
 
+      # The PS3 core's LLVM on its own key. It is hours of build on a runner and
+      # it only changes when that core does, so it must not be thrown away every
+      # time some other core is bumped - which the cache above, keyed on EVERY
+      # pin, would do. Restored after it, so these paths win.
+      - name: What rpcs3 is pinned at
+        id: rpcs3pin
+        if: steps.moved.outputs.skip != 'true'
+        run: git submodule status extern/cores/rpcs3 > rpcs3-pin.txt
+
+      - name: Cache the PS3 core's LLVM
+        if: steps.moved.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            extern/cores/rpcs3/build/llvm-native
+            extern/cores/rpcs3/build/llvm-guest
+          key: rpcs3-llvm-${{ hashFiles('rpcs3-pin.txt') }}-${{ runner.os }}
+
       - name: Build the Linux bundle
         if: steps.moved.outputs.skip != 'true'
         run: ./tools/build-bundle.sh --platform linux --out build/bundle-linux
