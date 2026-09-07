@@ -24,6 +24,10 @@ namespace Chimera.Emulation.Common.Waterbox
 			_packageDir = packageDir;
 			_cfg = WaterboxConfig.FromJson(File.ReadAllText(Path.Combine(packageDir, ConfigFileName)));
 			if (_cfg is null) throw new InvalidOperationException($"{ConfigFileName} is empty or invalid");
+			// before anything else is read out of it: a package from the far side of an
+			// ABI change may declare fields this build has no idea how to interpret, so
+			// the version check cannot come after the interpreting
+			if (GuestAbi.Refuse(_cfg.Abi) is { } refusal) throw new NotSupportedException($"core package \"{_cfg.CoreName}\" is {refusal}");
 			if (_cfg.HasMachines)
 			{
 				// a package of machines must say which setting picks one, and that

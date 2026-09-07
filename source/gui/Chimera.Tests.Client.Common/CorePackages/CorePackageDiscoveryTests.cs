@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Linq;
 
 using Chimera.Client.Common;
+using Chimera.Emulation.Common.Waterbox;
 
 namespace Chimera.Tests.Client.Common.CorePackages
 {
@@ -179,6 +180,52 @@ namespace Chimera.Tests.Client.Common.CorePackages
 			CollectionAssert.AreEqual(
 				new[] { "Alpha", "mike", "Zulu" },
 				CorePackageDiscovery.Scan([ _root ]).Select(static p => p.Name).ToList());
+		}
+
+		[TestMethod]
+		public void APackageThatDeclaresNoAbiIsTheFirstOne()
+		{
+			// every core published before the field existed says nothing, and all of
+			// them are ABI 1 by definition
+			_ = MakeWaterboxZip("old.chimeraCore", "Published Before The Field");
+			var found = CorePackageDiscovery.Scan([ _root ]);
+			Assert.AreEqual(1, found[0].Abi);
+			Assert.IsFalse(found[0].IsAbiIncompatible);
+			Assert.IsNull(found[0].Error);
+		}
+
+		[TestMethod]
+		public void APackageFromANewerAbiIsListedAndRefused()
+		{
+			// the point of listing it: somebody who just downloaded this must be told
+			// which of the two things they are holding is too old, not left looking at
+			// a Cores folder the frontend pretends is empty
+			_ = MakeZip(
+				"future.chimeraCore",
+				("core.wbx", "stub"),
+				("waterbox.config", $@"{{ ""coreName"": ""FromTheFuture"", ""systemId"": ""NES"", ""abi"": {GuestAbi.Current + 1} }}"));
+			var found = CorePackageDiscovery.Scan([ _root ]);
+			Assert.AreEqual(1, found.Count, "it is still listed");
+			Assert.AreEqual("FromTheFuture", found[0].Name);
+			Assert.IsTrue(found[0].IsAbiIncompatible);
+			Assert.IsFalse(found[0].IsLoadable);
+			StringAssert.Contains(found[0].Error, "Update Chimera");
+		}
+
+		[TestMethod]
+		public void ARefusedPackageIsNotConfusedWithABrokenOne()
+		{
+			_ = MakeZip(
+				"future.chimeraCore",
+				("core.wbx", "stub"),
+				("waterbox.config", $@"{{ ""coreName"": ""FromTheFuture"", ""systemId"": ""NES"", ""abi"": {GuestAbi.Current + 1} }}"));
+			_ = MakeZip("broken.chimeraCore", ("core.wbx", "stub"), ("waterbox.config", "{ not json"));
+			var found = CorePackageDiscovery.Scan([ _root ]);
+			Assert.AreEqual(2, found.Count);
+			Assert.IsTrue(found.Single(static p => p.Name is "FromTheFuture").IsAbiIncompatible);
+			var broken = found.Single(static p => p.Name is not "FromTheFuture");
+			Assert.IsNotNull(broken.Error);
+			Assert.IsFalse(broken.IsAbiIncompatible, "a corrupt package is not a package for another Chimera");
 		}
 
 		[TestMethod]

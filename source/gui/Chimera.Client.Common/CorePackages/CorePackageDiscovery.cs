@@ -57,6 +57,22 @@ namespace Chimera.Client.Common
 		public string? Error { get; init; }
 
 		/// <summary>
+		/// The guest ABI the package declares (see <see cref="GuestAbi"/>). Zero for a
+		/// package too broken to read one out of, and for adapter packages, which are
+		/// versioned by their manifest's formatVersion instead.
+		/// </summary>
+		public int Abi { get; init; }
+
+		/// <summary>
+		/// True when the package is intact but this build cannot run it: its guest ABI
+		/// is outside the supported range. Distinguished from an ordinary
+		/// <see cref="Error"/> because the remedy is different - update one side or the
+		/// other, rather than replace a corrupt file - and because the core manager
+		/// greys these out rather than offering them.
+		/// </summary>
+		public bool IsAbiIncompatible { get; init; }
+
+		/// <summary>
 		/// Identity for deduplication: the SHA1 where there is one, so the same
 		/// package reachable under two names or from two search directories is
 		/// listed once; the path for directory-form packages, which have no hash.
@@ -227,6 +243,11 @@ namespace Chimera.Client.Common
 			{
 				throw new InvalidOperationException($"{WaterboxCoreFactory.ConfigFileName} names no machine (systemId, or machines)");
 			}
+			// An ABI this build does not understand is not an error in the package: it
+			// is a perfectly good core for a different Chimera. It is still listed -
+			// silently dropping it would leave someone staring at a Cores folder that
+			// contains the core they just downloaded and a frontend that denies it.
+			var refusal = GuestAbi.Refuse(cfg.Abi);
 			return new DiscoveredCorePackage
 			{
 				Path = path,
@@ -235,6 +256,9 @@ namespace Chimera.Client.Common
 				Version = cfg.Version ?? "",
 				Systems = systems,
 				Extensions = NormaliseExtensions(cfg.AllExtensions),
+				Abi = cfg.Abi,
+				IsAbiIncompatible = refusal is not null,
+				Error = refusal,
 			};
 		}
 

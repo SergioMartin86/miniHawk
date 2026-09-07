@@ -33,6 +33,13 @@ namespace Chimera.Emulation.Common.Waterbox
 		/// <summary>The core's own version string (not the package format's).</summary>
 		public string Version { get; set; }
 
+		/// <summary>
+		/// The guest ABI this package was built against (see <see cref="GuestAbi"/>).
+		/// Absent means <see cref="GuestAbi.Assumed"/>: a package published before the
+		/// field existed, which by definition is the first ABI.
+		/// </summary>
+		public int Abi { get; set; } = GuestAbi.Assumed;
+
 		/// <summary>Where the core lives, for the about box.</summary>
 		public string Url { get; set; }
 
