@@ -163,8 +163,22 @@ namespace Chimera.Tests.Client.GUI
 			form.Show();
 			_ = form.Select("Genesis Plus GX");
 			form.FetchSelectedVersions().GetAwaiter().GetResult();
-			form.SetChecked("Genesis Plus GX", true);
+			form.SetChecked("Genesis Plus GX", true);   // the header counts what is installed
 			Shoot(form, "core-manager");
+		}
+
+		/// <summary>
+		/// What a fresh install meets: no cores, so a sentence and a choice.
+		/// </summary>
+		[TestMethod]
+		public void NoCoresPrompt()
+		{
+			if (ShotDir is null) { Assert.Inconclusive("set CHIMERA_UI_SHOTS to write screenshots"); return; }
+
+			using CoreManagerPrompt form = new();
+			form.StartPosition = FormStartPosition.Manual;
+			form.Location = new Point(0, 0);
+			Shoot(form, "no-cores-prompt");
 		}
 
 		private sealed class CannedFeed : System.Net.Http.HttpMessageHandler

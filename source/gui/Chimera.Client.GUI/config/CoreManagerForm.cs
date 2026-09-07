@@ -115,15 +115,15 @@ namespace Chimera.Client.GUI
 			var margin = UIHelper.ScaleX(8);
 			var sideWidth = UIHelper.ScaleX(320);
 			var footer = UIHelper.ScaleY(76);
-			var listTop = UIHelper.ScaleY(70);
+					var listTop = UIHelper.ScaleY(56);
 
 			_header = new Label
 			{
 				AutoSize = false,
 				Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-				Location = new(margin, UIHelper.ScaleY(8)),
-				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(32)),
-				Text = "Cores are published by their own projects and downloaded from there. Nothing is fetched until you ask. Tick the cores you want to act on; pick a row to choose a particular version of it. Each core carries its own licence, shown once it is installed - some forbid commercial use.",
+				Location = new(margin, UIHelper.ScaleY(9)),
+				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(18)),
+				// filled in by Reload: it counts what is installed
 			};
 
 			// The select-all sits above the list rather than in the header, because a
@@ -133,7 +133,7 @@ namespace Chimera.Client.GUI
 			{
 				Anchor = AnchorStyles.Top | AnchorStyles.Left,
 				AutoSize = true,
-				Location = new(margin + UIHelper.ScaleX(2), UIHelper.ScaleY(48)),
+				Location = new(margin + UIHelper.ScaleX(2), UIHelper.ScaleY(34)),
 				Text = "Select all",
 			};
 			_selectAll.CheckedChanged += (_, _) => SelectAllChanged();
@@ -341,6 +341,9 @@ namespace Chimera.Client.GUI
 			}
 			_cores.EndUpdate();
 			_suppressCheckEvents = false;
+
+			var installed = _rows.Count(static r => r.IsInstalled);
+			_header.Text = $"Download or update emulation cores to use with Chimera. Currently installed cores: {installed}";
 
 			if (wasSelected is not null && ItemFor(wasSelected) is { } keep) keep.Selected = true;
 			else if (_cores.Items.Count > 0 && _cores.Items[0].Tag is not null) _cores.Items[0].Selected = true;

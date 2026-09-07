@@ -93,32 +93,39 @@ namespace Chimera.Client.GUI
 				MainFormContextMenu.Items.Insert(1, new ToolStripSeparatorEx());
 			}
 
-			OpenCoreManagerIfNothingIsInstalled();
+			OfferTheCoreManagerIfNothingIsInstalled();
 		}
 
 		/// <summary>
-		/// A Chimera with no core cannot open anything, and it ships with none. That
-		/// is the one moment worth interrupting somebody for, so the manager opens
-		/// itself - once, only when the scan found nothing at all, and never again
-		/// after the first core exists.
+		/// A Chimera with no core cannot open anything, and it ships with none. So
+		/// it says so once, and offers to do something about it. Not the manager
+		/// itself: opening a window somebody did not ask for, over an application
+		/// they have not seen yet, is a worse greeting than a sentence explaining
+		/// why the menus will not help them.
 		///
-		/// Never when there is nobody to open it for. HEADLESS is the case that
-		/// matters: a witness bootstraps its config by running the frontend with no
-		/// rom, no core and no project, which is precisely the shape this would
-		/// otherwise interrupt - and a modal in a headless run does not get
-		/// dismissed, it gets timed out. (quickernes' gate, first run after this
-		/// window was added: "no meta produced".)
+		/// Never when there is nobody to answer. HEADLESS is the case that matters:
+		/// a witness bootstraps its config by running the frontend with no rom, no
+		/// core and no project, which is precisely the shape this would otherwise
+		/// interrupt - and a modal in a headless run does not get dismissed, it
+		/// gets timed out. (quickernes' gate, first run after this window was
+		/// added: "no meta produced".)
 		///
 		/// Nor when a core package, a rom or a project was named on the command
 		/// line: whoever did that has already said what they want.
 		/// </summary>
-		private void OpenCoreManagerIfNothingIsInstalled()
+		private void OfferTheCoreManagerIfNothingIsInstalled()
 		{
 			if (HeadlessMode.Enabled) return;
 			if (_discoveredCorePackages.Count is not 0) return;
 			if (_argParser.cmdCorePackage is not null || _argParser.cmdRom is not null || _argParser.cmdProject is not null) return;
 			if (CoreRoster.Read().Count is 0) return; // nothing to offer; a window saying so would only be rude
-			ShowCoreManager();
+
+			// after the main window is up, so the dialog has something to sit over
+			BeginInvoke((Action) (() =>
+			{
+				using CoreManagerPrompt prompt = new();
+				if (this.ShowDialogWithTempMute(prompt).IsOk()) ShowCoreManager();
+			}));
 		}
 
 		static MainForm()
