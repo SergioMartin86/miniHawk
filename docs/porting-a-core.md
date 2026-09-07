@@ -132,7 +132,7 @@ say nothing. Compare `rev-parse --show-toplevel` with the path you meant.
    slower than a hardware path, and it is the only way a window-server-style
    renderer works in a sandbox at all. Five small patches to Mesa are needed
    (no thread pointer, one CPU, no x86-64 dispatch stubs); see
-   `extern/cores/eka2l1/waterbox/setup-mesa.sh`, which pins the tarball by
+   the eka2l1 core's `waterbox/setup-mesa.sh`, which pins the tarball by
    SHA256 and carries the patches, for a recipe to copy.
 3. **The GPU bridge** - the guest's GL calls leave the sandbox onto a real
    driver. Fast, and [gpu-bridge.md](gpu-bridge.md) explains it, but note what

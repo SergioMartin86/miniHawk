@@ -56,7 +56,7 @@ mono_crash.*.json
 /roms/
 
 # The cores are separate repositories now (docs/core-manager.md): Chimera ships
-# none, builds none, and downloads them through File > Core Manager. A checkout
-# under extern/cores is a developer's own, for working on a core beside the
-# frontend, and is nobody else's business.
+# none, builds none, and downloads them through File > Core Manager. They live
+# outside this tree - ~/chimera-cores/<name> on the machine this was written on
+# - and this only keeps the old path free for anyone who still clones one here.
 /extern/cores/

@@ -406,9 +406,30 @@ packages (a developer's, a downstream packager's) must still state their terms.
 
 ## What the frontend no longer carries
 
-`extern/cores/*` is gone from the index and from `.gitmodules`, and `.gitignore`
-keeps the path free for a developer's own checkout of a core they are working on
-beside the frontend. With it went:
+`extern/cores/*` is gone: out of the index, out of `.gitmodules`, and off the
+disk. The checkouts were **moved**, not deleted - each became a standalone
+repository under `~/chimera-cores/<name>`, keeping every local commit, which
+mattered because all fifteen were carrying unpushed work at the time.
+
+Moving a submodule checkout out of its superproject is not a `mv`. Its `.git` is
+a FILE pointing into `<super>/.git/modules/`, its config carries a `core.worktree`
+pointing back, and every nested submodule has the same problem one level deeper -
+so `tools/detach-core-checkout.sh` moves the git directory in beside the tree,
+strips `core.worktree` as text (git chdirs to it before it will do anything, so
+it cannot unset the line that is wrong), and repoints the nested `.git` files.
+There were 243 of those across the sixteen; dolphin alone has 38, and they nest
+their `modules/` directories, so a submodule at `a/b` inside one at `a` lives at
+`.git/modules/a/modules/b`. Deriving each new path from the old one is what makes
+that rule the repository's problem rather than the script's.
+
+Chimera's own checkout went from about 26 GB to 4.9 GB. The moved repositories
+still work from where they landed: a core's `build-package.sh` looks for
+`../chimera` and then `$HOME/chimera`, so it still finds the frontend, and
+ruffle's guest still finds the sibling `../ruffle-src` it names in its Cargo
+files, because the whole set moved together. Verified by running dosbox-x's gate
+from its new home.
+
+With `extern/cores` went:
 
 * `build_core` and `--skip-cores` from `tools/build-bundle.sh`, and the core
   hashes from `BUILD.txt`;
