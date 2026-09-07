@@ -32,9 +32,17 @@ core's `chimera.yml` calls it.
 
 ## What Chimera ships
 
-**The roster** - `cores.json`, beside the executable. For each official core:
-its id, display name, the systems it emulates, its `owner/repo`, and the
-version this Chimera release's CI matrix passed against.
+**The roster** - `official-cores.json`, beside the executable, copied into the
+bundle by `tools/build-bundle.sh`. For each official core: its id (which is
+also the base name of its published asset and of the file in the store), its
+display name, the systems it emulates, its `owner/repo`, and the version this
+Chimera release's CI matrix passed against. An empty `tested` means the matrix
+has not run against that core yet, which is where every core starts; the
+manager then offers the newest of the chosen channel.
+
+A missing or malformed roster is an EMPTY roster, never an error: a Chimera
+that lost the file should still run every core already installed and simply
+say it knows of none to fetch.
 
 The roster is what lets the manager show you that a core *exists* before you
 have it, and it is what the first-run offer installs. It is not a catalogue of
@@ -69,22 +77,63 @@ serves anyone who hits the limit for real.
 
 ## Where cores live
 
-    <bundle>/Cores/            shipped and portable; read-only, scanned first
-    <user data>/Cores/         the store the manager owns, one file per version
+    <bundle>/Cores/            scanned first; whatever somebody put there by hand
+    <store>/                   what the manager downloads, one file per version
 
-The per-user store is `%LOCALAPPDATA%/Chimera/Cores` on Windows and
-`~/.local/share/chimera/Cores` on Linux. A bundle in Program Files is not
-writable, and a downloaded core must survive replacing the bundle.
+The store (`CoreStore.Path`) is per-user, not part of the bundle:
 
-Versions sit side by side as flat files, `<coreid>-<version>.chimeraCore`.
-Discovery already lists several packages from one directory, collapses
-duplicates by SHA1, and knows each one's version, so *picking a version* is
-just choosing which of the listed entries to open.
+| | |
+|---|---|
+| `CHIMERA_DATA_HOME` set | `$CHIMERA_DATA_HOME/Cores` |
+| Windows | `%LOCALAPPDATA%\Chimera\Cores` |
+| elsewhere | `$XDG_DATA_HOME/chimera/Cores`, default `~/.local/share/chimera/Cores` |
+
+A Chimera bundle is a zip somebody unpacks, and updating it means unpacking a
+newer one. Cores inside the bundle would have to be downloaded again every time
+the frontend moved, which for a fifteen-core install is unreasonable - so they
+live outside it and outlive any number of Chimeras. `CHIMERA_DATA_HOME` is the
+escape hatch for a genuinely portable install that wants everything under one
+root; Chimera already uses that variable for the rest of its user data.
+
+The bundle's own `Cores/` is scanned **first**, so a portable install that
+carries its own cores wins over whatever else the machine has lying around. The
+two collapse into one entry when `CHIMERA_DATA_HOME` points the store back at
+the bundle.
+
+### One file per version, and no version is ever replaced
+
+A package in the store is named `<coreid>-<version>.chimeraCore`. Two versions
+of one core are two files sitting side by side, and **installing a new version
+never removes an older one**: an old build is the only way to replay a movie
+recorded on it, so throwing it away to save a few megabytes would be throwing
+away the run. Versions go only when the user removes them, one at a time, and
+the manager says which movies in the recent list would lose their core.
+
+The version string comes from a git tag, so it is sanitised down to name-safe
+characters before it becomes a file name. That is only a NAME - the package's
+identity is still the SHA1 of its bytes, which is what discovery, the extract
+cache and the movie header all use.
+
+Writing into the store replaces a file only when the name matches exactly, i.e.
+the same core at the same version. That is idempotent rather than destructive,
+and it is how a truncated file from an interrupted download gets fixed.
+
+### Picking a version
+
+The manager shows one row per core, **newest version first**, with the
+installed ones marked. The selector is per core: the roster's tested build, the
+newest of the chosen channel, and every nightly still published, in date order,
+so choosing an older one is always one click and never requires knowing a tag.
+
+Discovery already lists every package in a directory separately, collapses
+duplicates by SHA1, and reads each one's version out of its config, so *picking
+a version* is nothing more than choosing which of the listed entries to open.
 
 **One version of a core per session.** `CoreRegistry.Register` keys on the core
 name and has no unregister, so installing a new core mid-session works (that is
 the point of discovery being separate from loading), but switching to a
-different build of a core already loaded takes a restart.
+different build of a core already loaded takes a restart. The manager says so
+rather than appearing to do nothing.
 
 ## Verifying a download
 

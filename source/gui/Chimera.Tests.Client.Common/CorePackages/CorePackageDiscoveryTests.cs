@@ -234,8 +234,9 @@ namespace Chimera.Tests.Client.Common.CorePackages
 			Config config = new();
 			config.CorePackagePaths.Add("/somewhere/else");
 			var paths = CorePackageDiscovery.SearchPaths(config);
-			Assert.AreEqual(CorePackageDiscovery.DefaultSearchPath, paths[0]);
-			Assert.AreEqual("/somewhere/else", paths[1]);
+			Assert.AreEqual(CorePackageDiscovery.DefaultSearchPath, paths[0], "the bundle's own folder wins: a portable install carries its cores with it");
+			Assert.AreEqual(CoreStore.Path, paths[1], "a core the manager just downloaded has to be found without being added by hand");
+			Assert.AreEqual("/somewhere/else", paths[2]);
 		}
 	}
 }

@@ -184,12 +184,17 @@ namespace Chimera.Client.Common
 
 		/// <summary>
 		/// The directories to scan, in order: the default <c>Cores/</c> beside the
-		/// executable, then any the user added. The default is not removable: a
-		/// package dropped into Cores/ must always be found, that being the whole
-		/// point of the directory.
+		/// executable, then the core manager's store, then any the user added. Neither
+		/// of the first two is removable: a package dropped into Cores/ must always be
+		/// found, that being the whole point of the directory, and a core that was
+		/// downloaded must be there the moment it lands.
+		///
+		/// The bundle's own folder comes first so a portable install carrying its own
+		/// cores wins over whatever else the machine has. The two collapse into one
+		/// entry when CHIMERA_DATA_HOME points the store back at the bundle.
 		/// </summary>
 		public static IReadOnlyList<string> SearchPaths(Config config)
-			=> new[] { DefaultSearchPath }.Concat(config.CorePackagePaths).ToList();
+			=> new[] { DefaultSearchPath, CoreStore.Path }.Concat(config.CorePackagePaths).ToList();
 
 		/// <summary>Scans the directories <paramref name="config"/> designates.</summary>
 		public static IReadOnlyList<DiscoveredCorePackage> ScanFor(Config config)

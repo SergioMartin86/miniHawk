@@ -1,0 +1,111 @@
+{
+  "_comment": "The official cores: which repository publishes each one, and the build this Chimera was tested against. Chimera ships no cores (see docs/core-manager.md); this roster is how File > Core Manager knows what EXISTS before anything is installed. Versions are not listed here - they come from the core's own GitHub releases, on demand.",
+  "formatVersion": 1,
+  "cores": [
+    {
+      "id": "quickernes",
+      "name": "quickerNES",
+      "systems": [ "NES" ],
+      "repo": "ToolAssisted-run/chimera-core-quickernes",
+      "tested": ""
+    },
+    {
+      "id": "quickerneshawk",
+      "name": "QuickerNesHawk",
+      "systems": [ "NES" ],
+      "repo": "ToolAssisted-run/chimera-core-neshawk",
+      "tested": ""
+    },
+    {
+      "id": "gpgx",
+      "name": "Genesis Plus GX",
+      "systems": [ "GEN", "SMS", "GG", "SG" ],
+      "repo": "ToolAssisted-run/chimera-core-gpgx",
+      "tested": ""
+    },
+    {
+      "id": "snes9x",
+      "name": "Snes9x",
+      "systems": [ "SNES" ],
+      "repo": "ToolAssisted-run/chimera-core-snes9x",
+      "tested": ""
+    },
+    {
+      "id": "stella",
+      "name": "Stella",
+      "systems": [ "A26" ],
+      "repo": "ToolAssisted-run/chimera-core-stella",
+      "tested": ""
+    },
+    {
+      "id": "opera",
+      "name": "Opera",
+      "systems": [ "3DO" ],
+      "repo": "ToolAssisted-run/chimera-core-opera",
+      "tested": ""
+    },
+    {
+      "id": "dosbox-x",
+      "name": "DOSBox-X",
+      "systems": [ "DOS" ],
+      "repo": "ToolAssisted-run/chimera-core-dosbox-x",
+      "tested": ""
+    },
+    {
+      "id": "flycast",
+      "name": "Flycast",
+      "systems": [ "DC" ],
+      "repo": "ToolAssisted-run/chimera-core-flycast",
+      "tested": ""
+    },
+    {
+      "id": "dolphin",
+      "name": "Dolphin",
+      "systems": [ "GC", "Wii" ],
+      "repo": "ToolAssisted-run/chimera-core-dolphin",
+      "tested": ""
+    },
+    {
+      "id": "ppsspp",
+      "name": "PPSSPP",
+      "systems": [ "PSP" ],
+      "repo": "ToolAssisted-run/chimera-core-ppsspp",
+      "tested": ""
+    },
+    {
+      "id": "pcsx2",
+      "name": "PCSX2",
+      "systems": [ "PS2" ],
+      "repo": "ToolAssisted-run/chimera-core-pcsx2",
+      "tested": ""
+    },
+    {
+      "id": "rpcs3",
+      "name": "RPCS3",
+      "systems": [ "PS3" ],
+      "repo": "ToolAssisted-run/chimera-core-rpcs3",
+      "tested": ""
+    },
+    {
+      "id": "xemu",
+      "name": "xemu",
+      "systems": [ "XBOX" ],
+      "repo": "ToolAssisted-run/chimera-core-xemu",
+      "tested": ""
+    },
+    {
+      "id": "eka2l1",
+      "name": "EKA2L1",
+      "systems": [ "SYMBIAN" ],
+      "repo": "ToolAssisted-run/chimera-core-eka2l1",
+      "tested": ""
+    },
+    {
+      "id": "ruffle",
+      "name": "Ruffle",
+      "systems": [ "Flash" ],
+      "repo": "ToolAssisted-run/chimera-core-ruffle",
+      "tested": ""
+    }
+  ]
+}

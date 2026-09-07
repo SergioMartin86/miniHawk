@@ -85,6 +85,12 @@ else
 	cp "$root/build/ChimeraMono.sh" "$out/" 2>/dev/null || true
 fi
 
+# The roster of official cores: what File > Core Manager can offer to fetch
+# before any of them is installed. It carries no versions - those come from each
+# core's own GitHub releases when the user asks - so it changes only when a core
+# is added, renamed, or moved.
+cp "$root/official-cores.json" "$out/"
+
 # ffmpeg is part of the bundle, not something the frontend asks a person to go
 # and find the first time they encode a video.
 say "ffmpeg"
