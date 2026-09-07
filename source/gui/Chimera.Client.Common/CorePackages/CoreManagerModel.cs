@@ -36,8 +36,29 @@ namespace Chimera.Client.Common
 
 		public bool IsInstalled => Installed.Count is not 0;
 
-		/// <summary>True for something installed that no roster entry claims: unfetchable, unupdatable.</summary>
-		public bool IsUnofficial => Core is null;
+		/// <summary>
+		/// True for something installed that no entry claims at all: a package
+		/// somebody dropped in by hand. There is nowhere to check it for updates.
+		/// </summary>
+		public bool IsUnclaimed => Core is null;
+
+		/// <summary>
+		/// Which half of the list this belongs in. Official cores are the ones this
+		/// build ships a roster entry for; everything else - cores added by hand, and
+		/// packages nothing claims - is external, and sits below them.
+		/// </summary>
+		public bool IsOfficial => Core is { IsExternal: false };
+
+		/// <summary>
+		/// Whether removing this core should take its row away with it. An official
+		/// core always has a row - it can be installed again from the roster - but an
+		/// external one exists only because somebody added it or its package is here,
+		/// so with the package gone there is nothing left to list.
+		/// </summary>
+		public bool RowGoesWhenRemoved => !IsOfficial;
+
+		/// <summary>Every installed version's file, for removing the core entire.</summary>
+		public IReadOnlyList<string> InstalledPaths => Installed.Select(static p => p.Path).ToList();
 
 		/// <summary>
 		/// The newest published version that is not installed, or null. Nothing is
@@ -110,8 +131,10 @@ namespace Chimera.Client.Common
 				rows.Add(new CoreManagerRow { Installed = Newest(group.ToList()) });
 			}
 
+			// official first, then everything else: the window draws a separator
+			// between the two halves and this is what decides which side a row is on
 			return rows
-				.OrderBy(static r => r.IsUnofficial)
+				.OrderBy(static r => r.IsOfficial ? 0 : 1)
 				.ThenBy(static r => r.Name, StringComparer.OrdinalIgnoreCase)
 				.ToList();
 		}

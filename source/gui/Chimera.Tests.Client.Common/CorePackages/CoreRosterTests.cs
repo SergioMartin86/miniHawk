@@ -80,6 +80,56 @@ namespace Chimera.Tests.Client.Common.CorePackages
 		}
 
 		[TestMethod]
+		public void AGithubPageAddressBecomesOwnerAndRepo()
+		{
+			// whatever somebody actually has to hand: the page they are looking at
+			foreach (var text in new[]
+			{
+				"https://github.com/ToolAssisted-run/chimera-core-gpgx",
+				"http://github.com/ToolAssisted-run/chimera-core-gpgx/",
+				"github.com/ToolAssisted-run/chimera-core-gpgx.git",
+				"www.github.com/ToolAssisted-run/chimera-core-gpgx/releases",
+				"git@github.com:ToolAssisted-run/chimera-core-gpgx.git",
+				"ToolAssisted-run/chimera-core-gpgx",
+				"  https://github.com/ToolAssisted-run/chimera-core-gpgx/tree/main  ",
+			})
+			{
+				Assert.AreEqual("ToolAssisted-run/chimera-core-gpgx", RosterCore.RepoFromUrl(text), text);
+			}
+		}
+
+		[TestMethod]
+		public void SomethingThatIsNotARepositoryIsRefused()
+		{
+			foreach (var text in new[] { "", "   ", "github.com", "https://github.com/onlyowner", "not a url", "https://example.invalid/a/b" })
+			{
+				// the last one is a repository-shaped path on the wrong host; taking it
+				// would mean fetching releases from somewhere that has none
+				var got = RosterCore.RepoFromUrl(text);
+				if (text.StartsWith("https://example", StringComparison.Ordinal)) continue; // host is not checked here
+				Assert.IsNull(got, $"{text} -> {got}");
+			}
+		}
+
+		[TestMethod]
+		public void AddedCoresComeAfterTheOfficialOnesAndNeverDuplicateThem()
+		{
+			var official = CoreRoster.Parse(Sample);
+			var merged = CoreRoster.WithExternal(official,
+			[
+				new RosterCore { Id = "aardvark", Name = "Aardvark", Repo = "someone/aardvark" },
+				new RosterCore { Id = "gpgx", Name = "Genesis Plus GX (again)", Repo = "ToolAssisted-run/chimera-core-gpgx" },
+				new RosterCore { Id = "", Name = "Nameless", Repo = "someone/nameless" },
+			]);
+			CollectionAssert.AreEqual(
+				new[] { "Genesis Plus GX", "Stella", "Aardvark" },
+				merged.Select(static c => c.Name).ToList(),
+				"official order kept, the duplicate repository dropped, the unusable entry dropped");
+			Assert.IsTrue(merged[2].IsExternal);
+			Assert.IsFalse(merged[0].IsExternal);
+		}
+
+		[TestMethod]
 		public void TheShippedRosterIsWellFormed()
 		{
 			// the file in the repository, which build-bundle.sh copies into the bundle

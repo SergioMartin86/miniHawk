@@ -40,7 +40,46 @@ namespace Chimera.Client.Common
 		[JsonProperty("tested")]
 		public string Tested { get; set; } = "";
 
+		/// <summary>
+		/// True for a core somebody added by hand (File &gt; Core Manager &gt; Add
+		/// external core) rather than one this build ships a roster entry for. Not
+		/// serialised into the shipped roster - every entry there is official by
+		/// definition; it is set when the config's added cores are merged in.
+		/// </summary>
+		[JsonIgnore]
+		public bool IsExternal { get; set; }
+
+		[JsonIgnore]
 		public bool IsUsable => Id.Length is not 0 && Repo.Contains('/');
+
+		/// <summary>
+		/// The <c>owner/repo</c> in a GitHub page address, or null if there is not
+		/// one. Accepts what somebody actually has to hand - the page they are
+		/// looking at, with or without scheme, trailing slash, .git suffix or a
+		/// deeper path - and the bare <c>owner/repo</c> they might type instead.
+		/// </summary>
+		public static string? RepoFromUrl(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text)) return null;
+			var s = text.Trim();
+			foreach (var prefix in new[] { "https://", "http://", "git@github.com:", "github.com/", "www.github.com/" })
+			{
+				if (s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) s = s.Substring(prefix.Length);
+			}
+			if (s.StartsWith("github.com/", StringComparison.OrdinalIgnoreCase)) s = s.Substring("github.com/".Length);
+			if (s.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) s = s.Substring(0, s.Length - 4);
+			var parts = s.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length < 2) return null;
+			// a deeper page - /releases, /tree/main - still names the repository
+			var owner = parts[0];
+			var repo = parts[1];
+			if (owner.Length is 0 || repo.Length is 0) return null;
+			foreach (var c in owner + repo)
+			{
+				if (!(char.IsLetterOrDigit(c) || c is '-' or '_' or '.')) return null;
+			}
+			return $"{owner}/{repo}";
+		}
 	}
 
 	/// <summary>
@@ -78,6 +117,25 @@ namespace Chimera.Client.Common
 			{
 				return [ ];
 			}
+		}
+
+		/// <summary>
+		/// The shipped roster plus whatever cores somebody added by hand, official
+		/// first. A hand-added core whose repository is already in the roster is
+		/// dropped rather than listed twice - adding gpgx by URL should not produce a
+		/// second gpgx.
+		/// </summary>
+		public static IReadOnlyList<RosterCore> WithExternal(IReadOnlyList<RosterCore> official, IEnumerable<RosterCore> external)
+		{
+			HashSet<string> known = new(official.Select(static c => c.Repo), StringComparer.OrdinalIgnoreCase);
+			List<RosterCore> result = new(official);
+			foreach (var core in external)
+			{
+				if (!core.IsUsable || !known.Add(core.Repo)) continue;
+				core.IsExternal = true;
+				result.Add(core);
+			}
+			return result;
 		}
 
 		/// <summary>Parses roster JSON. Throws on anything it cannot make sense of.</summary>

@@ -52,6 +52,9 @@ namespace Chimera.Tests.Client.Common.config
 			[typeof(PathEntry)] = PATHENTRY_SER,
 			[typeof(PathEntryCollection)] = $@"{{""Paths"":[{PATHENTRY_SER}],""UseRecentForRoms"":false,""LastRomPath"":"".""}}",
 			[typeof(RecentFiles)] = RECENT_SER,
+			// a core added by hand in File > Core Manager; IsExternal is [JsonIgnore]
+			// (every entry in the config IS external) so it is not in the round trip
+			[typeof(RosterCore)] = @"{""id"":""aardvark"",""name"":""Aardvark"",""systems"":[""ARC""],""repo"":""someone/chimera-core-aardvark"",""tested"":""""}",
 			[typeof(RewindConfig)] = @"{""UseCompression"":false,""UseDelta"":false,""Enabled"":true,""AllowSlowStates"":false,""BufferSize"":512,""UseFixedRewindInterval"":false,""TargetFrameLength"":600,""TargetRewindInterval"":5,""AllowOutOfOrderStates"":true,""BackingStore"":0}",
 			[typeof(ToolDialogSettings)] = @"{""_wndx"":52,""_wndy"":44,""Width"":796,""Height"":455,""SaveWindowPosition"":true,""TopMost"":false,""FloatingWindow"":false}",
 			[typeof(ZwinderStateManagerSettings)] = ZWINDER_SER,

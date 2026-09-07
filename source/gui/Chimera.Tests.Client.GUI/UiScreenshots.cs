@@ -136,10 +136,12 @@ namespace Chimera.Tests.Client.GUI
 				new() { Id = "pcsx2", Name = "PCSX2", Repo = "ToolAssisted-run/chimera-core-pcsx2", Systems = [ "PS2" ] },
 				new() { Id = "eka2l1", Name = "EKA2L1", Repo = "ToolAssisted-run/chimera-core-eka2l1", Systems = [ "SYMBIAN" ] },
 			];
+			roster.Add(new() { Id = "aardvark", Name = "Aardvark", Repo = "someone/chimera-core-aardvark", Systems = [ "ARC" ], IsExternal = true });
 			List<DiscoveredCorePackage> installed =
 			[
 				new() { Name = "Genesis Plus GX", Version = "4ed3532117ad", Path = "/store/gpgx-4ed3532117ad.chimeraCore", Sha1 = new string('a', 40), Systems = [ "GEN" ] },
 				new() { Name = "quickerNES", Version = "12d65377b7d3-dirty+local", Path = "/store/quickernes-12d65377b7d3.chimeraCore", Sha1 = new string('b', 40), Systems = [ "NES" ] },
+				new() { Name = "Aardvark", Version = "aa11bb22cc33", Path = "/store/aardvark-aa11bb22cc33.chimeraCore", Sha1 = new string('c', 40), Systems = [ "ARC" ] },
 			];
 
 			// a canned feed, so the picture shows the window with versions in it
@@ -161,6 +163,7 @@ namespace Chimera.Tests.Client.GUI
 			form.Show();
 			_ = form.Select("Genesis Plus GX");
 			form.FetchSelectedVersions().GetAwaiter().GetResult();
+			form.SetChecked("Genesis Plus GX", true);
 			Shoot(form, "core-manager");
 		}
 

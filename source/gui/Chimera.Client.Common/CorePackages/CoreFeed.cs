@@ -124,6 +124,27 @@ namespace Chimera.Client.Common
 			}
 		}
 
+		/// <summary>
+		/// Asks a repository what core it publishes, for one somebody has just named
+		/// by its GitHub page. Returns an entry ready to be listed, or the reason it
+		/// cannot be: the id and the name come from the newest published ASSET, since
+		/// nothing else about an external core is known here.
+		/// </summary>
+		public async Task<(RosterCore? Core, string? Error)> ProbeAsync(string repo, CancellationToken cancel = default)
+		{
+			// Id empty: the feed then takes the one package asset a release carries,
+			// which is what tells us what this core is called.
+			var result = await FetchAsync(new RosterCore { Id = "", Repo = repo }, cancel).ConfigureAwait(false);
+			if (result.Error is not null) return (null, result.Error);
+			if (result.Releases.Count is 0)
+			{
+				return (null, $"{repo} publishes no Chimera core package. Check it is the right repository.");
+			}
+			var id = CoreReleases.IdFromAssetName(result.Releases[0].AssetName);
+			if (id.Length is 0) return (null, $"{repo} publishes an asset this cannot make sense of ({result.Releases[0].AssetName}).");
+			return (new RosterCore { Id = id, Name = id, Repo = repo, IsExternal = true }, null);
+		}
+
 		private static IReadOnlyList<CoreRelease> CachedReleases(CachedFeed? cached, string coreId)
 		{
 			if (cached is null) return [ ];

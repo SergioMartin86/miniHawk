@@ -267,17 +267,45 @@ Those are shown, greyed as unofficial, rather than hidden: a window that listed
 only what it could fetch would leave somebody unable to see the core they are
 actually running.
 
-Three buttons, and they do three different things:
+Every row has a **tick box**, and a **Select all** above the list that says how
+many are ticked. Three buttons act on what is ticked, and stay unavailable until
+something is:
 
-* **Fetch versions / Install** - the same button, because until versions have
-  been fetched there is nothing to install. One request, for the selected core.
-* **Check for updates** - asks every INSTALLED core's repository and
-  **downloads nothing**. It marks the rows that have something newer and names
-  them in the status line. Deciding to take an update is a separate act.
-* **Download missing cores** - installs the newest published build of every
-  roster core that has none. Deliberately not "every core to its newest":
-  replacing what somebody is already using, in bulk, is not what that button
-  should do.
+* **Check for updates** - asks each ticked core's repository and **downloads
+  nothing**. It marks the rows that have something newer and names them.
+  Deciding to take an update is a separate act.
+* **Download latest** - installs the newest published build of each ticked core
+  that has not got it. One already holding the newest is left alone rather than
+  downloaded again.
+* **Remove** - deletes **every installed version** of each ticked core, behind a
+  confirmation that says what it costs. An official core keeps its row and goes
+  back to reading "not installed"; it can always be fetched again. An external
+  one is forgotten entirely.
+
+The right-hand panel still acts on the row you have *selected* rather than
+ticked: pick a particular version, **Install** it, or **Remove version** to
+delete just that one. Ticking is for doing the same thing to several cores;
+selecting is for looking closely at one.
+
+### External cores
+
+**Add external core...** takes the address of a GitHub page - the one you are
+looking at, with or without scheme, trailing slash, `.git`, or a deeper path
+like `/releases`; a bare `owner/repo` works too. The repository is asked what it
+publishes *before* it is remembered, so a wrong address fails there rather than
+becoming a row that can never do anything. The core's id and name come from the
+newest published asset, since nothing else about it is known here.
+
+Added cores live in the config (`ExternalCores`) and are listed **below the
+official ones, under a separator**. Removing one takes it out of the list
+entirely, because nothing else was keeping it there. Adding a repository the
+roster already carries is dropped rather than listed twice.
+
+The separator is a row rather than a `ListViewGroup`: Mono's ListView ignores
+groups in Details view. It carries a tick box it will not let you tick - a row
+in a checkbox list has one whether it wants it or not - and it is told apart
+from a real row by having no `Tag`, which is also how the list maps rows to
+cores now that the indices no longer line up.
 
 An **update** is the newest published version, and only when it is missing.
 Any older version that happens not to be installed is not an update - somebody

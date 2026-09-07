@@ -91,6 +91,14 @@ namespace Chimera.Client.Common
 		public List<string> CorePackagePaths { get; set; } = new();
 
 		/// <summary>
+		/// Cores added by hand in File &gt; Core Manager, by the address of the GitHub
+		/// page that publishes them. They are listed below the official ones and
+		/// fetched the same way; removing one takes it out of here, and so out of the
+		/// list, because nothing else remembers it.
+		/// </summary>
+		public List<RosterCore> ExternalCores { get; set; } = new();
+
+		/// <summary>
 		/// A GitHub token for the core manager, or empty. Unauthenticated GitHub
 		/// answers 60 requests an hour per address, which is far more than pressing
 		/// Check for updates costs; this is for somebody who shares an address with

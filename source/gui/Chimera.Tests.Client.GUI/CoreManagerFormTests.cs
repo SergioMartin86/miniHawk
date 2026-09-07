@@ -53,13 +53,35 @@ namespace Chimera.Tests.Client.GUI
 				=> Task.FromResult(new HttpResponseMessage(_status) { Content = new StringContent(_body) });
 		}
 
-		private static CoreManagerForm Open(string body, IReadOnlyList<DiscoveredCorePackage> installed, HttpStatusCode status = HttpStatusCode.OK)
+		private static ListView ListOf(Form form)
+		{
+			foreach (Control c in form.Controls)
+			{
+				if (c is ListView list) return list;
+			}
+			throw new InvalidOperationException("no core list on the form");
+		}
+
+		private static CheckBox SelectAllOf(Form form)
+		{
+			foreach (Control c in form.Controls)
+			{
+				if (c is CheckBox box && box.Text.StartsWith("Select all", StringComparison.Ordinal)) return box;
+			}
+			throw new InvalidOperationException("no select-all on the form");
+		}
+
+		private static CoreManagerForm Open(
+			string body,
+			IReadOnlyList<DiscoveredCorePackage> installed,
+			HttpStatusCode status = HttpStatusCode.OK,
+			IReadOnlyList<RosterCore>? roster = null)
 		{
 			// a cache directory of its own, so the test never reads or writes the
 			// store this machine actually uses
 			var cache = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"chimera-feed-{Guid.NewGuid():N}");
 			return new CoreManagerForm(
-				() => Roster,
+				() => roster ?? Roster,
 				() => installed,
 				new CoreFeed(new HttpClient(new Canned(body, status)), cache),
 				new CoreInstaller());
@@ -126,6 +148,62 @@ namespace Chimera.Tests.Client.GUI
 			Assert.AreEqual(2, texts.Count, "the installed version is the published one, not a second line");
 			StringAssert.Contains(texts[0], "installed");
 			Assert.IsFalse(texts[1].Contains("installed"));
+		}
+
+		[TestMethod]
+		public void TheBulkButtonsWaitUntilSomethingIsTicked()
+		{
+			using var form = Open(Feed, [ ]);
+			form.Show();
+			Assert.IsFalse(form.BulkActionsEnabled, "nothing ticked, so there is nothing for them to do");
+			Assert.IsTrue(form.SetChecked("Genesis Plus GX", true));
+			Assert.IsTrue(form.BulkActionsEnabled);
+			Assert.IsTrue(form.SetChecked("Genesis Plus GX", false));
+			Assert.IsFalse(form.BulkActionsEnabled);
+		}
+
+		[TestMethod]
+		public void SelectAllTicksEveryCoreAndNotTheSeparator()
+		{
+			List<RosterCore> roster =
+			[
+				Roster[0],
+				new() { Id = "aardvark", Name = "Aardvark", Repo = "someone/aardvark", Systems = [ "ARC" ], IsExternal = true },
+			];
+			using var form = Open(Feed, [ ], roster: roster);
+			form.Show();
+			var list = ListOf(form);
+			Assert.AreEqual(3, list.Items.Count, "two cores and the separator between them");
+
+			SelectAllOf(form).Checked = true;
+			var ticked = list.Items.Cast<ListViewItem>().Where(static i => i.Checked).ToList();
+			Assert.AreEqual(2, ticked.Count, "the separator is not a core and never ticks");
+			Assert.IsTrue(ticked.TrueForAll(static i => i.Tag is not null));
+		}
+
+		[TestMethod]
+		public void ExternalCoresComeAfterASeparator()
+		{
+			List<RosterCore> roster =
+			[
+				Roster[0],
+				new() { Id = "aardvark", Name = "Aardvark", Repo = "someone/aardvark", Systems = [ "ARC" ], IsExternal = true },
+			];
+			using var form = Open(Feed, [ ], roster: roster);
+			form.Show();
+			var list = ListOf(form);
+			CollectionAssert.AreEqual(
+				new[] { "Genesis Plus GX", "External cores", "Aardvark" },
+				list.Items.Cast<ListViewItem>().Select(static i => i.Text).ToList());
+			Assert.IsNull(list.Items[1].Tag, "the separator is not a row");
+		}
+
+		[TestMethod]
+		public void WithNoExternalCoresThereIsNoSeparator()
+		{
+			using var form = Open(Feed, [ ]);
+			form.Show();
+			Assert.AreEqual(1, ListOf(form).Items.Count);
 		}
 
 		[TestMethod]

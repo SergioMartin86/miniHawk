@@ -188,6 +188,22 @@ namespace Chimera.Client.Common
 		}
 
 		/// <summary>
+		/// The core id in a published asset name: everything before the version.
+		/// <c>gpgx-4ed3532117ad.chimeraCore</c> -&gt; <c>gpgx</c>, and
+		/// <c>dosbox-x-4ed3532117ad.chimeraCore</c> -&gt; <c>dosbox-x</c>, which is why
+		/// it is the LAST hyphen that separates them - an id may contain one, and a
+		/// published version may not (a version carrying "-dirty" is refused at
+		/// publish time).
+		/// </summary>
+		public static string IdFromAssetName(string assetName)
+		{
+			if (!assetName.EndsWith(CorePackageDiscovery.Extension, StringComparison.OrdinalIgnoreCase)) return "";
+			var stem = assetName.Substring(0, assetName.Length - CorePackageDiscovery.Extension.Length);
+			var dash = stem.LastIndexOf('-');
+			return dash <= 0 ? stem : stem.Substring(0, dash);
+		}
+
+		/// <summary>
 		/// Which channel a tag names. Anything that is not the rolling <c>dev</c> or a
 		/// dated <c>nightly-</c> is taken to be a permanent release, because the
 		/// dangerous mistake is the other way round: treating something permanent as

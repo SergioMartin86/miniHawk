@@ -30,7 +30,7 @@ namespace Chimera.Tests.Client.Common.CorePackages
 			var rows = CoreManagerModel.Build([ Roster("gpgx", "Genesis Plus GX", "GEN") ], [ ]);
 			Assert.AreEqual(1, rows.Count);
 			Assert.IsFalse(rows[0].IsInstalled);
-			Assert.IsFalse(rows[0].IsUnofficial);
+			Assert.IsFalse(rows[0].IsUnclaimed);
 			CollectionAssert.AreEqual(new[] { "GEN" }, rows[0].Systems.ToList());
 		}
 
@@ -51,7 +51,7 @@ namespace Chimera.Tests.Client.Common.CorePackages
 				[ Roster("gpgx", "Genesis Plus GX", "GEN") ],
 				[ Package("Genplus", "aaaaaaaa", "/store/gpgx-aaaaaaaa.chimeraCore") ]);
 			Assert.IsTrue(rows[0].IsInstalled);
-			Assert.IsFalse(rows[0].IsUnofficial);
+			Assert.IsFalse(rows[0].IsUnclaimed);
 		}
 
 		[TestMethod]
@@ -62,8 +62,31 @@ namespace Chimera.Tests.Client.Common.CorePackages
 				[ Package("Aardvark", "aaaaaaaa", "/store/aardvark-aaaaaaaa.chimeraCore") ]);
 			Assert.AreEqual(2, rows.Count);
 			Assert.AreEqual("Genesis Plus GX", rows[0].Name, "official cores come first however they sort by name");
-			Assert.IsTrue(rows[1].IsUnofficial, "a core from elsewhere is shown, and cannot be fetched or updated");
+			Assert.IsTrue(rows[0].IsOfficial);
+			Assert.IsTrue(rows[1].IsUnclaimed, "a core from elsewhere is shown, and cannot be fetched or updated");
+			Assert.IsFalse(rows[1].IsOfficial);
+			Assert.IsTrue(rows[1].RowGoesWhenRemoved, "nothing would be left to list");
 			Assert.AreEqual("Aardvark", rows[1].Name);
+		}
+
+		[TestMethod]
+		public void AnExternalCoreSitsBelowTheOfficialOnes()
+		{
+			var external = new RosterCore { Id = "zzz", Name = "Aardvark", Repo = "someone/chimera-core-aardvark", IsExternal = true };
+			var rows = CoreManagerModel.Build([ Roster("gpgx", "Genesis Plus GX", "GEN"), external ], [ ]);
+			// sorts after every official core however its name sorts
+			Assert.AreEqual("Genesis Plus GX", rows[0].Name);
+			Assert.AreEqual("Aardvark", rows[1].Name);
+			Assert.IsFalse(rows[1].IsOfficial);
+			Assert.IsFalse(rows[1].IsUnclaimed, "it is claimed - by an entry somebody added");
+			Assert.IsTrue(rows[1].RowGoesWhenRemoved);
+		}
+
+		[TestMethod]
+		public void AnOfficialCoreKeepsItsRowWhenRemoved()
+		{
+			var rows = CoreManagerModel.Build([ Roster("gpgx", "Genesis Plus GX", "GEN") ], [ Package("Genesis Plus GX", "aaaaaaaa") ]);
+			Assert.IsFalse(rows[0].RowGoesWhenRemoved, "it can always be installed again from the roster");
 		}
 
 		[TestMethod]
