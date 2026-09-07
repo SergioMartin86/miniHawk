@@ -349,8 +349,20 @@ newest published asset, since nothing else about it is known here.
 
 Added cores live in the config (`ExternalCores`) and are listed **below the
 official ones, under a separator**. Removing one takes it out of the list
-entirely, because nothing else was keeping it there. Adding a repository the
-roster already carries is dropped rather than listed twice.
+entirely, because nothing else was keeping it there.
+
+Adding a repository the roster already carries is dropped rather than listed
+twice - the roster dedupes on the repository - so the window says which row that
+address already is, and selects it. It used to say *Added ... Tick it and press
+Download latest* and then try to select a row under a name that does not exist,
+Probe reading the name from the asset (`gpgx`, not `Genesis Plus GX`): a silent
+no-op reported as success.
+
+That is also how the external mechanism gets tested without a second publisher:
+**an official core's address works here**, because an official core's index is
+the same file in the same place as an external one's. Paste
+`ToolAssisted-run/chimera-core-gpgx` and it is recognised, identified from what
+it publishes, and reported as already listed.
 
 The separator is a row rather than a `ListViewGroup`: Mono's ListView ignores
 groups in Details view. It carries a tick box it will not let you tick - a row
@@ -370,7 +382,43 @@ chasing a fix can still tick the box and take it.
 
 ## What the manager shows
 
-Per core: its name, the systems it emulates, and what is installed.
+Per core, six columns:
+
+| column | what it is |
+|---|---|
+| Core | its name |
+| Systems | the systems it emulates, spelled out (`SystemNames`) |
+| Installed | which version is here, or *not installed*, plus *update available* |
+| Released | when the **installed** version was published |
+| Size | how big it is |
+| Source | `owner/name` of the repository it came from |
+
+Two of those are deliberately narrower than they look.
+
+**Released is the installed version's date, not the newest published one.**
+Somebody holding an old build wants to know when *that* was made, not when they
+fell behind - the fact that something newer exists is what the Installed column
+already says. It is blank until the versions have been fetched, because a date
+is the one thing in the list that cannot be read off a local file.
+
+**Size is measured on disk where there is a file**, so the column says something
+useful before anybody asks a repository anything, and falls back to the size the
+release declared - for a core that is not installed, and for a file that cannot
+be measured. A blank would be worse than the declared figure.
+
+**Source is `owner/name`**, the identifying part of the address; the whole URL
+is in the right-hand panel where there is room for it. It is blank for a package
+nothing claims: for one installed by hand there is no source Chimera can
+honestly name, and the core's own `url` field is the upstream emulator's home,
+not where this package came from.
+
+The columns have to add up to less than the list is wide or the last one is
+reachable only by scrolling sideways, and the three the window started with
+filled it exactly - so every column added since has had to bring its own width
+with it. That also means the **UI test harness's Xvfb** has to be wider than the
+window: a screenshot copies the window's rectangle off the screen, so a window
+wider than the screen fails outright with *XGetImage returned NULL* rather than
+producing a bad picture.
 
 Per version, in the selector: **the publication date and the short commit**,
 because those are the two things somebody comparing two builds actually needs.
@@ -449,9 +497,24 @@ repository's own gate**, which checks out Chimera's main and replays real
 movies against it - the same check from the other side, run by the repository
 that has the content to run it.
 
-A core that has published nothing is skipped rather than failing the job: the
-cores gain their release pipeline one at a time, and a frontend checkout is not
-broken by a core that has not caught up.
+A core that has published nothing is skipped rather than failing the job. Note
+what that means when NOTHING is fetched, because it bit us: every test returns
+Inconclusive and **the job goes green having checked nothing at all**. For its
+first day this job reported success on eight skips, and the moment the first
+real packages arrived it failed instantly - reading a package is the engine's
+job now (`ce_package_open`) and the job built only the managed test project, so
+all fifteen came back *got null pointer from dlopen*. The packages were fine;
+the job had never had a working engine and had never needed one to pass.
+
+Two things came out of that, and both are load-bearing:
+
+* the job **builds libchimera** like every other job that touches a package;
+* it **fails on an empty fetch**. All fifteen cores publish now, so nothing
+  fetched means the fetch broke, not that the cores are young.
+
+The general lesson is worth keeping: *a skip is not a pass.* A suite whose
+fixtures are fetched at run time can report success for having no fixtures, and
+that failure mode is invisible in a green tick - it looks exactly like working.
 
 Both halves read the same directory, so `tools/fetch-cores.sh` is also the
 quickest way to get a working set of cores into a fresh checkout by hand.
