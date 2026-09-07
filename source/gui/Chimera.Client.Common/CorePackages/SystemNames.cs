@@ -32,6 +32,7 @@ namespace Chimera.Client.Common
 			["DC"] = "Dreamcast",
 			["DOS"] = "MS-DOS",
 			["Dreamcast"] = "Dreamcast",
+			["FDS"] = "Famicom Disk System",
 			["GB"] = "Game Boy",
 			["GBA"] = "Game Boy Advance",
 			["GBC"] = "Game Boy Color",

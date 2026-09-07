@@ -12,7 +12,7 @@
     {
       "id": "quickerneshawk",
       "name": "QuickerNesHawk",
-      "systems": [ "NES" ],
+      "systems": [ "NES", "FDS" ],
       "repo": "ToolAssisted-run/chimera-core-neshawk",
       "tested": ""
     },
