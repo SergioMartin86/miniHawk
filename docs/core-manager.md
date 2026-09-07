@@ -466,7 +466,11 @@ With `extern/cores` went:
   release stays, because movies recorded before the split cite packages in it,
   and it no longer grows: each core archives its own nightlies now;
 * `submodules: recursive` from both workflows' checkouts. They check out
-  `extern` explicitly, which is what the frontend is actually built from.
+  `extern` explicitly, which is what the frontend is actually built from;
+* and, once extern/ was flat, the `mesa-guest` submodule. Chimera never used
+  it - only the cores that render through OSMesa did, reaching into this
+  checkout for it. pcsx2 and flycast now fetch and build their own, pinned by
+  SHA256 to the same mesa 24.0.9, so what they link is what they always linked.
 
 A bare Linux bundle is 117 MB, nearly all of it ffmpeg and the native
 libraries.

@@ -34,7 +34,3 @@
 [submodule "extern/chimera-common-minibox"]
 	url = https://github.com/ToolAssisted-run/chimera-common-minibox.git
 	path = extern/chimera-common-minibox
-[submodule "extern/mesa-guest"]
-	path = extern/mesa-guest
-	url = https://gitlab.freedesktop.org/mesa/mesa.git
-	shallow = true

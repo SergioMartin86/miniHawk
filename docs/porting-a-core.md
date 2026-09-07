@@ -130,10 +130,18 @@ say nothing. Compare `rev-parse --show-toplevel` with the path you meant.
    features, so every machine draws the same picture. This is what a core needs
    when the emulator composes on the GPU. It costs a few MB of package and is
    slower than a hardware path, and it is the only way a window-server-style
-   renderer works in a sandbox at all. Five small patches to Mesa are needed
-   (no thread pointer, one CPU, no x86-64 dispatch stubs); see
-   the eka2l1 core's `waterbox/setup-mesa.sh`, which pins the tarball by
-   SHA256 and carries the patches, for a recipe to copy.
+   renderer works in a sandbox at all.
+
+   **The core builds its own Mesa** - Chimera carried one as a submodule and
+   does not any more, for the same reason it stopped carrying cores. Copy a
+   `waterbox/setup-mesa.sh` from a core that has one: they all pin mesa 24.0.9
+   by SHA256 and build it into `build/mesa`. There are two flavours, and which
+   you want depends on how the core draws:
+
+   - **eka2l1's** additionally applies five small patches (no thread pointer,
+     one CPU, no x86-64 dispatch stubs) that a window-server compositor needs;
+   - **pcsx2's and flycast's** build it unpatched, which is what a core linking
+     the GL renderer through `-Dmesa_guest_dir` uses.
 3. **The GPU bridge** - the guest's GL calls leave the sandbox onto a real
    driver. Fast, and [gpu-bridge.md](gpu-bridge.md) explains it, but note what
    it costs: **a savestate made with GPU state alive is good only in the
