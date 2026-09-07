@@ -1,0 +1,110 @@
+name: Publish a core package
+
+# The publish half of every core's CI, in ONE place. A core repository's own
+# workflow builds and gates its package, uploads it as an artifact, and then
+# calls this - so fifteen repositories share one definition of what publishing
+# means instead of fifteen copies that drift.
+#
+#   jobs:
+#     publish:
+#       needs: [ core-gate, frontend-gate ]
+#       if: github.event_name != 'pull_request'
+#       permissions: { contents: write }
+#       uses: ToolAssisted-run/chimera/.github/workflows/publish-core.yml@main
+#       with:
+#         core-id: gpgx
+#         artifact: gpgx-${{ github.sha }}
+#         package: gpgx.chimeraCore
+#
+# A push to main publishes the rolling `dev`; a scheduled run publishes an
+# immutable `nightly-YYYY-MM-DD`. Nothing is published from a pull request, and
+# nothing is published that the calling workflow's gates did not pass, because
+# `needs:` is what got us here.
+
+on:
+  workflow_call:
+    inputs:
+      core-id:
+        description: 'The core''s short id: the base name of the published asset (gpgx, pcsx2, eka2l1...)'
+        required: true
+        type: string
+      artifact:
+        description: 'Name of the artifact the calling workflow uploaded the package as'
+        required: true
+        type: string
+      package:
+        description: 'File name of the package inside that artifact'
+        required: true
+        type: string
+      kind:
+        description: 'dev (rolling) or nightly (dated). Default: nightly for a scheduled run, dev otherwise'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  publish:
+    name: publish (${{ inputs.core-id }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: What is being published
+        id: what
+        run: |
+          kind="${{ inputs.kind }}"
+          if [ -z "$kind" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then kind=nightly; else kind=dev; fi
+          fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the core (for its commit, which is what the release points at)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Has main moved since the last nightly?
+        id: moved
+        if: steps.what.outputs.kind == 'nightly'
+        run: |
+          # a nightly of an unchanged commit is a second copy of yesterday's
+          last=$(git tag -l 'nightly-*' --sort=-creatordate | head -1)
+          if [ -n "$last" ] && [ "$(git rev-list -n1 "$last")" = "$(git rev-parse HEAD)" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "main has not moved since $last; nothing to publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out Chimera (for tools/publish-core.sh)
+        if: steps.moved.outputs.skip != 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: ToolAssisted-run/chimera
+          ref: main
+          path: chimera-checkout
+          submodules: false
+
+      - name: Fetch the gated package
+        if: steps.moved.outputs.skip != 'true'
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ inputs.artifact }}
+          path: package
+
+      - name: Publish
+        if: steps.moved.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # the package may sit at the root of the artifact or under the path it
+          # was uploaded from; find it rather than making every caller say where
+          found=$(find package -name '${{ inputs.package }}' -print -quit)
+          [ -n "$found" ] || { echo "no ${{ inputs.package }} in artifact ${{ inputs.artifact }}" >&2; find package -type f | head -20 >&2; exit 1; }
+          ./chimera-checkout/tools/publish-core.sh \
+            --package "$found" \
+            --core-id '${{ inputs.core-id }}' \
+            --kind '${{ steps.what.outputs.kind }}' \
+            --sha '${{ github.sha }}'

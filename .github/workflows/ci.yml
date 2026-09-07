@@ -131,3 +131,47 @@ jobs:
           name: ui-screenshots
           path: tests/ui/shots/
           if-no-files-found: warn
+
+  published-cores:
+    # The cores as they are actually published. Chimera ships none and builds
+    # none, so nothing else here would notice a frontend change that broke the
+    # generic waterbox adapter for every core at once - it would surface the
+    # first time somebody downloaded one.
+    #
+    # So: fetch what each core last published and check the CONTRACT against it.
+    # No rom, no firmware, no emulation and no core build - that a package can be
+    # read, understood and turned into a working factory. Whether the emulation
+    # is still right is each core repository's own gate, which runs against this
+    # repository's main and is the same check from the other side.
+    #
+    # A core that has published nothing is skipped, not a failure: the cores gain
+    # their release pipeline one at a time.
+    name: published cores (package contract)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0'
+
+      - name: Build the tests
+        run: dotnet build source/gui/Chimera.Tests.Client.Common/Chimera.Tests.Client.Common.csproj -c Release /nodeReuse:false -p:UseSharedCompilation=false
+
+      - name: Fetch every published core package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./tools/fetch-cores.sh
+
+      - name: What was fetched
+        run: ls -la build/Cores || echo "no packages"
+
+      - name: The frontend against real packages
+        run: |
+          dotnet test source/gui/Chimera.Tests.Client.Common/Chimera.Tests.Client.Common.csproj \
+            -c Release --no-build --nologo \
+            --filter "FullyQualifiedName~InstalledCorePackagesTests|FullyQualifiedName~MnemonicUniquenessTests"

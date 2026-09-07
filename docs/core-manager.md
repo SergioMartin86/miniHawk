@@ -27,8 +27,57 @@ commit the build was made from, which is what the package already stamps into
 `waterbox.config` and what a movie already cites (`CoreVersion`).
 
 Fifteen repositories publishing identically is fifteen copies of one job that
-will drift, so the publish job lives once as a reusable workflow and each
-core's `chimera.yml` calls it.
+will drift, so the logic lives once, here, in two files:
+
+* `tools/publish-core.sh` - reads the version **out of the package**, refuses a
+  hand-built one, names the asset, and creates or moves the release.
+* `.github/workflows/publish-core.yml` - a `workflow_call` wrapper that
+  downloads the gated artifact and runs that script.
+
+A core's own workflow adds one job:
+
+```yaml
+  publish:
+    needs: [ core-gate, frontend-gate ]
+    if: github.event_name != 'pull_request'
+    permissions: { contents: write }
+    uses: ToolAssisted-run/chimera/.github/workflows/publish-core.yml@main
+    with:
+      core-id: gpgx
+      artifact: gpgx-${{ github.sha }}
+      package: gpgx.chimeraCore
+```
+
+plus a daily `schedule:` trigger, which is what makes a nightly. A push to main
+publishes `dev`; a scheduled run publishes `nightly-YYYY-MM-DD`, and only if
+main moved since the last one. Nothing publishes from a pull request, and
+nothing publishes that the gates did not pass, because `needs:` is what got it
+there.
+
+**The version is read out of the package, never passed in.** It is what the
+build stamped into `waterbox.config`, it is what a movie cites, and it is what
+the manager checks the download against; anything else is a way for a release
+and its package to disagree. A version carrying `+local` or `-dirty` is refused
+outright - a hand-built package is nobody else's build, and publishing one would
+put a version nothing can reproduce into somebody's movie header.
+
+The `dev` tag is moved by **deleting and recreating the release through the
+API**, never by pushing a tag. A workflow's token may not create or update
+workflow files, and pushing a tag at a commit whose `.github/workflows` differ
+from the default branch's counts as exactly that. The frontend's own pipeline
+learned this the hard way; the same comment is in `publish-core.sh`.
+
+### Which cores publish
+
+Ten are wired: quickernes, quickerneshawk, gpgx, snes9x, stella, opera,
+flycast, dolphin, ppsspp, pcsx2.
+
+Five are not, and it is not an oversight: **dosbox-x, eka2l1, rpcs3, xemu and
+ruffle have no CI at all**, because their gates need content that cannot be
+published - a phone ROM, an Xbox BIOS, PS3 firmware. Wiring publishing into
+them means first designing a gate each can run on a public runner with nothing
+provisioned, which is per-core work in those repositories. Until then they can
+only be installed by hand.
 
 ## What Chimera ships
 
@@ -268,15 +317,39 @@ core that lacks it is detected and does without.
 ## Keeping the frontend honest
 
 Nothing in Chimera's own CI builds a real core any more, so a frontend change
-that breaks the generic waterbox adapter would reach users unseen. The matrix
-leg closes that: for each core, shallow-checkout its repository (for its tests,
-not its sources), download its published package, and run *its own*
-`waterbox/tests/run-frontend.sh` against the Chimera under test. No core is
-compiled; the packages are cached by SHA1.
+could break the generic waterbox adapter for every core at once and nothing
+here would notice - it would surface the first time somebody downloaded one.
 
-It runs in full on main and nightly, over a subset on pull requests, and the
-workflow carries a quarantine list so one core that published something broken
-cannot block every merge while it is being fixed.
+The `published-cores` job closes that. `tools/fetch-cores.sh` downloads what
+each core last published into `build/Cores`, and the tests in
+`InstalledCorePackagesTests` run against the real packages:
+
+* every package can be read by discovery;
+* every package's guest ABI is one this build runs;
+* every package becomes a working `WaterboxCoreFactory` - which is where a
+  package's machines, settings and controller are validated against each other,
+  and so the real test of whether the frontend still understands what the cores
+  are saying;
+* every package's default keybinds name only buttons its controller declares;
+* every package stamps a version, without which it cannot be filed in the
+  store or cited by a movie.
+
+`MnemonicUniquenessTests` runs against them too, so a controller that grows a
+button is covered the day it does.
+
+No rom, no firmware, no emulation, no core build: this is the CONTRACT, and it
+takes seconds. **Whether the emulation is still right is each core
+repository's own gate**, which checks out Chimera's main and replays real
+movies against it - the same check from the other side, run by the repository
+that has the content to run it.
+
+A core that has published nothing is skipped rather than failing the job: the
+cores gain their release pipeline one at a time, and a frontend checkout is not
+broken by a core that has not caught up.
+
+Both halves read the same directory, so `tools/fetch-cores.sh` is also the
+quickest way to get a working set of cores into a fresh checkout by hand.
+`CHIMERA_CORES_DIR` points the tests somewhere else where a job needs it.
 
 ## Licences
 

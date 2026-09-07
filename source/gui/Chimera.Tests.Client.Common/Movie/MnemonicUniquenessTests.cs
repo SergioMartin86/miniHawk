@@ -13,13 +13,14 @@ namespace Chimera.Tests.Client.Common
 {
 	/// <summary>
 	/// What TAStudio writes at the top of an input column, checked against the
-	/// controllers the shipped cores actually declare.
+	/// controllers real cores actually declare.
 	///
-	/// The declarations are READ from the core packages' waterbox.config rather
-	/// than copied here, so a core that grows a button is covered the day it
-	/// does. When the core repositories are not checked out - a source tarball,
-	/// a partial clone - these are inconclusive rather than green: a check that
-	/// silently passes when its subject is missing is worse than no check.
+	/// The declarations are READ from installed packages' waterbox.config rather
+	/// than copied here, so a core that grows a button is covered the day it does.
+	/// Chimera ships no cores, so what is checked is whatever build/Cores holds -
+	/// in CI, every core's newest published package. With none there these are
+	/// inconclusive rather than green: a check that silently passes when its
+	/// subject is missing is worse than no check.
 	/// </summary>
 	[TestClass]
 	public class MnemonicUniquenessTests
@@ -32,34 +33,24 @@ namespace Chimera.Tests.Client.Common
 			public List<string> Axes = new();
 		}
 
-		/// <summary>
-		/// Every core package's declared controller. The walk upwards is how a
-		/// test finds the repository it belongs to without being told.
-		/// </summary>
+		/// <summary>Every installed package's declared controller.</summary>
 		private static IReadOnlyList<Controller> Controllers()
 		{
-			var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-			while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "extern", "cores")))
-			{
-				dir = dir.Parent;
-			}
-			if (dir is null) return Array.Empty<Controller>();
-
 			var found = new List<Controller>();
-			foreach (var core in Directory.EnumerateDirectories(Path.Combine(dir.FullName, "extern", "cores")))
+			foreach (var package in Chimera.Tests.Client.Common.CorePackages.InstalledPackages.Files)
 			{
-				var config = Path.Combine(core, "waterbox", "waterbox.config");
-				if (!File.Exists(config)) continue;
+				var text = Chimera.Tests.Client.Common.CorePackages.InstalledPackages.ConfigOf(package);
+				if (text is null) continue;
 
 				JObject root;
-				try { root = JObject.Parse(File.ReadAllText(config)); }
+				try { root = JObject.Parse(text); }
 				catch { continue; }   // a core mid-edit is not this test's business
 
 				var input = root["input"] as JObject;
 				var systemId = root["systemId"]?.Value<string>();
 				if (input is null || string.IsNullOrEmpty(systemId)) continue;
 
-				Controller c = new() { Core = Path.GetFileName(core), SystemId = systemId };
+				Controller c = new() { Core = Chimera.Tests.Client.Common.CorePackages.InstalledPackages.NameOf(package), SystemId = systemId };
 				foreach (var b in input["buttons"] as JArray ?? new JArray())
 					c.Buttons.Add(b.Value<string>());
 				foreach (var a in input["axes"] as JArray ?? new JArray())
@@ -72,7 +63,7 @@ namespace Chimera.Tests.Client.Common
 		private static IReadOnlyList<Controller> RequireControllers()
 		{
 			var all = Controllers();
-			if (all.Count is 0) Assert.Inconclusive("no core packages checked out under extern/cores");
+			if (all.Count is 0) Assert.Inconclusive("no core packages in build/Cores (see tools/fetch-cores.sh)");
 			return all;
 		}
 

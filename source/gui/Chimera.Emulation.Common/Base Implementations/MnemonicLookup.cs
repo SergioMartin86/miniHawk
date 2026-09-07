@@ -254,6 +254,18 @@ namespace Chimera.Emulation.Common
 				["LStick Click"] = 'l',
 				["RStick Click"] = 'r',
 			},
+			// A Series 60 keypad: the five-way pad and the digits read from the
+			// base table, and these four are the ones whose names collide. Both
+			// soft keys end in "Soft" and both call keys in "Call", so the
+			// last-word fallback hands each pair the same character - which is an
+			// ambiguous input log and two columns nobody can tell apart.
+			["SYMBIAN"] = new()
+			{
+				["Left Soft"] = '[',     // the two keys under the screen, as they sit
+				["Right Soft"] = ']',
+				["Call"] = 'c',          // green
+				["End Call"] = 'e',      // red
+			},
 			[VSystemID.Raw.Panasonic3DO] = new()
 			{
 				["LT"] = 'l',

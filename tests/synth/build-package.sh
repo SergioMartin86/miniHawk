@@ -50,6 +50,30 @@ cp "$here/package-box/waterbox.config" "$staging"
 # the bindings the package declares for its controller (Chimera ships none of its own)
 cp "$here/package-box/default_keybinds.json" "$staging"
 
+# The version a real package stamps, so the test core behaves like one: the
+# manager files packages by version, a movie cites it, and a package with none
+# cannot be told apart from the next build of itself. Built by hand, so it says
+# so (see chimera docs: commit-as-version, stamped by CD).
+core_version="${CORE_VERSION:-}"
+if [ -z "$core_version" ]; then
+	if commit="$(git -C "$chimera_root" rev-parse --short=12 HEAD 2>/dev/null)"; then
+		git -C "$chimera_root" diff --quiet HEAD 2>/dev/null || commit="$commit-dirty"
+		core_version="$commit+local"
+	else
+		core_version="unversioned+local"
+	fi
+fi
+python3 - "$staging/waterbox.config" "$core_version" <<'PYVER'
+import json, sys
+path, version = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    cfg = json.load(f)
+cfg["version"] = version
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYVER
+
 cores_dir="$chimera_root/build/Cores"
 mkdir -p "$cores_dir"
 zip_path="$cores_dir/synth-box.chimeraCore"
