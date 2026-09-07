@@ -143,7 +143,11 @@ jobs:
     # repository's main and is the same check from the other side.
     #
     # A core that has published nothing is skipped, not a failure: the cores gain
-    # their release pipeline one at a time.
+    # their release pipeline one at a time. Note what that means when NOTHING is
+    # fetched - every test is inconclusive and the job goes green having checked
+    # nothing at all, which is exactly what hid this job needing the engine until
+    # the first real packages arrived. The step below fails the job if the fetch
+    # produced no packages, so a silent nothing cannot pass again.
     name: published cores (package contract)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -152,16 +156,30 @@ jobs:
         with:
           submodules: false
 
-      - name: Install mono
-        # the tests are net48, and vstest needs a mono host to run them on Linux
+      - name: Check out what the engine is built from
+        run: git submodule update --init --recursive extern
+
+      - name: Install build dependencies
+        # mono because the tests are net48 and vstest needs a host for them on
+        # Linux; the rest because reading a package is the ENGINE's job now
+        # (ce_package_open), so this job has to build libchimera like any other.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mono-complete
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build build-essential cmake pkg-config python3 \
+            mono-complete \
+            libgl1-mesa-dev libegl-dev libx11-dev libxext-dev libasound2-dev
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0'
+
+      - name: Build native dependencies (installs into build/dll)
+        run: |
+          meson setup build/meson-linux --prefix "$PWD/build" --libdir dll
+          meson compile -C build/meson-linux
+          meson install -C build/meson-linux
 
       - name: Build the tests
         run: dotnet build source/gui/Chimera.Tests.Client.Common/Chimera.Tests.Client.Common.csproj -c Release /nodeReuse:false -p:UseSharedCompilation=false
@@ -172,7 +190,14 @@ jobs:
         run: ./tools/fetch-cores.sh
 
       - name: What was fetched
-        run: ls -la build/Cores || echo "no packages"
+        # All fifteen cores publish, so an empty build/Cores means the fetch
+        # broke, not that the cores are young. Passing on nothing is how this job
+        # spent its first day validating nothing.
+        run: |
+          ls -la build/Cores || true
+          count=$(find build/Cores -name '*.chimeraCore' 2>/dev/null | wc -l)
+          echo "$count package(s) fetched"
+          [ "$count" -gt 0 ] || { echo "::error::no core packages were fetched; there is nothing to check" >&2; exit 1; }
 
       - name: The frontend against real packages
         run: |
