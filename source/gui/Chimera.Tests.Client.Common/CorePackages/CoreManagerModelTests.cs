@@ -172,5 +172,63 @@ namespace Chimera.Tests.Client.Common.CorePackages
 			Assert.AreEqual(0, rows[0].Available.Count);
 			Assert.IsNull(rows[0].Update);
 		}
+		/// <summary>
+		/// The date column. It describes the version the Installed column names, not
+		/// simply the newest thing published - somebody holding an old build wants to
+		/// see when THAT was made.
+		/// </summary>
+		[TestMethod]
+		public void TheDateIsTheInstalledVersionsNotTheNewest()
+		{
+			var older = Release("aaaaaaaaaaaa", DateTimeOffset.Parse("2026-09-01T05:00:00Z"));
+			var newer = Release("bbbbbbbbbbbb", DateTimeOffset.Parse("2026-09-05T05:00:00Z"));
+			var row = new CoreManagerRow
+			{
+				Core = Roster("gpgx", "Genesis Plus GX", "GEN"),
+				Installed = [ Package("Genesis Plus GX", "aaaaaaaaaaaa") ],
+				Available = [ newer, older ],
+			};
+
+			Assert.AreEqual("2026-09-01", row.PublishedAt!.Value.ToString("yyyy-MM-dd"));
+		}
+
+		/// <summary>Nothing fetched means no date, rather than a guessed one.</summary>
+		[TestMethod]
+		public void ADateIsAbsentUntilTheVersionsHaveBeenAskedFor()
+		{
+			var row = new CoreManagerRow
+			{
+				Core = Roster("gpgx", "Genesis Plus GX", "GEN"),
+				Installed = [ Package("Genesis Plus GX", "aaaaaaaaaaaa") ],
+			};
+
+			Assert.IsNull(row.PublishedAt);
+		}
+
+		/// <summary>
+		/// A size for a core that is not installed: there is no file to measure, so
+		/// the release's own figure is what the column shows.
+		/// </summary>
+		[TestMethod]
+		public void ASizeComesFromTheReleaseWhenThereIsNoFileToMeasure()
+		{
+			var release = Release("cccccccccccc", DateTimeOffset.Parse("2026-09-07T11:00:00Z"));
+			var row = new CoreManagerRow
+			{
+				Core = Roster("gpgx", "Genesis Plus GX", "GEN"),
+				Available = [ new CoreRelease
+				{
+					Version = release.Version,
+					Tag = release.Tag,
+					Channel = release.Channel,
+					PublishedAt = release.PublishedAt,
+					AssetUrl = release.AssetUrl,
+					AssetSize = 3145728,
+				} ],
+			};
+
+			Assert.AreEqual(3145728, row.SizeBytes);
+		}
+
 	}
 }

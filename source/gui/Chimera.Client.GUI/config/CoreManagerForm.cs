@@ -107,8 +107,10 @@ namespace Chimera.Client.GUI
 			_changed = changed;
 
 			SuspendLayout();
-			ClientSize = new(UIHelper.ScaleX(900), UIHelper.ScaleY(500));
-			MinimumSize = new(UIHelper.ScaleX(740), UIHelper.ScaleY(420));
+			// wider than it was: the list carries five columns now, and the three it
+			// used to carry already filled the width exactly
+			ClientSize = new(UIHelper.ScaleX(1000), UIHelper.ScaleY(500));
+			MinimumSize = new(UIHelper.ScaleX(820), UIHelper.ScaleY(420));
 			StartPosition = FormStartPosition.CenterParent;
 			ShowIcon = false;
 
@@ -149,9 +151,15 @@ namespace Chimera.Client.GUI
 				View = View.Details,
 				CheckBoxes = true,
 			};
-			_cores.Columns.Add("Core", UIHelper.ScaleX(150));
-			_cores.Columns.Add("Systems", UIHelper.ScaleX(180));
-			_cores.Columns.Add("Installed", UIHelper.ScaleX(190));
+			// these have to add up to less than the list is wide (ClientSize minus the
+			// side panel and the margins), or the last one is only reachable by
+			// scrolling sideways
+			_cores.Columns.Add("Core", UIHelper.ScaleX(140));
+			_cores.Columns.Add("Systems", UIHelper.ScaleX(170));
+			_cores.Columns.Add("Installed", UIHelper.ScaleX(150));
+			_cores.Columns.Add("Released", UIHelper.ScaleX(85));
+			// right-aligned, because a column of sizes is read by comparing them
+			_cores.Columns.Add("Size", UIHelper.ScaleX(65), HorizontalAlignment.Right);
 			_cores.SelectedIndexChanged += (_, _) => ShowSelectedCore();
 			_cores.ItemChecked += (_, e) =>
 			{
@@ -330,11 +338,15 @@ namespace Chimera.Client.GUI
 					ListViewItem divide = new("External cores") { Tag = null, ForeColor = SystemColors.GrayText };
 					divide.SubItems.Add("");
 					divide.SubItems.Add("added by hand");
+					divide.SubItems.Add("");
+					divide.SubItems.Add("");
 					_cores.Items.Add(divide);
 				}
 				ListViewItem item = new(row.Name) { Tag = row };
 				item.SubItems.Add(SystemNames.Of(row.Systems));
 				item.SubItems.Add(InstalledText(row));
+				item.SubItems.Add(ReleasedText(row));
+				item.SubItems.Add(SizeText(row));
 				if (!row.IsInstalled) item.ForeColor = SystemColors.GrayText;
 				item.Checked = _ticked.Contains(row.Name);
 				_cores.Items.Add(item);
@@ -404,6 +416,27 @@ namespace Chimera.Client.GUI
 				_ => $"{versions[0]}  (+{versions.Count - 1} more)",
 			};
 			return row.Update is not null ? $"{text}  - update available" : text;
+		}
+
+		/// <summary>
+		/// When the version this row is showing was published. Empty rather than
+		/// invented: a core nobody has asked about has no date to give, and it fills
+		/// in the moment somebody presses Fetch versions or Check for updates.
+		/// </summary>
+		private static string ReleasedText(CoreManagerRow row)
+			=> row.PublishedAt is { } when ? when.ToLocalTime().ToString("yyyy-MM-dd") : "";
+
+		/// <summary>
+		/// How big the core is, to one decimal place. Cores run from half a megabyte
+		/// to a couple of hundred, so the useful comparison is between them rather
+		/// than to the byte.
+		/// </summary>
+		private static string SizeText(CoreManagerRow row)
+		{
+			var bytes = row.SizeBytes;
+			if (bytes <= 0) return "";
+			var mb = bytes / 1024.0 / 1024.0;
+			return mb < 1.0 ? $"{bytes / 1024.0:0} KB" : $"{mb:0.0} MB";
 		}
 
 		private CoreManagerRow? Selected()
@@ -777,6 +810,16 @@ namespace Chimera.Client.GUI
 			if (RosterCore.RepoFromUrl(typed!) is not { } repo)
 			{
 				Say($"That is not a GitHub repository address: {typed}");
+				return;
+			}
+			// A repository already on the list is not added twice - the roster dedupes
+			// on it - so saying "Added" would be a lie, and the useful answer is which
+			// row it already is. Pointing at that row is also how somebody checks an
+			// official core's address is the one they meant.
+			if (_roster().FirstOrDefault(c => string.Equals(c.Repo, repo, StringComparison.OrdinalIgnoreCase)) is { } already)
+			{
+				_ = Select(already.Name);
+				Say($"{repo} is already on the list, as {already.Name}.");
 				return;
 			}
 			_work = new();

@@ -61,6 +61,8 @@ namespace Chimera.Client.Common
 			["SGX"] = "SuperGrafx",
 			["SMS"] = "Master System",
 			["SNES"] = "Super Nintendo",
+			// the platform is Symbian; the machine anybody recognises is the N-Gage
+			["SYMBIAN"] = "Symbian (Nokia N-Gage)",
 			["TI83"] = "TI-83",
 			["UZE"] = "Uzebox",
 			["VB"] = "Virtual Boy",

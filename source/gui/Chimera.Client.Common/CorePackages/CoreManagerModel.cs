@@ -79,6 +79,58 @@ namespace Chimera.Client.Common
 			}
 		}
 
+		/// <summary>
+		/// The published release the row's date describes: the installed version where
+		/// that is a version we have heard of, otherwise the newest known one. Null
+		/// until somebody has asked this core what it has published - a date is the
+		/// one thing in the list that cannot be read off a local file.
+		/// </summary>
+		public CoreRelease? Shown
+		{
+			get
+			{
+				if (Installed.FirstOrDefault()?.Version is { Length: not 0 } version)
+				{
+					return Available.FirstOrDefault(r => string.Equals(r.Version, version, StringComparison.OrdinalIgnoreCase));
+				}
+				return Available.FirstOrDefault();
+			}
+		}
+
+		/// <summary>When <see cref="Shown"/> was published, or null if that is unknown.</summary>
+		public DateTimeOffset? PublishedAt
+			=> Shown is { PublishedAt: var when } && when != default ? when : null;
+
+		/// <summary>
+		/// How big this core is, in bytes; 0 when it cannot be known yet.
+		///
+		/// An installed one is measured on disk, so the column says something useful
+		/// before anybody asks GitHub anything. Failing that - not installed, or a
+		/// file that cannot be measured - the release itself declared a size, and that
+		/// is a better answer than a blank.
+		/// </summary>
+		public long SizeBytes
+		{
+			get
+			{
+				if (IsInstalled && FileSize(Installed[0].Path) is > 0 and var onDisk) return onDisk;
+				return Shown?.AssetSize ?? 0;
+			}
+		}
+
+		private static long FileSize(string path)
+		{
+			try
+			{
+				System.IO.FileInfo info = new(path);
+				return info.Exists ? info.Length : 0;
+			}
+			catch (Exception)
+			{
+				return 0; // a size is a nicety; nothing here is worth an exception
+			}
+		}
+
 		/// <summary>Whether <paramref name="release"/> is already in the store.</summary>
 		public bool Has(CoreRelease release)
 			=> Installed.Any(p => string.Equals(p.Version, release.Version, StringComparison.OrdinalIgnoreCase));
