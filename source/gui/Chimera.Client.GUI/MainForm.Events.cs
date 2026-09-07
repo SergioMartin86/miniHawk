@@ -455,6 +455,28 @@ namespace Chimera.Client.GUI
 			this.ShowDialogWithTempMute(form);
 		}
 
+		/// <summary>
+		/// File &gt; Core Manager. Chimera ships no cores; this is where they come
+		/// from. Opened by hand here, and by itself once when nothing is installed
+		/// (see <see cref="OpenCoreManagerIfNothingIsInstalled"/>).
+		/// </summary>
+		private void CoreManagerMenuItem_Click(object sender, EventArgs e) => ShowCoreManager();
+
+		public void ShowCoreManager()
+		{
+			using CoreManagerForm form = new(
+				roster: () => CoreRoster.Read(),
+				scan: () => CorePackageDiscovery.ScanFor(Config),
+				feed: new CoreFeed(token: Config.GitHubToken),
+				installer: new CoreInstaller(),
+				// a core that has just landed must be usable in this session: discovery
+				// is separate from loading precisely so a package can appear without a
+				// restart, and the menus read from the scan
+				changed: ScanForCorePackages);
+			this.ShowDialogWithTempMute(form);
+			ScanForCorePackages();
+		}
+
 		private void SoundMenuItem_Click(object sender, EventArgs e)
 		{
 			static IEnumerable<string> GetDeviceNamesCallback(ESoundOutputMethod outputMethod) => outputMethod switch

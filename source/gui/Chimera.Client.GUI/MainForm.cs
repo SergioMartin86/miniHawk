@@ -93,6 +93,25 @@ namespace Chimera.Client.GUI
 				MainFormContextMenu.Items.Insert(1, new ToolStripSeparatorEx());
 			}
 
+			OpenCoreManagerIfNothingIsInstalled();
+		}
+
+		/// <summary>
+		/// A Chimera with no core cannot open anything, and it ships with none. That
+		/// is the one moment worth interrupting somebody for, so the manager opens
+		/// itself - once, only when the scan found nothing at all, and never again
+		/// after the first core exists.
+		///
+		/// Not when a core package or a rom was named on the command line: whoever
+		/// did that has already said what they want, and a dialog in front of it
+		/// would be in the way of a script.
+		/// </summary>
+		private void OpenCoreManagerIfNothingIsInstalled()
+		{
+			if (_discoveredCorePackages.Count is not 0) return;
+			if (_argParser.cmdCorePackage is not null || _argParser.cmdRom is not null || _argParser.cmdProject is not null) return;
+			if (CoreRoster.Read().Count is 0) return; // nothing to offer; a window saying so would only be rude
+			ShowCoreManager();
 		}
 
 		static MainForm()

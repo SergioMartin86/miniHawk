@@ -176,6 +176,43 @@ The SHA1 of the package file remains the identity Chimera uses everywhere - the
 extract cache, the movie header - so verification and identification stay the
 same act.
 
+## The window
+
+**File > Core Manager.** One list of cores on the left, one core's versions on
+the right.
+
+The left list is every core in the roster plus anything installed that the
+roster does not know about - somebody's own build, or a core from elsewhere.
+Those are shown, greyed as unofficial, rather than hidden: a window that listed
+only what it could fetch would leave somebody unable to see the core they are
+actually running.
+
+Three buttons, and they do three different things:
+
+* **Fetch versions / Install** - the same button, because until versions have
+  been fetched there is nothing to install. One request, for the selected core.
+* **Check for updates** - asks every INSTALLED core's repository and
+  **downloads nothing**. It marks the rows that have something newer and names
+  them in the status line. Deciding to take an update is a separate act.
+* **Download missing cores** - installs the newest published build of every
+  roster core that has none. Deliberately not "every core to its newest":
+  replacing what somebody is already using, in bulk, is not what that button
+  should do.
+
+An **update** is the newest published version, and only when it is missing.
+Any older version that happens not to be installed is not an update - somebody
+holding the latest build would otherwise be told forever that there is
+something newer, naming a version from last month. A development build is never
+an update to a published one.
+
+Development builds are hidden behind a checkbox. A dev release is replaced on
+every push, so a movie recorded against one can stop being fetchable; anyone
+chasing a fix can still tick the box and take it.
+
+`GitHubToken` in the config raises the request limit for somebody who shares an
+address with enough other people to hit it. Nothing else in Chimera uses it and
+it is never sent anywhere but api.github.com.
+
 ## What the manager shows
 
 Per core: its name, the systems it emulates, and what is installed.

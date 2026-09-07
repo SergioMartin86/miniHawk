@@ -35,6 +35,8 @@ namespace Chimera.Client.GUI
 			this.toolStripSeparator21 = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.toolStripSeparator5 = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.EncodeVideoMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
+			this.CoreManagerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
+			this.CoreManagerSeparator = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.ScreenshotSubMenu = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.ScreenshotMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.ScreenshotAsMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
@@ -200,6 +202,8 @@ namespace Chimera.Client.GUI
             this.toolStripMenuItem1,
             this.EncodeVideoMenuItem,
             this.ScreenshotSubMenu,
+            this.CoreManagerSeparator,
+            this.CoreManagerMenuItem,
             this.toolStripSeparator4,
             this.ExitMenuItem});
 			this.FileSubMenu.Text = "&File";
@@ -365,6 +369,11 @@ namespace Chimera.Client.GUI
 			// 
 			this.EncodeVideoMenuItem.Text = "&Encode Video...";
 			this.EncodeVideoMenuItem.Click += new System.EventHandler(this.EncodeVideoMenuItem_Click);
+			//
+			// CoreManagerMenuItem
+			//
+			this.CoreManagerMenuItem.Text = "&Core Manager...";
+			this.CoreManagerMenuItem.Click += new System.EventHandler(this.CoreManagerMenuItem_Click);
 			// 
 			// ScreenshotSubMenu
 			// 
@@ -1212,6 +1221,10 @@ namespace Chimera.Client.GUI
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx DisplayLogWindowMenuItem;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx DisplaySubtitlesMenuItem;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx EncodeVideoMenuItem;
+
+		private Chimera.WinForms.Controls.ToolStripMenuItemEx CoreManagerMenuItem;
+
+		private Chimera.WinForms.Controls.ToolStripSeparatorEx CoreManagerSeparator;
 		private Chimera.WinForms.Controls.StatusLabelEx AVStatusLabel;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx RestartMovieContextMenuItem;
 		private Chimera.WinForms.Controls.StatusLabelEx CheatStatusButton;
