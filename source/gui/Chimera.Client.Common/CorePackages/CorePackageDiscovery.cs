@@ -235,6 +235,12 @@ namespace Chimera.Client.Common
 		/// <see cref="DiscoveredCorePackage.Error"/> set if it looks like one but
 		/// cannot be read; that distinction is what keeps a broken package visible
 		/// instead of silently missing.
+		///
+		/// Note the gate below is on the NAME, before anything is opened: a scan must
+		/// not hash every file it meets in a directory. The cost is that a caller
+		/// handing over one known path has to name it like a package - a good package
+		/// under any other extension is invisible here, which is exactly how every
+		/// install once failed as "not a core package".
 		/// </summary>
 		public static DiscoveredCorePackage? Peek(string path)
 		{

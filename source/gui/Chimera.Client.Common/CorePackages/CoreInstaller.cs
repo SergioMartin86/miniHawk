@@ -54,7 +54,12 @@ namespace Chimera.Client.Common
 			Action<long, long>? progress = null,
 			CancellationToken cancel = default)
 		{
-			var temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"chimera-core-{Guid.NewGuid():N}.part");
+			// The extension matters: the download is read back by the same discovery
+			// the frontend uses, and that refuses to even open a file not named like a
+			// package. A ".part" here made every install fail as "not a core package".
+			var temp = System.IO.Path.Combine(
+				System.IO.Path.GetTempPath(),
+				$"chimera-core-{Guid.NewGuid():N}{CorePackageDiscovery.Extension}");
 			try
 			{
 				var downloadError = await DownloadAsync(release, temp, progress, cancel).ConfigureAwait(false);
@@ -102,7 +107,7 @@ namespace Chimera.Client.Common
 				}
 				catch (Exception)
 				{
-					// a leftover .part in the temp directory is not worth telling anybody about
+					// a leftover part-file in the temp directory is not worth telling anybody about
 				}
 			}
 		}
