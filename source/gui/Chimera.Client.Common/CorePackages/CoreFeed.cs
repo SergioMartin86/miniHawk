@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -35,18 +34,24 @@ namespace Chimera.Client.Common
 	/// startup, and makes no request until somebody presses Download or Check for
 	/// updates - so the whole of this class is on a path a person started.
 	///
-	/// Unauthenticated GitHub allows 60 requests an hour per address, and one
-	/// question to one repository is one of them: a check over the cores somebody
-	/// actually has is a handful, and the whole roster is about fifteen. Downloading
-	/// the package that answer names is free, so the budget is spent on asking.
+	/// It asks the core, not GitHub's API. Each core's publish job attaches a
+	/// releases.json to a permanent release on its own repository
+	/// (tools/write-core-index.sh) and this downloads that asset.
 	///
-	/// The ETag cache below does NOT buy quota back. A 304 counts against the limit
-	/// exactly as a 200 does (measured 2026-09-07); the exemption conditional
-	/// requests once had is gone. It is still worth having for the bandwidth and
-	/// because it is what lets an offline manager list what it saw last time - but
-	/// nothing here should be sized as though repeating a check were free.
+	/// The API was the obvious way and is unusable: 60 requests an hour per
+	/// ADDRESS, one per core per question, and a 304 charged exactly like a 200
+	/// (measured 2026-09-07). Fifteen cores make one press of Check for updates
+	/// cost fifteen, so four presses is the hour's entire budget - which anybody
+	/// developing exhausts before lunch, and which a shared address exhausts on
+	/// somebody else's behalf. A release asset costs nothing at all: it redirects
+	/// off the API entirely.
 	///
-	/// A token in the config raises the limit for anyone who hits it for real.
+	/// There is no fallback to the API, on purpose. A fallback would hide the case
+	/// this has to get right - a core whose index is missing - behind a path that
+	/// works four times an hour and then mysteriously stops.
+	///
+	/// The ETag cache below no longer buys anything against a limit; it saves the
+	/// bandwidth, and it is what lets an offline manager list what it saw last time.
 	/// </summary>
 	public sealed class CoreFeed
 	{
@@ -61,9 +66,7 @@ namespace Chimera.Client.Common
 
 		private readonly string _cacheDir;
 
-		private readonly string? _token;
-
-		public CoreFeed(HttpClient? http = null, string? cacheDir = null, string? token = null)
+		public CoreFeed(HttpClient? http = null, string? cacheDir = null)
 		{
 			_http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 			if (!_http.DefaultRequestHeaders.UserAgent.TryParseAdd(UserAgent))
@@ -71,7 +74,6 @@ namespace Chimera.Client.Common
 				// a handed-in client may already carry one; that is fine
 			}
 			_cacheDir = cacheDir ?? System.IO.Path.Combine(CoreStore.Path, ".feed-cache");
-			_token = string.IsNullOrWhiteSpace(token) ? null : token;
 		}
 
 		/// <summary>
@@ -84,9 +86,7 @@ namespace Chimera.Client.Common
 			var cached = ReadCache(core.Repo);
 			try
 			{
-				using HttpRequestMessage request = new(HttpMethod.Get, CoreReleases.ApiUrl(core.Repo));
-				request.Headers.Accept.ParseAdd("application/vnd.github+json");
-				if (_token is not null) request.Headers.Authorization = new("Bearer", _token);
+				using HttpRequestMessage request = new(HttpMethod.Get, CoreReleases.IndexUrl(core.Repo));
 				if (cached?.ETag is { Length: not 0 } etag) request.Headers.TryAddWithoutValidation("If-None-Match", etag);
 
 				using var response = await _http.SendAsync(request, cancel).ConfigureAwait(false);
@@ -95,19 +95,21 @@ namespace Chimera.Client.Common
 				{
 					return new CoreFeedResult { Releases = CoreReleases.Parse(cached.Body, core.Id), FromCache = true };
 				}
-				// 429 is not in net48's enum; GitHub uses both it and 403 for a limit
-				if ((response.StatusCode is HttpStatusCode.Forbidden || (int) response.StatusCode is 429)
-					&& RateLimited(response) is { } limitMessage)
-				{
-					return new CoreFeedResult { Error = limitMessage, Releases = CachedReleases(cached, core.Id), FromCache = true };
-				}
 				if (response.StatusCode is HttpStatusCode.NotFound)
 				{
-					return new CoreFeedResult { Error = $"{core.Repo} has no releases, or is not there any more" };
+					// the index is written by a core's publish job, so the ordinary
+					// reason it is absent is that the core has not published since -
+					// which is a different problem from a repository that has gone,
+					// and says so rather than blaming the address
+					return new CoreFeedResult
+					{
+						Error = $"{core.Repo} publishes no version index yet ({CoreReleases.IndexTag}/{CoreReleases.IndexFile}). "
+							+ "It appears the next time that core publishes.",
+					};
 				}
 				if (!response.IsSuccessStatusCode)
 				{
-					return new CoreFeedResult { Error = $"GitHub answered {(int) response.StatusCode} {response.ReasonPhrase} for {core.Repo}" };
+					return new CoreFeedResult { Error = $"{core.Repo} answered {(int) response.StatusCode} {response.ReasonPhrase}" };
 				}
 
 				var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -163,25 +165,6 @@ namespace Chimera.Client.Common
 			{
 				return [ ];
 			}
-		}
-
-		/// <summary>
-		/// Turns a 403 into a sentence with a time in it. "Rate limited" on its own
-		/// leaves somebody pressing the button again, which is exactly the wrong move.
-		/// Returns null when the 403 was about something else, e.g. a bad token.
-		/// </summary>
-		public static string? RateLimited(HttpResponseMessage response)
-		{
-			if (!response.Headers.TryGetValues("x-ratelimit-remaining", out var remaining)) return null;
-			if (remaining.FirstOrDefault() is not "0") return null;
-			var wait = "a while";
-			if (response.Headers.TryGetValues("x-ratelimit-reset", out var reset)
-				&& long.TryParse(reset.FirstOrDefault(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var epoch))
-			{
-				var minutes = (int) Math.Ceiling((DateTimeOffset.FromUnixTimeSeconds(epoch) - DateTimeOffset.UtcNow).TotalMinutes);
-				wait = minutes <= 1 ? "a minute" : $"{minutes} minutes";
-			}
-			return $"GitHub is rate limiting this address; it will answer again in {wait}. (Downloads already started are unaffected.)";
 		}
 
 		private sealed class CachedFeed

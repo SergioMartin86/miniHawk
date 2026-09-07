@@ -158,37 +158,67 @@ immutable and never deleted, so a movie recorded against one stays replayable.
 Dev is one click away per core for somebody chasing a fix.
 
 Being unable to answer is an ordinary answer, not an exception: no network, a
-repository that has gone, and a rate limit all come back as a message the
-manager shows, with whatever the cache still knows alongside it. An offline
-Chimera opens the manager and lists what it saw last time.
+repository that has gone, and a core with no index yet all come back as a
+message the manager shows, with whatever the cache still knows alongside it. An
+offline Chimera opens the manager and lists what it saw last time.
 
-Unauthenticated GitHub allows 60 requests an hour per IP, and one question to
-one repository is one request. There is no endpoint that asks about several
-repositories at once, so the cost of an action is simply how many cores it
-covers:
+## Where the versions come from
 
-| action | requests |
-|---|---|
-| Fetch versions, on one core | 1 |
-| Check for updates, N ticked | N |
-| Download latest, N ticked | N, minus any already asked about this session |
-| Downloading the package itself | **0** |
+Each core publishes its own index, on its own repository:
 
-Asset downloads are genuinely free: `browser_download_url` redirects to
+    https://github.com/<repo>/releases/download/index/releases.json
+
+written by that core's publish job (`tools/write-core-index.sh`) in the same run
+that created the release. Chimera reads those files. It does not ask
+`api.github.com` anything, ever.
+
+It is an asset on a **permanent** release tagged `index` - created once, then
+only ever having its asset replaced. That is what makes the address fixed for
+the life of the core, which matters for the reason nightlies are immutable: a
+movie's core has to stay findable. An Actions artifact would have been the
+obvious home and is the wrong one, since artifacts expire and fetching one needs
+the API and a token. The index release excludes itself from its own index for
+free - the generator keeps only `.chimeraCore` assets, and it carries none.
+
+**Why not the API.** It allows an unauthenticated address 60 requests an hour,
+one per core per question, and charges for a `304` exactly as for a `200`
+(measured 2026-09-07: three conditional requests, three off the allowance). With
+fifteen cores, one press of *Check for updates* costs fifteen - so four presses
+is the hour's whole budget. That is unusable for anybody developing, and the
+limit is per IP, so a shared address can be exhausted on somebody else's behalf.
+A release asset costs nothing: a download redirects to
 `release-assets.githubusercontent.com`, which is not the API and not counted.
-So the budget is spent on *asking*, never on *fetching*, and the worst case is
-a full fifteen-core sweep: four of those an hour.
+That was already true of the core packages themselves - the budget was only ever
+spent on *asking*, never on *fetching*, so this moves the asking off the API
+too.
 
-Note that a 304 **does** count. Conditional requests were once exempt and are
-not any more (measured 2026-09-07: three 304s, three requests off the
-allowance). The ETag cache is therefore worth keeping for bandwidth and for the
-offline fallback, but it does not buy back quota - do not size the budget as
-though a repeated check were free.
+**Why per core rather than one aggregated index.** The job that creates a
+release is the job that records it, in the same repository, in the same run.
+There is nothing in between for the index to fall behind - no dispatch to miss,
+no aggregator to break, no cross-repository token. A core's index cannot go
+stale with respect to that core's releases. The cost is fifteen small requests
+instead of one, which is fifteen times nothing.
 
-A 403 says *rate limited, try again in N minutes* rather than failing silently,
-and `GitHubToken` in the config raises the ceiling to 5000/hour for anyone who
-hits 60 for real - most likely someone behind a shared address, since the limit
-is per IP rather than per person.
+**Why no fallback to the API.** A fallback would hide the case this has to get
+right - a core whose index is missing - behind a path that works four times an
+hour and then mysteriously stops. Missing is reported as missing.
+
+**The shape** is GitHub's own `/releases` response, trimmed to the fields the
+frontend reads, so `CoreReleases.Parse` reads it unchanged: one shape, one
+parser, and a generator that cannot drift from its reader. It is regenerated
+from the full release list every time rather than appended to, so a run that
+failed halfway leaves nothing to reconcile.
+
+**When it changes:** on every publish - a green push to `main` (`dev`), a
+scheduled nightly, or a manual dispatch. It is skipped only when nothing was
+published (a nightly whose commit has not moved), where the index is already
+right. Two things to know: replacing the asset is a delete and an upload, so
+there is a moment where the address 404s - a client landing in it is told the
+index is absent, and succeeds on the next press; and a release deleted or edited
+BY HAND, outside CI, is not noticed until the next publish.
+
+**A core with no index yet** - one that has not published since this arrangement
+existed - is reported as exactly that, and appears the next time it publishes.
 
 ## Where cores live
 
@@ -337,10 +367,6 @@ an update to a published one.
 Development builds are hidden behind a checkbox. A dev release is replaced on
 every push, so a movie recorded against one can stop being fetchable; anyone
 chasing a fix can still tick the box and take it.
-
-`GitHubToken` in the config raises the request limit for somebody who shares an
-address with enough other people to hit it. Nothing else in Chimera uses it and
-it is never sent anywhere but api.github.com.
 
 ## What the manager shows
 

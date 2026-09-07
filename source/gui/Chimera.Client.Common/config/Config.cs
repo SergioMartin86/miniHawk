@@ -98,14 +98,6 @@ namespace Chimera.Client.Common
 		/// </summary>
 		public List<RosterCore> ExternalCores { get; set; } = new();
 
-		/// <summary>
-		/// A GitHub token for the core manager, or empty. Unauthenticated GitHub
-		/// answers 60 requests an hour per address, which is far more than pressing
-		/// Check for updates costs; this is for somebody who shares an address with
-		/// enough other people to hit it anyway. Nothing else in Chimera uses it, and
-		/// it is never sent anywhere but api.github.com.
-		/// </summary>
-		public string GitHubToken { get; set; } = "";
 		public bool PauseWhenMenuActivated { get; set; } = true;
 		public bool SaveWindowPosition { get; set; } = true;
 		public bool MainFormStayOnTop { get; set; }

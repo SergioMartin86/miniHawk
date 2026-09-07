@@ -108,3 +108,14 @@ jobs:
             --core-id '${{ inputs.core-id }}' \
             --kind '${{ steps.what.outputs.kind }}' \
             --sha '${{ github.sha }}'
+
+      # Chimera reads this file instead of asking the API, which it can only do
+      # 60 times an hour per address. It is written last, from the full release
+      # list, so it describes what is actually there rather than what this run
+      # meant to add.
+      - name: Publish the version index
+        if: steps.moved.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./chimera-checkout/tools/write-core-index.sh --repo '${{ github.repository }}'

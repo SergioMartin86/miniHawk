@@ -468,7 +468,7 @@ namespace Chimera.Client.GUI
 				// the shipped roster, plus whatever cores have been added by hand
 				roster: () => CoreRoster.WithExternal(CoreRoster.Read(), Config.ExternalCores),
 				scan: () => CorePackageDiscovery.ScanFor(Config),
-				feed: new CoreFeed(token: Config.GitHubToken),
+				feed: new CoreFeed(),
 				installer: new CoreInstaller(),
 				rememberExternal: core => Config.ExternalCores.Add(core),
 				forgetExternal: core => Config.ExternalCores.RemoveAll(c => string.Equals(c.Repo, core.Repo, StringComparison.OrdinalIgnoreCase)),

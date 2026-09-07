@@ -109,24 +109,72 @@ namespace Chimera.Tests.Client.Common.CorePackages
 			Assert.IsNull(CoreReleases.Parse($"[{Release("dev", "2026-09-07T11:00:00Z", "gpgx-aaaaaaaaaaaa.chimeraCore")}]", "gpgx")[0].Digest);
 		}
 
+		/// <summary>
+		/// The contract between tools/write-core-index.sh and this parser: the index
+		/// is GitHub's own /releases shape, trimmed to these fields. That is the point
+		/// of the shape - one parser reads both, so the generator cannot drift from
+		/// the reader. This is a real index as the script emits it.
+		/// </summary>
 		[TestMethod]
-		public void ARateLimitSaysHowLongToWait()
+		public void TheGeneratedIndexIsReadByTheSameParser()
 		{
-			using HttpResponseMessage response = new(HttpStatusCode.Forbidden);
-			response.Headers.Add("x-ratelimit-remaining", "0");
-			response.Headers.Add("x-ratelimit-reset", DateTimeOffset.UtcNow.AddMinutes(9).ToUnixTimeSeconds().ToString());
-			var message = CoreFeed.RateLimited(response);
-			StringAssert.Contains(message, "minutes", message);
+			const string index = @"[
+				{
+					""tag_name"": ""nightly-2026-09-07"",
+					""published_at"": ""2026-09-07T16:57:11Z"",
+					""created_at"": ""2026-09-07T16:36:20Z"",
+					""assets"": [ {
+						""name"": ""gpgx-6e9e643ae326cc5c9c4ea83d7d18e6840bfce4f9.chimeraCore"",
+						""browser_download_url"": ""https://github.com/ToolAssisted-run/chimera-core-gpgx/releases/download/nightly-2026-09-07/gpgx-6e9e643ae326cc5c9c4ea83d7d18e6840bfce4f9.chimeraCore"",
+						""size"": 507122,
+						""digest"": ""sha256:178010154e61655dbd97a35aa4654c90988b6d6d6ba1d9468e17af46b56ddbeb""
+					} ]
+				},
+				{
+					""tag_name"": ""dev"",
+					""published_at"": ""2026-09-07T15:30:03Z"",
+					""created_at"": ""2026-09-07T15:30:03Z"",
+					""assets"": [ {
+						""name"": ""gpgx-196b0d7f8552a13f5583678c4e66458bca428549.chimeraCore"",
+						""browser_download_url"": ""https://github.com/ToolAssisted-run/chimera-core-gpgx/releases/download/dev/gpgx-196b0d7f8552a13f5583678c4e66458bca428549.chimeraCore"",
+						""size"": 507126,
+						""digest"": ""sha256:aaaa""
+					} ]
+				}
+			]";
+
+			var releases = CoreReleases.Parse(index, "gpgx");
+			Assert.AreEqual(2, releases.Count);
+
+			var newest = releases[0];
+			Assert.AreEqual(CoreChannel.Nightly, newest.Channel);
+			Assert.AreEqual("6e9e643ae326cc5c9c4ea83d7d18e6840bfce4f9", newest.Version);
+			Assert.AreEqual(507122, newest.AssetSize);
+			// the digest is what stops a wrong or tampered index installing a wrong
+			// core: the installer verifies it against the bytes it downloaded
+			Assert.AreEqual("sha256:178010154e61655dbd97a35aa4654c90988b6d6d6ba1d9468e17af46b56ddbeb", newest.Digest);
+
+			Assert.AreEqual(CoreChannel.Dev, releases[1].Channel);
+			// nightly, not dev, is what Download latest takes
+			Assert.AreEqual(newest.Version, CoreReleases.Newest(releases)!.Version);
 		}
 
+		/// <summary>
+		/// The address the manager actually asks. This is the whole rate-limit fix in
+		/// one assertion: a release asset, never api.github.com, because the API allows
+		/// 60 an hour per address and charges for a 304 too.
+		/// </summary>
 		[TestMethod]
-		public void AForbiddenThatIsNotARateLimitIsNotReportedAsOne()
+		public void AVersionIndexIsReadFromTheCoreNotTheApi()
 		{
-			using HttpResponseMessage response = new(HttpStatusCode.Forbidden);
-			response.Headers.Add("x-ratelimit-remaining", "57");
-			Assert.IsNull(CoreFeed.RateLimited(response));
-			using HttpResponseMessage noHeaders = new(HttpStatusCode.Forbidden);
-			Assert.IsNull(CoreFeed.RateLimited(noHeaders));
+			var url = CoreReleases.IndexUrl("ToolAssisted-run/chimera-core-gpgx");
+			Assert.AreEqual(
+				"https://github.com/ToolAssisted-run/chimera-core-gpgx/releases/download/index/releases.json",
+				url);
+			Assert.IsFalse(url.Contains("api.github.com"), "the API is what the index exists to avoid");
+			// the tag is permanent and the asset is replaced in place, so this address
+			// is the same one for the life of the core - a movie's core stays findable
+			StringAssert.Contains(url, "/releases/download/", url);
 		}
 	}
 }

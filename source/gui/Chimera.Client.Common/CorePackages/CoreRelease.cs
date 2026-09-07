@@ -95,8 +95,27 @@ namespace Chimera.Client.Common
 	/// </summary>
 	public static class CoreReleases
 	{
-		/// <summary>The releases endpoint for a core's repository.</summary>
-		public static string ApiUrl(string repo) => $"https://api.github.com/repos/{repo}/releases?per_page=100";
+		/// <summary>The permanent release a core's index is attached to, and the asset on it.</summary>
+		public const string IndexTag = "index";
+
+		public const string IndexFile = "releases.json";
+
+		/// <summary>
+		/// Where a core says what it has published: an asset its own publish job wrote
+		/// (tools/write-core-index.sh) onto a permanent release, so the address is
+		/// fixed for the life of the core.
+		///
+		/// NOT api.github.com, and this is the point of the whole arrangement: the API
+		/// allows an unauthenticated address 60 requests an hour, one per core per
+		/// question, and charges for a 304 as readily as for a 200 - so one press of
+		/// Check for updates over fifteen cores spends a quarter of the hour's budget.
+		/// A release asset costs nothing at all: it redirects off the API entirely.
+		///
+		/// The file holds GitHub's own /releases shape, trimmed, so <see cref="Parse"/>
+		/// reads it unchanged: one shape, one parser, nothing to keep in step.
+		/// </summary>
+		public static string IndexUrl(string repo)
+			=> $"https://github.com/{repo}/releases/download/{IndexTag}/{IndexFile}";
 
 		/// <summary>
 		/// The releases of <paramref name="coreId"/> found in a GitHub
