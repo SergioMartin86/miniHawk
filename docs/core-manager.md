@@ -69,15 +69,46 @@ learned this the hard way; the same comment is in `publish-core.sh`.
 
 ### Which cores publish
 
-Ten are wired: quickernes, quickerneshawk, gpgx, snes9x, stella, opera,
-flycast, dolphin, ppsspp, pcsx2.
+All fifteen. Ten already had a `chimera.yml` and gained the `publish` job; five
+(dosbox-x, eka2l1, rpcs3, xemu, ruffle) had no CI at all and got one.
 
-Five are not, and it is not an oversight: **dosbox-x, eka2l1, rpcs3, xemu and
-ruffle have no CI at all**, because their gates need content that cannot be
-published - a phone ROM, an Xbox BIOS, PS3 firmware. Wiring publishing into
-them means first designing a gate each can run on a public runner with nothing
-provisioned, which is per-core work in those repositories. Until then they can
-only be installed by hand.
+What each can prove on a public runner is bounded by content, and the five split
+three ways:
+
+| | what CI proves |
+|---|---|
+| **dosbox-x** | the whole gate. DOSBox-X is its own content: the machine boots to a DOS prompt with no disk, and the gate builds the hard disk, floppies, iso and cue/bin it needs as it goes. Frontend gate too. |
+| **ruffle** | the whole gate, against upstream Ruffle's own vendored test suite (`tests/tests/swfs`), which is free to distribute. |
+| **eka2l1** | upstream's 194-case suite, the ARM interpreter against a golden model and dynarmic, determinism, the clock, and native == sandbox. The legs wanting a phone ROM or a game report SKIP. |
+| **rpcs3** | starts, deterministic, savestates, native == sandbox over the small PPC programs in `tests/`. Firmware and disc legs report SKIP. |
+| **xemu** | that both flavors build and the guest is sandbox-clean. An Xbox has no HLE bios, so nothing here executes an instruction. |
+
+That last one is a smaller claim than the others, and it is the claim that can
+be made honestly. It is also most of what actually breaks: a qemu that no longer
+builds against the guest toolchain, and a package the frontend cannot read.
+
+Every one of the five also runs **Chimera's own contract tests against the
+package it just built** (`InstalledCorePackagesTests`, with `CHIMERA_CORES_DIR`
+pointing at it). For eka2l1, xemu and rpcs3 that IS the frontend half - so those
+three are one job rather than two, because splitting them would build the
+package twice on two runners for no more proof.
+
+Those tests open a package through the engine, which is `libchimera` - so they
+dlopen a native library and go red without one. A workflow that runs them must
+build Chimera's natives first. (Found by moving `build/dll` aside and watching
+them fail; it would otherwise have been three first-run failures.)
+
+rpcs3 does not build its native reference in CI. That needs LLVM and ffmpeg for
+the host on top of `rpcs3_emu` twice - hours beyond the guest build, which is
+already the most expensive here - and without firmware it would prove nothing
+the guest build does not. `native == sandbox` for that core is run by hand.
+
+What was verified locally rather than assumed: dosbox-x's core gate (18 legs)
+and frontend gate (4) both run green with nothing provisioned, and eka2l1's gate
+reports 7 pass, 0 fail, 1 skip - the upstream suite's 194 cases, the CPU
+difftest's 5508 programs, determinism, the clock, and native == sandbox. ruffle,
+xemu and rpcs3 are built from their own scripts but their first CI run is their
+first run.
 
 ## What Chimera ships
 

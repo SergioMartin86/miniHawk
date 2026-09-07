@@ -220,10 +220,25 @@ official set is therefore four things:
    `main`).
 2. Give it a `chimera.yml` that gates the package on a public runner and
    uploads it as an artifact named `<name>-${{ github.sha }}`. **This is the
-   hard part**, and it is a content problem before it is a CI problem: a gate
-   that needs a BIOS or a commercial rom cannot run there, so what CI can prove
-   has to be designed around what may be distributed. Five cores (dosbox-x,
-   eka2l1, rpcs3, xemu, ruffle) are stuck exactly here.
+   part to think about**, and it is a content problem before it is a CI
+   problem: a gate needing a BIOS or a commercial rom cannot run there, so what
+   CI proves has to be designed around what may be distributed. The fifteen
+   split three ways, and it is worth checking which one you are in before
+   assuming the worst:
+
+   - **the machine is its own content** - DOSBox-X boots to a DOS prompt with
+     no disk and its gate builds the disks it needs, so the whole gate runs;
+   - **upstream ships a test suite** - Ruffle's own `tests/tests/swfs` are
+     vendored and free, so the whole gate runs against those;
+   - **nothing may be distributed** - an Xbox has no HLE bios, so xemu's CI
+     proves both flavors build and the guest is sandbox-clean, and nothing
+     more. That is a small claim, honestly made, and still catches most of what
+     breaks.
+
+   Whichever it is, run **Chimera's contract tests against the package** with
+   `CHIMERA_CORES_DIR` pointing at it: readable, ABI supported, becomes a
+   factory, binds only declared buttons, stamps a version. It costs seconds and
+   needs no content at all.
 3. Add the `publish` job and a daily `schedule:` trigger, which is three lines
    calling `ToolAssisted-run/chimera/.github/workflows/publish-core.yml@main` -
    see any wired core, or docs/core-manager.md.
