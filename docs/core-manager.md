@@ -78,7 +78,7 @@ three ways:
 | | what CI proves |
 |---|---|
 | **dosbox-x** | the whole gate. DOSBox-X is its own content: the machine boots to a DOS prompt with no disk, and the gate builds the hard disk, floppies, iso and cue/bin it needs as it goes. Frontend gate too. |
-| **ruffle** | the whole gate, against upstream Ruffle's own vendored test suite (`tests/tests/swfs`), which is free to distribute. |
+| **ruffle** | the whole gate, against upstream Ruffle's own test suite (`extern/ruffle/tests/tests/swfs`), which is free to distribute. |
 | **eka2l1** | upstream's 194-case suite, the ARM interpreter against a golden model and dynarmic, determinism, the clock, and native == sandbox. The legs wanting a phone ROM or a game report SKIP. |
 | **rpcs3** | starts, deterministic, savestates, native == sandbox over the small PPC programs in `tests/`. Firmware and disc legs report SKIP. |
 | **xemu** | that both flavors build and the guest is sandbox-clean. An Xbox has no HLE bios, so nothing here executes an instruction. |
@@ -424,10 +424,8 @@ that rule the repository's problem rather than the script's.
 
 Chimera's own checkout went from about 26 GB to 4.9 GB. The moved repositories
 still work from where they landed: a core's `build-package.sh` looks for
-`../chimera` and then `$HOME/chimera`, so it still finds the frontend, and
-ruffle's guest still finds the sibling `../ruffle-src` it names in its Cargo
-files, because the whole set moved together. Verified by running dosbox-x's gate
-from its new home.
+`../chimera` and then `$HOME/chimera`, so it still finds the frontend. Verified
+by running dosbox-x's gate from its new home.
 
 With `extern/cores` went:
 
