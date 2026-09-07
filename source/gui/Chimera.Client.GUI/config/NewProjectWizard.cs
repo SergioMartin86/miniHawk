@@ -210,7 +210,10 @@ namespace Chimera.Client.GUI
 			};
 			foreach (var core in _cores)
 			{
-				_core.Items.Add($"{core.Name}  ({SystemNames.Of(core.Systems)}{(string.IsNullOrEmpty(core.Version) ? "" : $", {core.Version}")})");
+				// the version at commit length, not the build script's full bookkeeping:
+				// this is a picker, and "12d65377b7d3-dirty+local" says nothing here
+				// that "12d65377 local" does not
+				_core.Items.Add($"{core.Name}  ({SystemNames.Of(core.Systems)}{(core.ShortVersion.Length is 0 ? "" : $", {core.ShortVersion}")})");
 			}
 			p1.Controls.Add(_core);
 

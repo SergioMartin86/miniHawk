@@ -44,6 +44,35 @@ namespace Chimera.Client.Common
 		/// </summary>
 		public string Version { get; init; } = "";
 
+		/// <summary>
+		/// True when this package was built by hand rather than published: its version
+		/// carries the "+local" the build script stamps when no CI told it what commit
+		/// it is. Worth knowing (a local build is nobody else's build, so a movie made
+		/// on it is only replayable by whoever made it) and not worth spelling out in
+		/// full every time the package is named.
+		/// </summary>
+		public bool IsLocalBuild => Version.Contains("+local");
+
+		/// <summary>
+		/// The version at the length a commit is normally read at, with the build
+		/// script's bookkeeping ("+local", "-dirty") reduced to one trailing word.
+		/// A published core reads as <c>4ed35321</c>, a hand-built one as
+		/// <c>12d65377 local</c>.
+		/// </summary>
+		public string ShortVersion
+		{
+			get
+			{
+				if (Version.Length is 0) return "";
+				var plus = Version.IndexOf('+');
+				var core = plus >= 0 ? Version.Substring(0, plus) : Version;
+				var dirty = core.EndsWith("-dirty", StringComparison.Ordinal);
+				if (dirty) core = core.Substring(0, core.Length - "-dirty".Length);
+				if (core.Length > 8) core = core.Substring(0, 8);
+				return core + (IsLocalBuild || dirty ? " local" : "");
+			}
+		}
+
 		/// <summary>Rom extension (leading dot, lowercase) -&gt; system id.</summary>
 		public IReadOnlyDictionary<string, string> Extensions { get; init; } = new Dictionary<string, string>();
 

@@ -68,6 +68,20 @@ polling and no phoning home at startup.
   answer is a badge on the Cores menu, not a modal.
 * **Download all** - the roster, in one go.
 
+A release is a version only if it is published (not a draft) and carries an
+asset for this core. A repository can attach more than one package, and
+`quickernes` is a prefix of `quickerneshawk`, so an asset counts as this core's
+only when its name is the core's id exactly or the id followed by a hyphen.
+
+The default channel is **nightly**, for the reason nightlies exist: they are
+immutable and never deleted, so a movie recorded against one stays replayable.
+Dev is one click away per core for somebody chasing a fix.
+
+Being unable to answer is an ordinary answer, not an exception: no network, a
+repository that has gone, and a rate limit all come back as a message the
+manager shows, with whatever the cache still knows alongside it. An offline
+Chimera opens the manager and lists what it saw last time.
+
 Unauthenticated GitHub allows 60 requests an hour per IP. A check over the
 cores someone actually has is a handful; the roster in full is about fifteen.
 Release asset downloads do not count against that limit. Responses are cached
@@ -137,11 +151,47 @@ rather than appearing to do nothing.
 
 ## Verifying a download
 
-Download to a temporary file, hash it, compare against the release's own
-digest, then rename into place. GitHub asset URLs redirect, so the client
-follows redirects. The SHA1 of the package file is the identity Chimera already
-uses everywhere - the cache directory, the movie header - so verification and
-identification are the same act.
+Everything arrives over HTTPS from github.com, and that is what says the bytes
+came from the right place. What the installer adds is the check that they are
+what they claimed to **be**, in this order:
+
+1. the transfer completed - the body is as long as `Content-Length` said;
+2. the digest matches, where GitHub published one (`sha256:...` on the asset;
+   older releases carry none, and an unknown algorithm is not grounds to refuse
+   a file HTTPS already vouched for);
+3. discovery can read it as a core package at all;
+4. its guest ABI is one this Chimera runs - refused here rather than at the
+   moment somebody tries to emulate with it;
+5. the version stamped inside the package matches the version the release
+   offered. A mismatch means something upstream attached the wrong asset, and
+   filing it in the store under a version it is not would put a lie in every
+   movie recorded against it.
+
+Only then is the temporary file moved into the store. Nothing is ever written
+into the store under a name it has not been verified to deserve, and a failed
+install leaves no trace.
+
+GitHub asset URLs redirect to object storage, so the client follows redirects.
+The SHA1 of the package file remains the identity Chimera uses everywhere - the
+extract cache, the movie header - so verification and identification stay the
+same act.
+
+## What the manager shows
+
+Per core: its name, the systems it emulates, and what is installed.
+
+Per version, in the selector: **the publication date and the short commit**,
+because those are the two things somebody comparing two builds actually needs.
+A core's version IS the commit it was built from, so eight characters of it is
+the same identifier the rest of the frontend shows.
+
+A package built by hand rather than published carries `+local` (and `-dirty`
+where the tree was not clean) in its stamped version. That is worth knowing -
+a local build is nobody else's build, so a movie made on it is replayable only
+by whoever made it - and not worth spelling out in full every time the package
+is named. So it reads as one trailing word: a published core is `4ed35321`, a
+hand-built one is `12d65377 local`. This applies wherever a core is named,
+including the project wizard's core picker.
 
 ## What replaces "one commit pins one bundle"
 

@@ -229,6 +229,21 @@ namespace Chimera.Tests.Client.Common.CorePackages
 		}
 
 		[TestMethod]
+		public void AVersionIsShownAtCommitLength()
+		{
+			DiscoveredCorePackage published = new() { Version = "4ed3532117ada82a5491430b8923c07ffe93f397" };
+			Assert.AreEqual("4ed35321", published.ShortVersion);
+			Assert.IsFalse(published.IsLocalBuild);
+
+			// what build-package.sh stamps when no CI told it what commit it is
+			DiscoveredCorePackage handBuilt = new() { Version = "12d65377b7d3-dirty+local" };
+			Assert.AreEqual("12d65377 local", handBuilt.ShortVersion);
+			Assert.IsTrue(handBuilt.IsLocalBuild);
+
+			Assert.AreEqual("", new DiscoveredCorePackage().ShortVersion);
+		}
+
+		[TestMethod]
 		public void SearchPathsAlwaysStartWithTheDefaultCoresFolder()
 		{
 			Config config = new();
