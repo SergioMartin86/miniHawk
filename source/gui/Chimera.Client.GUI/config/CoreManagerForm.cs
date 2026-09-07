@@ -56,6 +56,17 @@ namespace Chimera.Client.GUI
 		/// <summary>Set while the code is ticking boxes, so its own events do not answer back.</summary>
 		private bool _suppressCheckEvents;
 
+		/// <summary>
+		/// False until the constructor has built every control.
+		///
+		/// A ListView raises ItemChecked while its handle is being created, which on
+		/// .NET Framework happens inside the constructor - before the buttons the
+		/// handler wants to enable exist. Mono does not do this, so the Linux tests
+		/// never saw it and it arrived as a NullReferenceException on Windows the
+		/// first time somebody opened the window.
+		/// </summary>
+		private bool _ready;
+
 		private readonly Dictionary<string, IReadOnlyList<CoreRelease>> _feeds = new(StringComparer.OrdinalIgnoreCase);
 		private readonly Dictionary<string, string> _feedErrors = new(StringComparer.OrdinalIgnoreCase);
 
@@ -134,7 +145,11 @@ namespace Chimera.Client.GUI
 			_cores.ItemChecked += (_, _) => { if (!_suppressCheckEvents) UpdateButtons(); };
 			// the separator is a row, and a row in a checkbox ListView has a box; it
 			// is not a core, so it never ticks
-			_cores.ItemCheck += (_, e) => { if (_cores.Items[e.Index].Tag is null) e.NewValue = CheckState.Unchecked; };
+			_cores.ItemCheck += (_, e) =>
+			{
+				// same reason as _ready: this can fire before the list has rows
+				if (e.Index >= 0 && e.Index < _cores.Items.Count && _cores.Items[e.Index].Tag is null) e.NewValue = CheckState.Unchecked;
+			};
 
 			// The right column is a panel of its own so everything in it is placed
 			// against ITS left edge. Right-anchoring a dozen loose controls to the form
@@ -262,6 +277,8 @@ namespace Chimera.Client.GUI
 			AcceptButton = close;
 			ResumeLayout();
 
+			// every control exists now, so the list's events have something to talk to
+			_ready = true;
 			Reload();
 		}
 
@@ -311,6 +328,7 @@ namespace Chimera.Client.GUI
 		private List<CoreManagerRow> Checked()
 		{
 			List<CoreManagerRow> found = new();
+			if (_cores is null) return found;
 			foreach (ListViewItem item in _cores.Items)
 			{
 				if (item.Checked && item.Tag is CoreManagerRow row) found.Add(row);
@@ -335,6 +353,7 @@ namespace Chimera.Client.GUI
 		/// </summary>
 		private void UpdateButtons()
 		{
+			if (!_ready) return;
 			var any = Checked().Count is not 0;
 			_checkUpdates.Enabled = _downloadLatest.Enabled = _removeCore.Enabled = any && !_busy;
 			_addExternal.Enabled = !_busy;

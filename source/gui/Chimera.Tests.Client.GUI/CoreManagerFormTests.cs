@@ -151,6 +151,21 @@ namespace Chimera.Tests.Client.GUI
 		}
 
 		[TestMethod]
+		public void ConstructingTheWindowSurvivesTheListRaisingEvents()
+		{
+			// A ListView raises ItemChecked while its handle is created, which on
+			// .NET Framework happens INSIDE the constructor, before the buttons the
+			// handler enables exist. That crashed on Windows the first time the
+			// window opened, with a NullReferenceException nothing on Linux showed.
+			// Forcing the handle and then ticking exercises the same order.
+			using var form = Open(Feed, [ ]);
+			_ = form.Handle;
+			form.Show();
+			Assert.IsTrue(form.SetChecked("Genesis Plus GX", true));
+			Assert.IsTrue(form.BulkActionsEnabled);
+		}
+
+		[TestMethod]
 		public void TheBulkButtonsWaitUntilSomethingIsTicked()
 		{
 			using var form = Open(Feed, [ ]);
