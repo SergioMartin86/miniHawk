@@ -57,6 +57,17 @@ namespace Chimera.Client.GUI
 		private bool _suppressCheckEvents;
 
 		/// <summary>
+		/// The cores whose box is ticked, by name.
+		///
+		/// Kept as a set rather than read back off the ListView, because the event
+		/// that reports a tick arrives as a posted Windows message: by the time it
+		/// is delivered the collection may be mid-rebuild, and enumerating it from
+		/// the handler is what crashed the window on Windows. Nothing outside the
+		/// list's own events writes this.
+		/// </summary>
+		private readonly HashSet<string> _ticked = new(StringComparer.OrdinalIgnoreCase);
+
+		/// <summary>
 		/// False until the constructor has built every control.
 		///
 		/// A ListView raises ItemChecked while its handle is being created, which on
@@ -142,7 +153,18 @@ namespace Chimera.Client.GUI
 			_cores.Columns.Add("Systems", UIHelper.ScaleX(180));
 			_cores.Columns.Add("Installed", UIHelper.ScaleX(190));
 			_cores.SelectedIndexChanged += (_, _) => ShowSelectedCore();
-			_cores.ItemChecked += (_, _) => { if (!_suppressCheckEvents) UpdateButtons(); };
+			_cores.ItemChecked += (_, e) =>
+			{
+				if (_suppressCheckEvents) return;
+				// e.Item is the one the message is about; the collection it belongs
+				// to is not safe to walk from here
+				if (e.Item?.Tag is CoreManagerRow row)
+				{
+					if (e.Item.Checked) _ticked.Add(row.Name);
+					else _ticked.Remove(row.Name);
+				}
+				UpdateButtons();
+			};
 			// the separator is a row, and a row in a checkbox ListView has a box; it
 			// is not a core, so it never ticks
 			_cores.ItemCheck += (_, e) =>
@@ -289,8 +311,10 @@ namespace Chimera.Client.GUI
 			_rows = CoreManagerModel.Build(_roster(), _scan(), _feeds, _feedErrors).ToList();
 
 			// what was ticked survives a reload: an install or a removal must not
-			// silently change what the next button press would act on
-			HashSet<string> ticked = new(Checked().Select(static r => r.Name), StringComparer.OrdinalIgnoreCase);
+			// silently change what the next button press would act on. A row that
+			// is gone leaves with it, or Remove would keep acting on a core that no
+			// longer has a line in the list.
+			_ticked.IntersectWith(_rows.Select(static r => r.Name));
 
 			_suppressCheckEvents = true;
 			_cores.BeginUpdate();
@@ -312,7 +336,7 @@ namespace Chimera.Client.GUI
 				item.SubItems.Add(SystemNames.Of(row.Systems));
 				item.SubItems.Add(InstalledText(row));
 				if (!row.IsInstalled) item.ForeColor = SystemColors.GrayText;
-				item.Checked = ticked.Contains(row.Name);
+				item.Checked = _ticked.Contains(row.Name);
 				_cores.Items.Add(item);
 			}
 			_cores.EndUpdate();
@@ -326,15 +350,7 @@ namespace Chimera.Client.GUI
 
 		/// <summary>The rows whose box is ticked, in list order.</summary>
 		private List<CoreManagerRow> Checked()
-		{
-			List<CoreManagerRow> found = new();
-			if (_cores is null) return found;
-			foreach (ListViewItem item in _cores.Items)
-			{
-				if (item.Checked && item.Tag is CoreManagerRow row) found.Add(row);
-			}
-			return found;
-		}
+			=> _rows.FindAll(r => _ticked.Contains(r.Name));
 
 		/// <summary>The list item for one core, or null. The separator has no row.</summary>
 		private ListViewItem? ItemFor(string name)
@@ -364,6 +380,8 @@ namespace Chimera.Client.GUI
 		{
 			if (_suppressCheckEvents) return;
 			_suppressCheckEvents = true;
+			_ticked.Clear();
+			if (_selectAll.Checked) _ticked.UnionWith(_rows.Select(static r => r.Name));
 			foreach (ListViewItem item in _cores.Items)
 			{
 				if (item.Tag is not null) item.Checked = _selectAll.Checked;
@@ -553,6 +571,11 @@ namespace Chimera.Client.GUI
 		{
 			if (ItemFor(name) is not { } item) return false;
 			item.Checked = ticked;
+			if (item.Tag is CoreManagerRow row)
+			{
+				if (ticked) _ticked.Add(row.Name);
+				else _ticked.Remove(row.Name);
+			}
 			UpdateButtons();
 			return true;
 		}

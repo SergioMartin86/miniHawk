@@ -980,6 +980,7 @@ ce_session *ce_session_open(
 	/* The same bytes under the file's real name too, the way a project mounts
 	 * its slot files: an extension-driven core (a GameCube .dol vs .iso) can
 	 * then boot the name instead of guessing from the fixed mount. */
+	std::string romAlias;
 	if (rom_path != nullptr && rom_path[0] != '\0')
 	{
 		const char *base = strrchr(rom_path, '/');
@@ -988,7 +989,8 @@ ce_session *ce_session_open(
 		if (bs != nullptr && (base == nullptr || bs > base)) base = bs;
 #endif
 		base = base != nullptr ? base + 1 : rom_path;
-		std::string alias = std::string("/") + base;
+		romAlias = std::string("/") + base;
+		const std::string &alias = romAlias;
 		if (alias != s->cfg.romFile)
 		{
 			if (romFromDisk)
@@ -1005,9 +1007,11 @@ ce_session *ce_session_open(
 	}
 
 	/* a directly-opened rom has a name too: when no caller-provided extra
-	 * carries "rom.name", derive it from the path so extension-driven cores
-	 * can tell what they were handed (the transitional rom/rom.name view,
-	 * docs/project.md) */
+	 * carries "rom.name", it is the name the rom was just MOUNTED under, so a
+	 * core can open what rom.name says and find it there. It used to be the
+	 * bare basename while the mount carried a leading slash, and every core
+	 * that booted rom.name verbatim had to paper over the difference (Dolphin
+	 * and PPSSPP both probe two spellings because of it). */
 	{
 		bool haveName = false;
 		for (int32_t i = 0; i < extra_count; i++)
@@ -1024,7 +1028,8 @@ ce_session *ce_session_open(
 			if (bs != nullptr && (base == nullptr || bs > base)) base = bs;
 #endif
 			base = base != nullptr ? base + 1 : rom_path;
-			s->romNameBytes.assign(base, base + strlen(base));
+			const std::string name = romAlias.empty() ? std::string(base) : romAlias;
+			s->romNameBytes.assign(name.begin(), name.end());
 			s->streams.push_back({ s->romNameBytes.data(), s->romNameBytes.size() });
 			host->wbx_mount_file(s->obj, "rom.name", streamRead, reinterpret_cast<uintptr_t>(&s->streams.back()), 0, &r);
 			if (!r.ok()) return abort(std::string("mounting rom.name: ") + r.errorMessage);
