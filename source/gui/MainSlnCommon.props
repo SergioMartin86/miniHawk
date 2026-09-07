@@ -44,7 +44,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<PackageReference Include="Meziantou.Polyfill" PrivateAssets="all" />
-		<ProjectReference Include="$(MSBuildThisFileDirectory)../../extern/tools/Chimera.SrcGen.ReflectionCache/Chimera.SrcGen.ReflectionCache.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+		<ProjectReference Include="$(MSBuildThisFileDirectory)../../extern/Chimera.SrcGen.ReflectionCache/Chimera.SrcGen.ReflectionCache.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
 		<CompilerVisibleProperty Include="MSBuildProjectName" />
 		<InternalsVisibleTo Include="$(MSBuildProjectName.Replace('Chimera.', 'Chimera.Tests.'))" />
 		<Using Include="System" />

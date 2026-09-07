@@ -7,16 +7,16 @@ It is *source*: the cores link its **cross-built** output, not the tree as-is.
 Produce that output with:
 
 ```sh
-git submodule update --init extern/tools/mesa-guest
-export MINIBOX_DIR=$PWD/extern/tools/chimera-common-minibox   # needs its meson-cpp guest kit built
-extern/tools/build-guest-mesa.sh
+git submodule update --init extern/mesa-guest
+export MINIBOX_DIR=$PWD/extern/chimera-common-minibox   # needs its meson-cpp guest kit built
+extern/build-guest-mesa.sh
 ```
 
 This writes `mesa-guest/build-guest2/` (static `*.a` + the gallium osmesa
 `target.c.o`). Point a core's package build at it:
 
 ```sh
-waterbox/setup-guest.sh -m "$MINIBOX_DIR" -- -Dmesa_guest_dir=$PWD/extern/tools/mesa-guest
+waterbox/setup-guest.sh -m "$MINIBOX_DIR" -- -Dmesa_guest_dir=$PWD/extern/mesa-guest
 ```
 
 Host prereqs: `bison flex pkg-config`. The script keeps meson/ninja/mako in a

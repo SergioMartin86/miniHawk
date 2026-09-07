@@ -85,7 +85,7 @@ function Build-ChimeraHash {
 function Build-SDL2 {
     $src = Join-Path $here "SDL2"
     $out = Join-Path $OutDir "SDL2.dll"
-    if (-not (Test-Path "$src\SDL\CMakeLists.txt")) { throw "SDL submodule not initialized (git submodule update --init extern/tools/SDL2/SDL)" }
+    if (-not (Test-Path "$src\SDL\CMakeLists.txt")) { throw "SDL submodule not initialized (git submodule update --init extern/SDL2/SDL)" }
     if (Test-Fresh $out @("$src\SDL\src", "$src\SDL\include") @("$src\CMakeLists.txt")) { "SDL2: up to date"; return }
     "SDL2: building..."
     $bld = Join-Path $src "build"
@@ -137,7 +137,7 @@ function Build-Zstd {
 function Build-CImGui {
     $src = Join-Path $here "cimgui"
     $out = Join-Path $OutDir "cimgui.dll"
-    if (-not (Test-Path "$src\imgui\imgui.cpp")) { throw "cimgui's imgui submodule not initialized (git submodule update --init --recursive extern/tools/cimgui)" }
+    if (-not (Test-Path "$src\imgui\imgui.cpp")) { throw "cimgui's imgui submodule not initialized (git submodule update --init --recursive extern/cimgui)" }
     if (Test-Fresh $out @($src) @()) { "cimgui: up to date"; return }
     "cimgui: building..."
     $bld = Join-Path $src "build-minihawk"

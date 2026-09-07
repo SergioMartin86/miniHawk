@@ -29,13 +29,13 @@
 		(see meson.build at the repo root), which builds natives for both targets.
 		This hook keeps a plain Windows `dotnet build` self-sufficient. -->
 	<Target Name="BuildNativeDeps" AfterTargets="PostBuildEvent" Condition=" '$(OS)' == 'Windows_NT' ">
-		<Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)../../extern/tools/build-natives.ps1&quot; -OutDir &quot;$(OutputPath)&quot;" />
+		<Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)../../extern/build-natives.ps1&quot; -OutDir &quot;$(OutputPath)&quot;" />
 	</Target>
 	<!-- Drop the settings source generator (built via a ReferenceOutputAssembly=false
 		ProjectReference) beside the contract DLLs: core packages built out-of-solution
 		against build/dll reference it as an analyzer. -->
 	<Target Name="ProvideCoreAuthorKit" AfterTargets="PostBuildEvent">
-		<Copy SourceFiles="$(MSBuildThisFileDirectory)../../extern/tools/Chimera.SrcGen.SettingsUtil/bin/$(Configuration)/netstandard2.0/Chimera.SrcGen.SettingsUtil.dll" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+		<Copy SourceFiles="$(MSBuildThisFileDirectory)../../extern/Chimera.SrcGen.SettingsUtil/bin/$(Configuration)/netstandard2.0/Chimera.SrcGen.SettingsUtil.dll" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
 	</Target>
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent">
 		<ItemGroup>

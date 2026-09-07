@@ -50,7 +50,7 @@ long-lived dual paths.
 2. **Movie text lumps** (Header.txt, Comments.txt, subtitle lines) - DONE
    (the zip container itself is shared with savestates and moves with them)
 3. **The zip-of-lumps container** (ZipStateSaver/Loader; miniz vendored in
-   extern/tools/miniz, zstd loaded from beside the engine) - DONE. The engine owns
+   extern/miniz, zstd loaded from beside the engine) - DONE. The engine owns
    the format; C# keeps the temp-file/backup plumbing and hands buffers
    across. What a savestate CONTAINS (SavestateFile's lump set, the greenzone
    Zwinder ring) is session policy and moves with step 5.
@@ -58,7 +58,7 @@ long-lived dual paths.
    hashing (`ce_sha1_hex`), the firmware verdict, and the canonical
    "<id>=<sha1>" movie line. Config, registry and the filesystem stay C#.
    (This step also moved the .gameBundle format, with cJSON vendored in
-   extern/tools/cjson; bundles were removed wholesale on 2026-08-25 - see
+   extern/cjson; bundles were removed wholesale on 2026-08-25 - see
    design-principles, "Storing progress: cleared to the ground" - and cJSON
    stays for waterbox.config.)
 5. Core/package loading + session (the frame loop; the witness gate moves onto the

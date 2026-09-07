@@ -466,7 +466,7 @@ With `extern/cores` went:
   release stays, because movies recorded before the split cite packages in it,
   and it no longer grows: each core archives its own nightlies now;
 * `submodules: recursive` from both workflows' checkouts. They check out
-  `extern/tools` explicitly, which is what the frontend is actually built from.
+  `extern` explicitly, which is what the frontend is actually built from.
 
 A bare Linux bundle is 117 MB, nearly all of it ffmpeg and the native
 libraries.

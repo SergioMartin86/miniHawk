@@ -2,17 +2,17 @@
 # Cross-build the guest Mesa (softpipe + OSMesa, static, no LLVM) that the
 # GL-renderer cores (pcsx2, flycast, ...) link against via -Dmesa_guest_dir.
 #
-# Produces:  extern/tools/mesa-guest/build-guest2/  (the *.a archives + the
+# Produces:  extern/mesa-guest/build-guest2/  (the *.a archives + the
 # gallium osmesa target.c.o that the cores glob and link).
 #
 # Point a core at it with:
-#   setup-guest.sh ... -- -Dmesa_guest_dir=<repo>/extern/tools/mesa-guest
+#   setup-guest.sh ... -- -Dmesa_guest_dir=<repo>/extern/mesa-guest
 #
 # Reproducible: run from a clean checkout after `git submodule update --init
-# extern/tools/mesa-guest` and a built miniBox guest kit. Idempotent.
+# extern/mesa-guest` and a built miniBox guest kit. Idempotent.
 set -euo pipefail
 
-here="$(cd "$(dirname "$0")" && pwd)"                 # extern/tools
+here="$(cd "$(dirname "$0")" && pwd)"                 # extern
 mesa="$here/mesa-guest"
 build="$mesa/build-guest2"
 minibox="${MINIBOX_DIR:-$here/chimera-common-minibox}"
@@ -21,7 +21,7 @@ minibox="${MINIBOX_DIR:-$here/chimera-common-minibox}"
 # the C++ headers the C-only meson-linux sysroot lacks.
 sr="$minibox/build/meson-cpp/guest-sysroot"
 [ -f "$sr/lib/musl-gcc.specs" ] || { echo "guest sysroot not built at $sr (build miniBox's meson-cpp first)" >&2; exit 1; }
-[ -d "$mesa/src/gallium" ] || { echo "mesa submodule not checked out at $mesa (git submodule update --init extern/tools/mesa-guest)" >&2; exit 1; }
+[ -d "$mesa/src/gallium" ] || { echo "mesa submodule not checked out at $mesa (git submodule update --init extern/mesa-guest)" >&2; exit 1; }
 gccver="$(basename "$(ls -d "$sr"/include/c++/* | head -1)")"   # e.g. 13.3.0
 
 # meson + its deps, in a private venv so the host Python is left alone. Mesa's

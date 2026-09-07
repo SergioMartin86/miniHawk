@@ -18,7 +18,7 @@
 #include "conditions.hpp"
 #include "sha1.hpp"
 
-#include "../../extern/tools/cjson/cJSON.h"
+#include "../../extern/cjson/cJSON.h"
 
 #include <cstring>
 #include <set>

@@ -19,9 +19,9 @@
 	<ItemGroup>
 		<PackageReference Include="SharpCompress" PrivateAssets="all" NoWarn="NU1902" />
 		<!-- not consumed by Chimera itself: built here so the settings source generator lands in build/dll for core-package builds (see ProvideCoreAuthorKit) -->
-		<ProjectReference Include="$(ProjectDir)../../../extern/tools/Chimera.SrcGen.SettingsUtil/Chimera.SrcGen.SettingsUtil.csproj" ReferenceOutputAssembly="false" Private="false" />
-		<ProjectReference Include="$(ProjectDir)../../../extern/tools/PcxFileTypePlugin.HawkQuantizer/PcxFileTypePlugin.HawkQuantizer.csproj" />
-		<ProjectReference Include="$(ProjectDir)../../../extern/tools/NLua/NLua.csproj" />
+		<ProjectReference Include="$(ProjectDir)../../../extern/Chimera.SrcGen.SettingsUtil/Chimera.SrcGen.SettingsUtil.csproj" ReferenceOutputAssembly="false" Private="false" />
+		<ProjectReference Include="$(ProjectDir)../../../extern/PcxFileTypePlugin.HawkQuantizer/PcxFileTypePlugin.HawkQuantizer.csproj" />
+		<ProjectReference Include="$(ProjectDir)../../../extern/NLua/NLua.csproj" />
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="$(ProjectDir)../Chimera.Audio/Chimera.Audio.csproj" />

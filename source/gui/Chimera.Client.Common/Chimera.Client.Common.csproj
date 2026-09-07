@@ -8,7 +8,7 @@
 		<Nullable>disable</Nullable>
 	</PropertyGroup>
 	<ItemGroup>
-		<ProjectReference Include="$(ProjectDir)../../../extern/tools/NLua/NLua.csproj" />
+		<ProjectReference Include="$(ProjectDir)../../../extern/NLua/NLua.csproj" />
 		<PackageReference Include="Microsoft.Data.Sqlite.Core" />
 		<PackageReference Include="SharpCompress" PrivateAssets="all" NoWarn="NU1902" />
 		<PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" />

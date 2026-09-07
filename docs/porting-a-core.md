@@ -258,7 +258,7 @@ cost a red release:
   else. Use `${CMAKE_CURRENT_LIST_DIR}` and friends. Grep for your home
   directory before pushing.
 - **Do not guess at `$HOME`.** A build step that falls back to
-  `$HOME/chimera/extern/tools/...` for the guest toolchain works on the machine
+  `$HOME/chimera/extern/...` for the guest toolchain works on the machine
   that wrote the fallback and nowhere else; on a runner `$HOME` is not the
   checkout. Pass the miniBox path down from `build-package.sh` and stop with a
   message if the toolchain is not there.

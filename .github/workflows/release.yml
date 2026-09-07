@@ -82,7 +82,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check out what the frontend is built from
-        run: git submodule update --init --recursive extern/tools
+        run: git submodule update --init --recursive extern
 
       - name: Has main moved since the last nightly?
         id: moved

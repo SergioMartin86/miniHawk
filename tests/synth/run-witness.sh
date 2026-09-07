@@ -57,7 +57,7 @@ report() { # name result detail
 # is the equivalence proof for the only shipped flavor.
 box_tester="$here/package-box/synth-run-box"
 box_wbx="$here/package-box/synth.wbx"
-box_host_dir="$here/../../extern/tools/chimera-common-minibox/build/meson-linux/source/host"
+box_host_dir="$here/../../extern/chimera-common-minibox/build/meson-linux/source/host"
 if [ "$level" = "both" ] || [ "$level" = "a" ]; then
 	for movie in "$here"/movies/*.txt; do
 		name="$(basename "$movie" .txt)"

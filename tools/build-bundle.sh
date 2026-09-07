@@ -42,7 +42,7 @@ say() { printf "\n== %s\n" "$1"; }
 # Every core package builds its guest against a miniBox guest kit; default it to
 # the submodule the frontend itself is built against, or a stale sibling clone
 # silently produces a core.wbx built against a different ABI.
-export MINIBOX_DIR="${MINIBOX_DIR:-$root/extern/tools/chimera-common-minibox}"
+export MINIBOX_DIR="${MINIBOX_DIR:-$root/extern/chimera-common-minibox}"
 
 native_dir="$root/build/meson-$platform"
 if [ "$skip_natives" -eq 0 ]; then
@@ -50,7 +50,7 @@ if [ "$skip_natives" -eq 0 ]; then
 	if [ ! -f "$native_dir/build.ninja" ]; then
 		if [ "$platform" = "windows" ]; then
 			meson setup "$native_dir" --prefix "$root/build" --libdir dll \
-				--cross-file "$root/extern/tools/meson/mingw-w64.ini"
+				--cross-file "$root/extern/meson/mingw-w64.ini"
 		else
 			meson setup "$native_dir" --prefix "$root/build" --libdir dll
 		fi
@@ -76,8 +76,8 @@ if [ "$platform" = "windows" ]; then
 	cp "$native_dir"/*.dll "$out/dll/"
 	# luasocket ships .so files on Linux; the Windows modules live in the cross build
 	rm -f "$out"/Lua/mime/core.so "$out"/Lua/socket/core.so
-	cp "$native_dir/extern/tools/meson/luasocket-mime/core.dll" "$out/Lua/mime/core.dll"
-	cp "$native_dir/extern/tools/meson/luasocket-socket/core.dll" "$out/Lua/socket/core.dll"
+	cp "$native_dir/extern/meson/luasocket-mime/core.dll" "$out/Lua/mime/core.dll"
+	cp "$native_dir/extern/meson/luasocket-socket/core.dll" "$out/Lua/socket/core.dll"
 else
 	cp "$root"/build/dll/*.so "$out/dll/" 2>/dev/null || true
 	cp "$root/build/ChimeraMono.sh" "$out/" 2>/dev/null || true
@@ -111,7 +111,7 @@ say "build stamp"
 		"$(git -C "$root" rev-parse HEAD)" \
 		"$(git -C "$root" log -1 --format=%s | cut -c1-60)"
 	printf "\nguest kit:\n"
-	git -C "$root" submodule status extern/tools/chimera-common-minibox 2>/dev/null | sed 's/^/  /'
+	git -C "$root" submodule status extern/chimera-common-minibox 2>/dev/null | sed 's/^/  /'
 	printf "\nfiles (sha1):\n"
 	( cd "$out" && sha1sum Chimera.exe 2>/dev/null | sed 's/^/  /' )
 	printf "\ncores: none. Installed from their own projects (File > Core Manager);\n"

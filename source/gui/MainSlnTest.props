@@ -6,7 +6,7 @@
 		<RunSettingsFilePath>$(MSBuildProjectDirectory)/../MainSln.runsettings</RunSettingsFilePath>
 	</PropertyGroup>
 	<ItemGroup>
-		<ProjectReference Include="$(ProjectDir)../../../extern/tools/NLua/NLua.csproj" />
+		<ProjectReference Include="$(ProjectDir)../../../extern/NLua/NLua.csproj" />
 		<None Include="$(ProjectDir)../../../build/dll/lua54.*" CopyToOutputDirectory="PreserveNewest" />
 		<None Include="$(ProjectDir)../../../build/dll/libchimerahash.*" CopyToOutputDirectory="PreserveNewest" />
 		<None Include="$(ProjectDir)../../../build/dll/libzstd.*" CopyToOutputDirectory="PreserveNewest" />

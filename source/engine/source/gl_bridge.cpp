@@ -10,7 +10,7 @@
  * vertex data and textures they point at - are read in place, uncopied. That
  * is what makes it affordable.
  *
- * The opcodes are miniBox's (extern/tools/chimera-common-minibox/source/gl),
+ * The opcodes are miniBox's (extern/chimera-common-minibox/source/gl),
  * shared by every core and this host, and the list is append-only so a core
  * built against an older copy still means what it meant. A guest asks how long
  * our list is and declines us if we are behind it.

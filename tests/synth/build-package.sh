@@ -35,7 +35,7 @@ done
 
 # build the miniBox host + guest toolchain (musl builds in the meson graph), then
 # the guest core.wbx.
-mb="$chimera_root/extern/tools/chimera-common-minibox"
+mb="$chimera_root/extern/chimera-common-minibox"
 mbuild="$mb/build/meson-linux"
 [ -f "$mbuild/build.ninja" ] || meson setup "$mbuild" "$mb"
 ninja -C "$mbuild"

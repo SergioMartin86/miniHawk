@@ -5,7 +5,7 @@
 
 #include "chimera/engine.h"
 
-#include "../../extern/tools/miniz/miniz.h"
+#include "../../extern/miniz/miniz.h"
 
 #include <cassert>
 #include <cstdio>

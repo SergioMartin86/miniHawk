@@ -2,7 +2,7 @@
 	<PropertyGroup>
 		<RunStyleCop>true</RunStyleCop>
 	</PropertyGroup>
-	<Import Project="../../source/gui/Common.props" />
+	<Import Project="../source/gui/Common.props" />
 	<PropertyGroup>
 		<NoWarn>$(NoWarn);BHI1105;CA1721;MEN018;SA1028;SA1200;SA1508</NoWarn>
 	</PropertyGroup>

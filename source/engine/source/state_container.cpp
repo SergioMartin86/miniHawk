@@ -15,7 +15,7 @@
 
 #include <algorithm>
 
-#include "../../extern/tools/miniz/miniz.h"
+#include "../../extern/miniz/miniz.h"
 
 #include <cstring>
 #include <map>

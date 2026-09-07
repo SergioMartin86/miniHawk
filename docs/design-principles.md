@@ -317,10 +317,10 @@ phase of unverified change.
   producing BOTH OSes' artifacts: managed IL built once via dotnet (run_target
   'frontend', Linux dir only), natives built per-target - native gcc for .so, and
   mingw-w64 cross (static gcc runtime, so no libgcc/winpthread dlls) for .dll via
-  extern/tools/meson/mingw-w64.ini + mingw-toolchain.cmake. Root meson.build: direct
+  extern/meson/mingw-w64.ini + mingw-toolchain.cmake. Root meson.build: direct
   shared_library targets for chimerahash/lua54/e_sqlite3/cimgui/luasocket (luasocket's
-  two same-named "core" modules live in extern/tools/meson/luasocket-*/ subdirs), nested
-  upstream builds via extern/tools/meson/nested-build.sh for zstd (its own meson), SDL2 +
+  two same-named "core" modules live in extern/meson/luasocket-*/ subdirs), nested
+  upstream builds via extern/meson/nested-build.sh for zstd (its own meson), SDL2 +
   openal (cmake + toolchain file), chd_capi (cargo, --target x86_64-pc-windows-gnu
   for cross). WSL provisioned: mingw-w64 gcc 13, rustup 1.97.1 + windows-gnu target,
   and - after packages.microsoft.com's Ubuntu 24.04 feed turned out to serve a
@@ -353,7 +353,7 @@ phase of unverified change.
   will absorb (meson orchestrating the dotnet build and every native recipe).
   Thirteenth addendum (2026-08-10, user-directed - NATIVES FROM SOURCE): ExternalProjects
   moved to extern/ at the repo root, and ALL prebuilt native libraries are gone from the
-  tree. extern/tools/build-natives.ps1, run automatically by the solution build
+  tree. extern/build-natives.ps1, run automatically by the solution build
   (BuildNativeDeps target, incremental by timestamp), builds every native dependency
   from source into build/dll: libchimerahash + SDL2 (in-repo recipes; clang-cl - chimerahash's
   gcc target-attributes need it, and a .def now provides the exports ELF visibility
@@ -507,7 +507,7 @@ Decisions, all user-confirmed:
    every mednafen core - is the scale precedent.)
 4. **Everything waterbox lives in ONE external repository: miniBox**
    (github.com/ToolAssisted-run/chimera-common-minibox), consumed as a submodule at
-   extern/tools/chimera-common-minibox like every other from-source dependency. It carries all
+   extern/chimera-common-minibox like every other from-source dependency. It carries all
    sides: the runtime (sandbox host - Chimera's meson builds it into the
    frontend's OS-dependent artifacts), the guest toolchain (the core-author
    kit: musl fork, emulibc, libco, libcxx sysroot, linkscript, common.mak),
@@ -594,7 +594,7 @@ re-record.
 
 Flavor (c) LANDED (2026-08-11): synth.wbx is the SAME synthcore.c
 compiled for the miniBox waterbox sandbox (see the miniBox repository at
-extern/tools/chimera-common-minibox - a from-scratch C/C++ port of BizHawk's waterbox host,
+extern/chimera-common-minibox - a from-scratch C/C++ port of BizHawk's waterbox host,
 GCC-built guest toolchain, machine spec, all meson) and wrapped in the
 waterbox ABI (tests/synth/package-box/). Its whole machine state lives in
 guest memory, so the waterbox host savestates it AUTOMATICALLY - no

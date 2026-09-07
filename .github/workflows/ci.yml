@@ -30,7 +30,7 @@ jobs:
           submodules: false
 
       - name: Check out miniBox
-        run: git submodule update --init extern/tools/chimera-common-minibox
+        run: git submodule update --init extern/chimera-common-minibox
 
       - name: Install build dependencies
         run: |
@@ -39,8 +39,8 @@ jobs:
 
       - name: Build miniBox (host + guest toolchain)
         run: |
-          meson setup extern/tools/chimera-common-minibox/build/meson-linux extern/tools/chimera-common-minibox
-          meson compile -C extern/tools/chimera-common-minibox/build/meson-linux
+          meson setup extern/chimera-common-minibox/build/meson-linux extern/chimera-common-minibox
+          meson compile -C extern/chimera-common-minibox/build/meson-linux
 
       - name: Build the waterboxed synth core (core.wbx) and its tester
         run: sh tests/synth/package-box/build-box.sh
@@ -78,7 +78,7 @@ jobs:
           submodules: false
 
       - name: Check out what the frontend is built from
-        run: git submodule update --init --recursive extern/tools
+        run: git submodule update --init --recursive extern
 
       - name: Install build dependencies
         run: |

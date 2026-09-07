@@ -150,5 +150,5 @@ set_target_properties(SDL2 PROPERTIES
 # Strip release builds
 target_link_options(SDL2 PRIVATE $<$<CONFIG:Release>:-s>)
 
-# NOTE: no copy step here — extern/tools/build-natives.ps1 (invoked by the main
+# NOTE: no copy step here — extern/build-natives.ps1 (invoked by the main
 # solution build) copies the built dll into the output folder.

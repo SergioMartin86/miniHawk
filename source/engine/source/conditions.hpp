@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "../../extern/tools/cjson/cJSON.h"
+#include "../../extern/cjson/cJSON.h"
 
 /* {"slot": id[, "extension": e]}, {"setting": n, "is"/"in"}, all/any/not;
  * anything malformed evaluates false. */

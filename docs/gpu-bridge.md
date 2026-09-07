@@ -22,7 +22,7 @@ half is in the same address space, so it reads those arguments - and the vertex
 data and textures they point at - in place. No copying, no marshalling.
 
 Both halves are generated from one list of entry points in miniBox
-(`extern/tools/chimera-common-minibox/source/gl/`). An opcode is an index into
+(`extern/chimera-common-minibox/source/gl/`). An opcode is an index into
 that master list, so every core and this engine mean the same thing by the same
 number. A guest asks how long the host's list is and declines a host that knows
 fewer entry points than it was built against.
