@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -21,7 +22,6 @@ namespace Chimera.Client.GUI
 		public CoreManagerPrompt()
 		{
 			SuspendLayout();
-			ClientSize = new(UIHelper.ScaleX(430), UIHelper.ScaleY(110));
 			FormBorderStyle = FormBorderStyle.FixedDialog;
 			StartPosition = FormStartPosition.CenterParent;
 			MaximizeBox = false;
@@ -32,13 +32,21 @@ namespace Chimera.Client.GUI
 			var margin = UIHelper.ScaleX(12);
 			Label message = new()
 			{
-				AutoSize = false,
-				Location = new(margin, UIHelper.ScaleY(14)),
-				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(44)),
+				AutoSize = true,
+				Location = new(margin, UIHelper.ScaleY(16)),
 				Text = "You have currently no emulation cores installed. Please open the Core Manager to install them.",
 			};
 
+			// The sentence decides how wide the window is, rather than a width
+			// decided here deciding where the sentence breaks. A guessed width holds
+			// only for the font and DPI it was guessed at; measuring holds for both.
 			var buttonWidth = UIHelper.ScaleX(150);
+			var textWidth = TextRenderer.MeasureText(message.Text, Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+			var buttonsWidth = (2 * buttonWidth) + UIHelper.ScaleX(8);
+			ClientSize = new(
+				Math.Max(textWidth, buttonsWidth) + (2 * margin) + UIHelper.ScaleX(4),
+				UIHelper.ScaleY(92));
+
 			var buttonRow = ClientSize.Height - UIHelper.ScaleY(38);
 
 			Button open = new()

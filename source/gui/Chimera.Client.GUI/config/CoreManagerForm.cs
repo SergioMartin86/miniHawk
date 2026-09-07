@@ -476,9 +476,12 @@ namespace Chimera.Client.GUI
 			var lines = new List<string> { choice.Detail };
 			if (choice.Release is { } release)
 			{
-				lines.Add(release.Channel is CoreChannel.Dev
-					? "Development build: replaced on every change, so it may stop being downloadable."
-					: "Published build: kept permanently, so a movie recorded on it stays replayable.");
+				// only the dev channel needs saying: it is the one with a catch. A
+				// published build behaving itself is what somebody already expects.
+				if (release.Channel is CoreChannel.Dev)
+				{
+					lines.Add("Development build: replaced on every change, so it may stop being downloadable.");
+				}
 				if (release.AssetSize > 0) lines.Add($"{release.AssetSize / 1024 / 1024} MB");
 			}
 			if (choice.Installed || choice.InstalledPath is not null) lines.Add("Installed.");
