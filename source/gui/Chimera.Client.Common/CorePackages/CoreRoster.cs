@@ -33,6 +33,14 @@ namespace Chimera.Client.Common
 		public string Repo { get; set; } = "";
 
 		/// <summary>
+		/// The core's page, for showing somebody where a core came from. Empty when
+		/// there is no repository - a package installed by hand has no source this
+		/// can know.
+		/// </summary>
+		[JsonIgnore]
+		public string Url => Repo.Length is 0 ? "" : $"https://github.com/{Repo}";
+
+		/// <summary>
 		/// The version this Chimera's CI matrix passed against, or empty where there is
 		/// no such build yet. Empty means "take the newest of the chosen channel"; it
 		/// is not an error, and a fresh core has it until the matrix has run once.

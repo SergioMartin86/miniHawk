@@ -107,10 +107,11 @@ namespace Chimera.Client.GUI
 			_changed = changed;
 
 			SuspendLayout();
-			// wider than it was: the list carries five columns now, and the three it
-			// used to carry already filled the width exactly
-			ClientSize = new(UIHelper.ScaleX(1000), UIHelper.ScaleY(500));
-			MinimumSize = new(UIHelper.ScaleX(820), UIHelper.ScaleY(420));
+			// wide because the list carries six columns; the three it originally had
+			// already filled the width exactly, so every column added since has had
+			// to bring its own room with it
+			ClientSize = new(UIHelper.ScaleX(1180), UIHelper.ScaleY(500));
+			MinimumSize = new(UIHelper.ScaleX(900), UIHelper.ScaleY(420));
 			StartPosition = FormStartPosition.CenterParent;
 			ShowIcon = false;
 
@@ -154,12 +155,15 @@ namespace Chimera.Client.GUI
 			// these have to add up to less than the list is wide (ClientSize minus the
 			// side panel and the margins), or the last one is only reachable by
 			// scrolling sideways
-			_cores.Columns.Add("Core", UIHelper.ScaleX(140));
-			_cores.Columns.Add("Systems", UIHelper.ScaleX(170));
-			_cores.Columns.Add("Installed", UIHelper.ScaleX(150));
+			_cores.Columns.Add("Core", UIHelper.ScaleX(130));
+			_cores.Columns.Add("Systems", UIHelper.ScaleX(160));
+			_cores.Columns.Add("Installed", UIHelper.ScaleX(140));
 			_cores.Columns.Add("Released", UIHelper.ScaleX(85));
 			// right-aligned, because a column of sizes is read by comparing them
-			_cores.Columns.Add("Size", UIHelper.ScaleX(65), HorizontalAlignment.Right);
+			_cores.Columns.Add("Size", UIHelper.ScaleX(60), HorizontalAlignment.Right);
+			// owner/name rather than the whole address: it is the identifying part,
+			// and the full URL is on the right where there is room for it
+			_cores.Columns.Add("Source", UIHelper.ScaleX(215));
 			_cores.SelectedIndexChanged += (_, _) => ShowSelectedCore();
 			_cores.ItemChecked += (_, e) =>
 			{
@@ -340,6 +344,7 @@ namespace Chimera.Client.GUI
 					divide.SubItems.Add("added by hand");
 					divide.SubItems.Add("");
 					divide.SubItems.Add("");
+					divide.SubItems.Add("");
 					_cores.Items.Add(divide);
 				}
 				ListViewItem item = new(row.Name) { Tag = row };
@@ -347,6 +352,7 @@ namespace Chimera.Client.GUI
 				item.SubItems.Add(InstalledText(row));
 				item.SubItems.Add(ReleasedText(row));
 				item.SubItems.Add(SizeText(row));
+				item.SubItems.Add(row.Source);
 				if (!row.IsInstalled) item.ForeColor = SystemColors.GrayText;
 				item.Checked = _ticked.Contains(row.Name);
 				_cores.Items.Add(item);
@@ -502,9 +508,13 @@ namespace Chimera.Client.GUI
 		{
 			if (row is null) return "";
 			if (row.IsUnclaimed) return "Installed from outside the official cores. Chimera has nowhere to check this one for updates.";
+			// the column shows owner/name; this is the address somebody can actually
+			// go to, which is the point of saying where a core came from
+			var source = row.Core?.Url is { Length: not 0 } url ? url : null;
 			if (choice is null)
 			{
-				return row.FeedError ?? "No versions fetched yet. Press Fetch versions to ask this core's repository what it has published.";
+				var nothing = row.FeedError ?? "No versions fetched yet. Press Fetch versions to ask this core's repository what it has published.";
+				return source is null ? nothing : $"{nothing}{Environment.NewLine}{Environment.NewLine}{source}";
 			}
 			var lines = new List<string> { choice.Detail };
 			if (choice.Release is { } release)
@@ -526,6 +536,11 @@ namespace Chimera.Client.GUI
 				lines.Add(CoreLicence.Read(path)?.Summary() is { Length: not 0 } terms
 					? terms
 					: "This package states no licence.");
+			}
+			if (source is not null)
+			{
+				lines.Add("");
+				lines.Add(source);
 			}
 			return string.Join(Environment.NewLine, lines);
 		}

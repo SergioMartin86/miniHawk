@@ -131,6 +131,13 @@ namespace Chimera.Client.Common
 			}
 		}
 
+		/// <summary>
+		/// Where this core is published, as <c>owner/name</c>; empty for a package
+		/// nothing claims. That is the identifying part of the address and the part
+		/// that fits a column - <see cref="RosterCore.Url"/> is the whole thing.
+		/// </summary>
+		public string Source => Core?.Repo ?? "";
+
 		/// <summary>Whether <paramref name="release"/> is already in the store.</summary>
 		public bool Has(CoreRelease release)
 			=> Installed.Any(p => string.Equals(p.Version, release.Version, StringComparison.OrdinalIgnoreCase));

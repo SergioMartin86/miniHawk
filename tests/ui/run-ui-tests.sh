@@ -45,7 +45,11 @@ if [ -z "${DISPLAY:-}" ]; then
 	command -v Xvfb >/dev/null || { echo "Xvfb not found (apt install xvfb)" >&2; exit 1; }
 	for n in 80 81 82 83 84 85; do
 		if [ ! -e "/tmp/.X11-unix/X$n" ]; then
-			Xvfb ":$n" -screen 0 1280x1024x24 -nolisten tcp >/dev/null 2>&1 & xvfb_pid=$!
+			# 1600x1200, not 1280x1024: a screenshot is taken by copying the
+			# window's rectangle off the screen, so a window wider than the
+			# screen fails with XGetImage returned NULL rather than a bad picture
+			# - and the Core Manager is 1180 wide before scaling
+			Xvfb ":$n" -screen 0 1600x1200x24 -nolisten tcp >/dev/null 2>&1 & xvfb_pid=$!
 			export DISPLAY=":$n"
 			break
 		fi
