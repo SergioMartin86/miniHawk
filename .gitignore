@@ -54,3 +54,9 @@ mono_crash.*.json
 
 # game data for local testing - never shipped, never committed
 /roms/
+
+# The cores are separate repositories now (docs/core-manager.md): Chimera ships
+# none, builds none, and downloads them through File > Core Manager. A checkout
+# under extern/cores is a developer's own, for working on a core beside the
+# frontend, and is nobody else's business.
+/extern/cores/

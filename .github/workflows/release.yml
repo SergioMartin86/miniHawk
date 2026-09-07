@@ -4,6 +4,12 @@ name: Release
 #
 # Two kinds of build, deliberately:
 #
+# The bundle is the FRONTEND. It carries no cores: those are fifteen other
+# repositories that publish themselves, and Chimera downloads them through File
+# > Core Manager (docs/core-manager.md). Each core's own releases are its
+# archive; the `cores` release here is the OLD one, kept because movies recorded
+# before the split cite packages in it, and it no longer grows.
+#
 #   dev      a ROLLING prerelease, replaced on every green push to main. One
 #            link that is always the newest; the assets carry the short commit
 #            in their names, so a downloaded file still says what it is.
@@ -70,8 +76,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.what.outputs.sha }}
-          submodules: recursive
+          # NOT recursive: the bundle carries no cores (docs/core-manager.md), so
+          # what it needs checked out is what the FRONTEND is built from
+          submodules: false
           fetch-depth: 0
+
+      - name: Check out what the frontend is built from
+        run: git submodule update --init --recursive extern/tools
 
       - name: Has main moved since the last nightly?
         id: moved
@@ -115,43 +126,6 @@ jobs:
         with:
           dotnet-version: '8.0'
 
-      - name: What the cores are pinned at
-        id: pins
-        if: steps.moved.outputs.skip != 'true'
-        run: |
-          # the cache key is the exact core commits plus the guest kit they
-          # build against: bump one core, rebuild one core
-          git submodule status extern/cores/* extern/tools/chimera-common-minibox > core-pins.txt
-          cat core-pins.txt
-
-      - name: Cache the core guest builds
-        if: steps.moved.outputs.skip != 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            extern/cores/*/build
-            extern/cores/*/waterbox/obj-guest
-            extern/cores/*/waterbox/bin
-          key: cores-${{ hashFiles('core-pins.txt') }}-${{ runner.os }}
-
-      # The PS3 core's LLVM on its own key. It is hours of build on a runner and
-      # it only changes when that core does, so it must not be thrown away every
-      # time some other core is bumped - which the cache above, keyed on EVERY
-      # pin, would do. Restored after it, so these paths win.
-      - name: What rpcs3 is pinned at
-        id: rpcs3pin
-        if: steps.moved.outputs.skip != 'true'
-        run: git submodule status extern/cores/rpcs3 > rpcs3-pin.txt
-
-      - name: Cache the PS3 core's LLVM
-        if: steps.moved.outputs.skip != 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            extern/cores/rpcs3/build/llvm-native
-            extern/cores/rpcs3/build/llvm-guest
-          key: rpcs3-llvm-${{ hashFiles('rpcs3-pin.txt') }}-${{ runner.os }}
-
       - name: Build the Linux bundle
         if: steps.moved.outputs.skip != 'true'
         run: ./tools/build-bundle.sh --platform linux --out build/bundle-linux
@@ -159,9 +133,7 @@ jobs:
       - name: Build the Windows bundle
         if: steps.moved.outputs.skip != 'true'
         # only the natives differ between the two: the managed assemblies are IL
-        # and every core.wbx is OS-independent, so both bundles ship the same
-        # packages byte for byte
-        run: ./tools/build-bundle.sh --platform windows --out build/bundle-windows --skip-cores
+        run: ./tools/build-bundle.sh --platform windows --out build/bundle-windows
 
       - name: Pack
         id: pack
@@ -188,23 +160,19 @@ jobs:
             echo "| Windows x64 | \`chimera-win-x64-$short.zip\` |"
             echo "| Linux x64 | \`chimera-linux-x64-$short.tar.gz\` |"
             echo
-            echo "Both carry the frontend, its natives and every core package."
-            echo "\`BUILD.txt\` names the exact commit of each, and \`LICENSES.md\`"
-            echo "states the terms of the whole bundle."
+            echo "Both carry the frontend and its natives. They carry **no cores**:"
+            echo "open **File > Core Manager** and download the ones you want, from the"
+            echo "projects that build them. \`BUILD.txt\` names the exact commit this"
+            echo "was built from and \`LICENSES.md\` states its terms."
             echo
-            echo "**This bundle is NON-COMMERCIAL**: it includes cores (Genesis Plus GX,"
-            echo "Opera, Snes9x) whose licences forbid commercial use, and that binds the"
-            echo "whole distribution. See LICENSES.md."
+            echo "Each core brings its own licence with it, and some (Genesis Plus GX,"
+            echo "Opera, Snes9x) forbid commercial use - which binds whatever they are"
+            echo "installed into. Chimera shows a core's terms once it is installed."
             echo
             echo "Windows will warn that the executable is unsigned and from an unknown"
             echo "publisher; it is not signed, and there is no way around that warning"
             echo "short of buying a certificate."
             echo
-            echo "### Cores in this build"
-            echo
-            echo '```'
-            git submodule status extern/cores/* | sed 's/^ //'
-            echo '```'
           } > build/release/NOTES.md
 
       - name: Publish the rolling dev release
@@ -230,38 +198,6 @@ jobs:
           # to download is as short as an upload
           gh release upload dev build/release/chimera-*.zip build/release/chimera-*.tar.gz \
             build/release/LICENSES.md build/release/BUILD.txt --clobber
-
-      - name: Archive every distinct core package, forever
-        if: steps.moved.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # A movie cites the SHA1 of the CORE PACKAGE that recorded it, and
-          # what a replay must match is that package: sync is the core, its
-          # settings and its firmware, not the frontend built around them. Core
-          # packages also change rarely - only when a core's submodule is bumped
-          # - and are small (five of the seven are about a megabyte).
-          #
-          # So every DISTINCT package is kept forever under one tag, named by
-          # its own hash. Whatever CorePackageSha1 a movie names, years later,
-          # is still downloadable - even if it was recorded on a rolling dev
-          # build whose bundle has long since been replaced.
-          gh release view cores >/dev/null 2>&1 || \
-            gh release create cores --title "Core package archive" --prerelease --notes \
-              "Every distinct core package Chimera has published, named <core>-<sha1>.chimeraCore. A movie cites the SHA1 of the package that recorded it; this is where that package stays. Assets named <core>-<sha1>.zip are the same format under the older name."
-          existing=$(gh release view cores --json assets --jq '.assets[].name')
-          for zip in build/bundle-windows/Cores/*.chimeraCore; do
-            base=$(basename "$zip" .chimeraCore)
-            sha=$(sha1sum "$zip" | cut -c1-12)
-            asset="$base-$sha.chimeraCore"
-            if printf '%s\n' "$existing" | grep -qx "$asset"; then
-              echo "already archived: $asset"
-              continue
-            fi
-            cp "$zip" "build/release/$asset"
-            gh release upload cores "build/release/$asset"
-            echo "archived $asset"
-          done
 
       - name: Publish the nightly
         if: steps.moved.outputs.skip != 'true' && steps.what.outputs.kind == 'nightly'

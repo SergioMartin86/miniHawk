@@ -353,12 +353,42 @@ quickest way to get a working set of cores into a fresh checkout by hand.
 
 ## Licences
 
-`tools/bundle-licenses.py` computes `LICENSES.md` from the packages in the
-bundle. A bare bundle carries only the frontend's terms - but the obligations
-are real the moment a core is installed: several cores forbid commercial
-redistribution, and others are GPL and require identifiable corresponding
-source.
+This used to be a build-time question. The bundle carried every core, and
+`tools/bundle-licenses.py` computed one `LICENSES.md` from what they declared -
+which is how the release notes came to say, correctly, that the whole
+distribution was non-commercial.
 
-So the terms move to install time. The manager shows what a package's licence
-demands before it is downloaded, and the licence view is computed from what is
-installed rather than from what shipped.
+A bare bundle is not. `LICENSES.md` now states the frontend's own terms and says
+plainly that **installing a core changes them**: several cores (Genesis Plus GX,
+Opera, Snes9x) forbid commercial use and that binds whatever they are installed
+into, while others are GPL and require their corresponding source to stay
+identifiable.
+
+So the terms move to install time. Every package carries
+`licenses/licenses.json`, put there at package time; `CoreLicence` reads it and
+the manager shows what an installed core demands - commercial use first when it
+is forbidden, because that is the part that binds everything around it - rather
+than leaving somebody to open the zip.
+
+`bundle-licenses.py` still reads `Cores/`, because a bundle assembled WITH
+packages (a developer's, a downstream packager's) must still state their terms.
+
+## What the frontend no longer carries
+
+`extern/cores/*` is gone from the index and from `.gitmodules`, and `.gitignore`
+keeps the path free for a developer's own checkout of a core they are working on
+beside the frontend. With it went:
+
+* `build_core` and `--skip-cores` from `tools/build-bundle.sh`, and the core
+  hashes from `BUILD.txt`;
+* the core pin file, the core build cache and the PS3 core's LLVM cache from
+  `release.yml` - which is most of what made a release take hours;
+* the "archive every distinct core package" step. The
+  [`cores`](https://github.com/ToolAssisted-run/chimera/releases/tag/cores)
+  release stays, because movies recorded before the split cite packages in it,
+  and it no longer grows: each core archives its own nightlies now;
+* `submodules: recursive` from both workflows' checkouts. They check out
+  `extern/tools` explicitly, which is what the frontend is actually built from.
+
+A bare Linux bundle is 117 MB, nearly all of it ffmpeg and the native
+libraries.

@@ -1,35 +1,33 @@
 #!/bin/bash
-# Assembles a ready-to-run Chimera bundle: the frontend, its natives, every core
-# package, and the licences of the whole thing.
+# Assembles a ready-to-run Chimera bundle: the frontend, its natives, the roster
+# of official cores, and the licences.
 #
-# This is what a release IS, and it is in the repository rather than in someone's
-# home directory on purpose: one chimera commit pins one exact bundle. The cores
-# are submodules (extern/cores/*), so the commit says which core builds went in,
-# and every package stamps its own provenance into build.json.
+# It carries NO CORES. They are fifteen other repositories that build, package
+# and publish themselves, and the frontend downloads them through File > Core
+# Manager (docs/core-manager.md). Building them all here made the bundle large
+# and the release slow, and bumping any one of them rebuilt the world.
+#
+# What is lost with them is "one chimera commit pins one exact bundle". Two
+# things replace it: official-cores.json names the core versions this release
+# was tested against, and a movie already cites the exact core package that
+# recorded it, which the manager can go and fetch.
 #
 # Usage: tools/build-bundle.sh --platform windows|linux --out <dir>
-#                              [--skip-natives] [--skip-cores]
+#                              [--skip-natives]
 #
 #   --skip-natives   the natives and the managed solution are already built
 #                    (a rebuild of the same platform)
-#   --skip-cores     take the core packages already in build/Cores rather than
-#                    rebuilding them. A core.wbx is OS-independent - the host
-#                    maps and runs it - so the second platform of a release
-#                    ships the SAME packages, byte for byte, and rebuilding
-#                    them would only risk them differing.
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 platform=""
 out=""
 skip_natives=0
-skip_cores=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--platform) platform="$2"; shift 2 ;;
 		--out) out="$2"; shift 2 ;;
 		--skip-natives) skip_natives=1; shift ;;
-		--skip-cores) skip_cores=1; shift ;;
 		*) echo "unknown option: $1" >&2; exit 2 ;;
 	esac
 done
@@ -96,48 +94,12 @@ cp "$root/official-cores.json" "$out/"
 say "ffmpeg"
 "$root/tools/fetch-ffmpeg.sh" "$platform" "$out/dll"
 
-# ---- the cores, from the pinned submodules ----------------------------------
-build_core() { # <submodule name> <package file name>...
-	name="$1"; shift
-	if [ "$skip_cores" -eq 1 ]; then
-		for zip in "$@"; do
-			[ -f "$root/build/Cores/$zip" ] || { echo "  --skip-cores, but build/Cores/$zip is not there" >&2; return 1; }
-			cp "$root/build/Cores/$zip" "$out/Cores/"
-		done
-		return 0
-	fi
-	dir="$root/extern/cores/$name"
-	if [ ! -f "$dir/waterbox/build-package.sh" ]; then
-		echo "  core submodule '$name' is not checked out; run: git submodule update --init --recursive extern/cores/$name" >&2
-		return 1
-	fi
-	say "core package: $name"
-	( cd "$dir" && ./waterbox/build-package.sh -r "$root" > /dev/null )
-	for zip in "$@"; do
-		cp "$root/build/Cores/$zip" "$out/Cores/"
-	done
-}
-
-build_core quickernes quickernes.chimeraCore
-build_core neshawk quickerneshawk.chimeraCore
-build_core ppsspp ppsspp.chimeraCore
-build_core dosbox-x dosbox-x.chimeraCore
-build_core gpgx gpgx.chimeraCore
-build_core opera opera.chimeraCore
-build_core snes9x snes9x.chimeraCore
-build_core stella stella.chimeraCore
-build_core flycast flycast.chimeraCore
-build_core pcsx2 pcsx2.chimeraCore
-build_core xemu xemu.chimeraCore
-build_core dolphin dolphin.chimeraCore
-build_core rpcs3 rpcs3.chimeraCore
-build_core ruffle ruffle.chimeraCore
-build_core eka2l1 eka2l1.chimeraCore
-
 say "licences"
-# What the bundle as a whole may be used for, computed from what its packages
-# declare. A package that declares nothing stops the build rather than shipping
-# a binary with no stated terms.
+# What the bundle may be used for. It carries NO cores - each is installed from
+# its own project through File > Core Manager, and brings its own terms with it,
+# several of which (Genesis Plus GX, Opera, Snes9x) forbid commercial use and
+# bind whatever they are installed into. This states the frontend's own terms
+# and says where the rest come from.
 python3 "$root/tools/bundle-licenses.py" "$out" --chimera-root "$root"
 
 say "build stamp"
@@ -148,24 +110,28 @@ say "build stamp"
 	printf "chimera:   %s %s\n" \
 		"$(git -C "$root" rev-parse HEAD)" \
 		"$(git -C "$root" log -1 --format=%s | cut -c1-60)"
-	printf "\ncores (submodule commits):\n"
-	git -C "$root" submodule status extern/cores/* 2>/dev/null | sed 's/^/  /'
 	printf "\nguest kit:\n"
 	git -C "$root" submodule status extern/tools/chimera-common-minibox 2>/dev/null | sed 's/^/  /'
 	printf "\nfiles (sha1):\n"
-	( cd "$out" && sha1sum Chimera.exe Cores/*.chimeraCore 2>/dev/null | sed 's/^/  /' )
+	( cd "$out" && sha1sum Chimera.exe 2>/dev/null | sed 's/^/  /' )
+	printf "\ncores: none. Installed from their own projects (File > Core Manager);\n"
+	printf "a movie names the exact core package that recorded it.\n"
 } > "$out/BUILD.txt"
 cat "$out/BUILD.txt"
 
 say "verifying"
 # A truncated dll is indistinguishable from a bug until you check.
 bad=0
-for f in "$out/Chimera.exe" "$out"/dll/* "$out"/Cores/*.chimeraCore; do
+for f in "$out/Chimera.exe" "$out"/dll/*; do
 	[ -s "$f" ] || { echo "EMPTY: $f" >&2; bad=1; }
 done
+# The bundle normally has no cores at all; one is here only if somebody put it
+# there, and then it had better be a readable package.
 for z in "$out"/Cores/*.chimeraCore; do
+	[ -e "$z" ] || break
 	python3 -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).testzip()" "$z" || { echo "CORRUPT: $z" >&2; bad=1; }
 done
 [ -s "$out/LICENSES.md" ] || { echo "MISSING: LICENSES.md" >&2; bad=1; }
+[ -s "$out/official-cores.json" ] || { echo "MISSING: official-cores.json (the Core Manager would have nothing to offer)" >&2; bad=1; }
 [ "$bad" -eq 0 ] || { echo "  the bundle is NOT clean" >&2; exit 1; }
 printf "  %s in %s\n" "$(du -sh "$out" | cut -f1)" "$out"

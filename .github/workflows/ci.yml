@@ -73,10 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # NOT recursive: this job builds the frontend and replays the synth
-          # core, and never opens a shipped one. Cloning extern/cores anyway
-          # costs nine gigabytes of runner disk and the time to fetch it - and
-          # the disk is the part that would eventually stop being merely wasteful.
+          # only what the frontend is built from; the cores are separate
+          # repositories now and this job never opens one (see published-cores)
           submodules: false
 
       - name: Check out what the frontend is built from

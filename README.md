@@ -30,7 +30,13 @@ Chimera is not designed for casual play. For that, use the original emulators di
 
 ## Supported systems
 
-The officially maintained cores currently offered for Chimera are:
+Chimera ships **no cores**. Each is a separate project with its own repository,
+its own release history and its own licence; you install the ones you want from
+inside Chimera, through **File > Core Manager**, which downloads them from the
+projects below and checks each download against what that project published.
+See [docs/core-manager.md](docs/core-manager.md).
+
+The officially maintained cores are:
 
 | System | Core |
 | --- | --- |
@@ -58,24 +64,33 @@ The officially maintained cores currently offered for Chimera are:
 
 ## Getting a build
 
-Chimera and its officially maintained cores are built together, for Linux and
-Windows, and published here:
+The frontend is built for Linux and Windows and published here:
 
 - [**Latest development build**](https://github.com/ToolAssisted-run/chimera/releases/tag/dev) - rebuilt on every change to `main` that passes the gates, and replaced each time. Nothing is published that did not pass them.
 - [**Nightly builds**](https://github.com/ToolAssisted-run/chimera/releases) - dated, immutable, and kept forever. Cite one of these in a bug report or beside a movie: a run is only reproducible while the build that recorded it still exists.
 
-Every distinct core package is kept forever too, in the
-[`cores`](https://github.com/ToolAssisted-run/chimera/releases/tag/cores)
-release, named by its own SHA1 - which is what a movie cites, since what a
-replay has to match is the core rather than the frontend around it.
+A bundle carries no cores. Open **File > Core Manager** and download what you
+want; a fresh install opens it for you, since a Chimera with no core cannot
+open anything. Each core publishes its own `dev` and nightly releases the same
+way, and its nightlies are never deleted - which is what lets a movie name the
+exact package that recorded it and still be replayable years later.
 
-Every bundle carries `BUILD.txt`, naming the exact commit of the frontend and of
-every core in it, and `LICENSES.md`, stating the terms of the whole thing.
-**Those terms are non-commercial**, because some of the cores' licences are.
+Every bundle carries `BUILD.txt`, naming the exact commit it was built from, and
+`LICENSES.md`, stating its terms. **Installing a core adds that core's terms**,
+and some of them (Genesis Plus GX, Opera, Snes9x) forbid commercial use, which
+binds whatever they are installed into; Chimera shows a core's licence once it
+is installed.
+
+Core packages published before the split are kept in the
+[`cores`](https://github.com/ToolAssisted-run/chimera/releases/tag/cores)
+release, named by SHA1. It no longer grows - each core archives its own now -
+but movies recorded then still cite packages in it.
 
 ## Building
 
-The canonical build is Linux-hosted and meson-mediated, and produces the artifacts for both operating systems: the managed frontend is built once (platform-neutral IL, .NET Framework on Windows / Mono on Linux), and every native library is built twice: gcc for Linux, mingw-w64 cross for Windows. Clone with `--recursive`; the repository contains no precompiled binaries.
+The canonical build is Linux-hosted and meson-mediated, and produces the artifacts for both operating systems: the managed frontend is built once (platform-neutral IL, .NET Framework on Windows / Mono on Linux), and every native library is built twice: gcc for Linux, mingw-w64 cross for Windows. Clone with `--recursive`; the repository contains no precompiled binaries, and
+no cores - `tools/fetch-cores.sh` puts the published ones in `build/Cores` if
+you want a working set without opening the frontend.
 
 ```
 meson setup build/meson-linux   --prefix "$(pwd)/build" --libdir dll
@@ -87,12 +102,13 @@ meson compile -C build/meson-linux frontend   # the managed solution (dotnet)
 
 Linux requirements: meson, ninja, cmake, gcc, mingw-w64, and Microsoft's own .NET SDK binary (`curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0`); distro-built SDKs omit the WindowsDesktop targets the net48/WinForms frontend needs.
 
-The frontend ships no cores, so build at least one before running it. Each lives
-in `extern/cores/` and installs itself into `build/Cores/`:
+The frontend ships no cores, so get at least one before running it - either the
+published packages, or a core repository cloned wherever you like:
 
 ```
-extern/cores/quickernes/waterbox/build-package.sh   # one core
-tools/build-bundle.sh --platform linux --out <dir>  # or the whole distributable
+tools/fetch-cores.sh                                # every published core -> build/Cores
+<core checkout>/waterbox/build-package.sh -r $PWD   # or build one yourself
+tools/build-bundle.sh --platform linux --out <dir>  # the distributable (no cores)
 ```
 
 To run: `build\Chimera.exe` on Windows, `build/ChimeraMono.sh` on Linux, then

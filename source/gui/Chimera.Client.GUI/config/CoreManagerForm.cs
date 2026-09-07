@@ -86,7 +86,7 @@ namespace Chimera.Client.GUI
 				Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
 				Location = new(margin, UIHelper.ScaleY(8)),
 				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(32)),
-				Text = "Cores are published by their own projects and downloaded from there. Nothing is fetched until you ask: pick a core, then a version.",
+				Text = "Cores are published by their own projects and downloaded from there. Nothing is fetched until you ask: pick a core, then a version. Each core carries its own licence, shown here once it is installed - some forbid commercial use.",
 			};
 
 			_cores = new ListView
@@ -323,6 +323,15 @@ namespace Chimera.Client.GUI
 				if (release.AssetSize > 0) lines.Add($"{release.AssetSize / 1024 / 1024} MB");
 			}
 			if (choice.Installed || choice.InstalledPath is not null) lines.Add("Installed.");
+			// The terms, once they can be read - which is once the package is here.
+			// The bundle used to carry every core and compute one LICENSES.md from
+			// them; it carries none now, so this is where a core says what it demands.
+			if (choice.InstalledPath is { } path)
+			{
+				lines.Add(CoreLicence.Read(path)?.Summary() is { Length: not 0 } terms
+					? terms
+					: "This package states no licence.");
+			}
 			return string.Join(Environment.NewLine, lines);
 		}
 

@@ -210,16 +210,26 @@ Probed once after `Init`; absent exports simply mean the tool is not offered.
 - Registers, trace, core-rendered surfaces, save-data export, turbo
   (`SetRenderingEnabled`).
 
-## Joining the bundle
+## Publishing it
+
+Chimera ships no cores and builds none: a core is a repository that publishes
+itself, and the frontend downloads it (docs/core-manager.md). Joining the
+official set is therefore four things:
 
 1. Push the core repository (`ToolAssisted-run/chimera-core-<name>`, branch
    `main`).
-2. `git submodule add -b main <url> extern/cores/<name>`.
-3. One line in `tools/build-bundle.sh`: `build_core <name> <name>.chimeraCore`.
-4. A row in the README's core table.
-5. Run the witness gate before committing to this repository.
+2. Give it a `chimera.yml` that gates the package on a public runner and
+   uploads it as an artifact named `<name>-${{ github.sha }}`. **This is the
+   hard part**, and it is a content problem before it is a CI problem: a gate
+   that needs a BIOS or a commercial rom cannot run there, so what CI can prove
+   has to be designed around what may be distributed. Five cores (dosbox-x,
+   eka2l1, rpcs3, xemu, ruffle) are stuck exactly here.
+3. Add the `publish` job and a daily `schedule:` trigger, which is three lines
+   calling `ToolAssisted-run/chimera/.github/workflows/publish-core.yml@main` -
+   see any wired core, or docs/core-manager.md.
+4. A row in Chimera's `official-cores.json` and in the README's core table.
 
-**The bundle build runs `./waterbox/build-package.sh -r <chimera>` in a fresh
+**The publish job runs `./waterbox/build-package.sh -r <chimera>` in a fresh
 recursive checkout, and nothing else.** Two consequences, both of which have
 cost a red release:
 

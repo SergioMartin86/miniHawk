@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Writes the licence of a Chimera bundle, from what its parts declare.
 
-A bundle is the frontend plus a set of core packages, and a core package is
-somebody else's emulator: several of them (Genesis Plus GX, Snes9x, the
-FreeDO-descended parts of Opera) forbid commercial redistribution, and others
-(PPSSPP, DOSBox-X) are GPL and require the corresponding source to be
+A bundle is the frontend, and the frontend alone: Chimera ships no cores, and
+each is installed from its own project through File > Core Manager
+(docs/core-manager.md). So this states the frontend's terms and says plainly
+where the rest come from.
+
+It still reads Cores/ - a bundle assembled with packages in it, which a
+developer or a downstream packager may do, must state their terms too. A core
+package is somebody else's emulator: several of them (Genesis Plus GX, Snes9x,
+the FreeDO-descended parts of Opera) forbid commercial redistribution, and
+others (PPSSPP, DOSBox-X) are GPL and require the corresponding source to be
 identifiable. Those terms bind the WHOLE distribution, not just the zip they
-came in - so the bundle has to say so, in one place, plainly.
+came in.
 
 Nothing here is written by hand. Each package carries licenses/licenses.json
 (put there by miniBox's package-licenses.py), and this reads them, copies every
@@ -109,9 +115,18 @@ def main():
         lines.append("")
         lines.append("Removing those packages from `Cores/` removes the restriction they impose;")
         lines.append("what is left is stated per package below.")
-    else:
+    elif packages:
         lines.append("Every part of this bundle permits redistribution; see each component's")
         lines.append("licence below for the conditions.")
+    else:
+        lines.append("This bundle carries **no emulator cores**, so what is here is the")
+        lines.append("frontend and its own dependencies, stated below.")
+        lines.append("")
+        lines.append("**Installing a core changes this.** Cores are separate projects,")
+        lines.append("downloaded through File > Core Manager, and each brings its own terms")
+        lines.append("with it - several (Genesis Plus GX, Opera, Snes9x) forbid commercial")
+        lines.append("use, and that binds whatever they are installed into. Every package")
+        lines.append("carries its own `licenses/` and says so before you install it.")
     lines.append("")
     lines.append("## The frontend")
     lines.append("")
@@ -138,6 +153,11 @@ def main():
 
     lines.append("## The cores")
     lines.append("")
+    if not packages:
+        lines.append("None in this bundle. A core installed later states its own terms, which")
+        lines.append("Chimera shows before installing it and keeps in the package's own")
+        lines.append("`licenses/` afterwards.")
+        lines.append("")
     for pkg, index in packages:
         lines.append(f"### {pkg}")
         lines.append("")
