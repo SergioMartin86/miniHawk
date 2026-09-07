@@ -424,9 +424,40 @@ extern "C" const char *ce_gl_description(void)
 	return g_ready ? g_description : "";
 }
 
+/* Mint a fresh id. It need only DIFFER from any other - the guest compares it
+ * for equality and nothing else - so it is taken from where this process sits
+ * in memory (the loader decides that anew every run), the clock, and a
+ * monotone count. See ce_gl_start for why it changes per session, not just
+ * per context. */
+static void mint_context_id()
+{
+	static uint64_t made;
+	g_context_id = (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&g_context_id)) << 16)
+		^ (static_cast<uint64_t>(time(nullptr)) << 8)
+		^ (++made);
+	if (g_context_id == 0) g_context_id = 1; /* 0 means "cannot tell" */
+}
+
 extern "C" int32_t ce_gl_start(char *error_out, int32_t error_len)
 {
-	if (g_ready) return 1;
+	if (g_ready)
+	{
+		/* The context is made once per process and shared by every session,
+		 * because there is only ever one machine. But the GL objects a
+		 * renderer holds are not the context's, they are that SESSION's: made
+		 * during its boot, and meaningless to the next session even though the
+		 * driver's context outlived them. So each session that takes the bridge
+		 * gets a fresh id, and a state carried across the session boundary
+		 * (a greenzone reload after close-and-reopen, all in this one process)
+		 * shows the guest an id that has moved, which is its cue to rebuild.
+		 * Without this the id stayed put across sessions, the guest kept the
+		 * dead session's object names, and the first draw bound a gone
+		 * framebuffer and aborted - a crash on reopening a saved project
+		 * (issue #43). A fresh process already gets a new id from the block
+		 * below; this is the same signal for the in-process case. */
+		mint_context_id();
+		return 1;
+	}
 
 	/* Making a context makes it current, and this runs while the frontend is
 	 * on screen with a context of its own. Remember what it had, hand it back
@@ -471,17 +502,9 @@ extern "C" int32_t ce_gl_start(char *error_out, int32_t error_len)
 	}
 
 	g_ready = true;
-	/* An identity for THIS context, and no other. It need only differ - the
-	 * guest compares it for equality and nothing else - so it is taken from
-	 * where this process happens to sit in memory (which the loader decides
-	 * anew every run), the clock, and a count of the contexts made here. */
-	{
-		static uint64_t made;
-		g_context_id = (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&g_context_id)) << 16)
-			^ (static_cast<uint64_t>(time(nullptr)) << 8)
-			^ (++made);
-		if (g_context_id == 0) g_context_id = 1; /* 0 means "cannot tell" */
-	}
+	/* An identity the guest stores beside its GL objects and compares. Minted
+	 * per session, not merely per context (see the g_ready path above). */
+	mint_context_id();
 	return_current();
 	return 1;
 }

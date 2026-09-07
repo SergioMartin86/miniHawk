@@ -177,10 +177,22 @@ failing call one that names an object.
 ### Noticing, and building them again
 
 A renderer can be told which context its calls are landing on: `GL_OP_CONTEXT_ID`
-answers with an identity minted when the context is made (0 means "cannot tell" -
-no bridge, or a host older than the question, and a guest must read that as
-"assume nothing moved"). A renderer that stores that number beside its objects
-can see, at the top of any frame, that the ground has moved - and rebuild.
+answers with an identity the bridge mints for each SESSION that takes it (0 means
+"cannot tell" - no bridge, or a host older than the question, and a guest must
+read that as "assume nothing moved"). A renderer that stores that number beside
+its objects can see, at the top of any frame, that the ground has moved - and
+rebuild.
+
+Per session, not per context, and the difference is the whole of issue #43. The
+GL context is made once per process and shared by every session, because there
+is only ever one machine; but the objects a renderer holds belong to the SESSION
+that made them, not to the long-lived context. Close a project and open one
+again without restarting Chimera and the second session inherits the first's
+context - so an id minted per context would not move, the guest would keep the
+dead session's object names, and the first draw would bind a gone framebuffer
+and abort (the sandbox reports it as unimplemented syscall 200). Minting the id
+afresh each time a session takes the bridge is what makes the greenzone reload
+on reopen present a changed id, the same signal a fresh process already gets.
 
 RPCS3 does. Its `on_init_thread` and `on_exit` were split into the half that
 belongs to the CONTEXT (every GL object) and the half that belongs to the
@@ -203,6 +215,15 @@ process: the picture returns (1280x720, 20322 lit pixels, against `lit 0`
 forever); GL errors are 137 in the rebuild frame and 3 a frame after it, which
 is the rate an ordinary run has anyway.
 
+The in-process reopen was measured on xemu (issue #43): a state saved at frame
+150, the session freed, another opened over the same GL context, and the state
+loaded into it - exactly what closing and reopening a project does. Before the
+per-session id it aborted on the first draw (the framebuffer assert above);
+after it, the id has moved, the renderer rebuilds, and the picture returns
+(640x480, ~305k lit pixels) with 3 GL errors, the ordinary rate. Confirmed on
+an NVIDIA GTX 1060 (581.42) and on llvmpipe, so it is the rebuild logic that
+was never triggered rather than anything a particular driver does.
+
 ### What the frontend does with that
 
 A core declares `video.gpuStatesSurviveTheContext` when its renderer does this,
@@ -215,6 +236,6 @@ says so when it opens. Rewind and branches within a session are untouched either
 way - the objects are still there - and a project that loses its cache replays,
 which is what an empty greenzone has always meant.
 
-RPCS3 says yes. PCSX2, Flycast, xemu, Dolphin and Ruffle do not yet: the same
-split would work for the two that have an `on_exit`/`on_init` pair of this
+RPCS3 and xemu say yes. PCSX2, Flycast, Dolphin and Ruffle do not yet: the same
+split would work for the ones that have an `on_exit`/`on_init` pair of this
 shape, and Ruffle needs it a layer lower, inside wgpu.
