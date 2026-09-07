@@ -162,12 +162,33 @@ repository that has gone, and a rate limit all come back as a message the
 manager shows, with whatever the cache still knows alongside it. An offline
 Chimera opens the manager and lists what it saw last time.
 
-Unauthenticated GitHub allows 60 requests an hour per IP. A check over the
-cores someone actually has is a handful; the roster in full is about fifteen.
-Release asset downloads do not count against that limit. Responses are cached
-by ETag so a repeated check costs nothing, a 403 says *rate limited, try again
-in N minutes* rather than failing silently, and an optional token in the config
-serves anyone who hits the limit for real.
+Unauthenticated GitHub allows 60 requests an hour per IP, and one question to
+one repository is one request. There is no endpoint that asks about several
+repositories at once, so the cost of an action is simply how many cores it
+covers:
+
+| action | requests |
+|---|---|
+| Fetch versions, on one core | 1 |
+| Check for updates, N ticked | N |
+| Download latest, N ticked | N, minus any already asked about this session |
+| Downloading the package itself | **0** |
+
+Asset downloads are genuinely free: `browser_download_url` redirects to
+`release-assets.githubusercontent.com`, which is not the API and not counted.
+So the budget is spent on *asking*, never on *fetching*, and the worst case is
+a full fifteen-core sweep: four of those an hour.
+
+Note that a 304 **does** count. Conditional requests were once exempt and are
+not any more (measured 2026-09-07: three 304s, three requests off the
+allowance). The ETag cache is therefore worth keeping for bandwidth and for the
+offline fallback, but it does not buy back quota - do not size the budget as
+though a repeated check were free.
+
+A 403 says *rate limited, try again in N minutes* rather than failing silently,
+and `GitHubToken` in the config raises the ceiling to 5000/hour for anyone who
+hits 60 for real - most likely someone behind a shared address, since the limit
+is per IP rather than per person.
 
 ## Where cores live
 

@@ -35,11 +35,18 @@ namespace Chimera.Client.Common
 	/// startup, and makes no request until somebody presses Download or Check for
 	/// updates - so the whole of this class is on a path a person started.
 	///
-	/// Unauthenticated GitHub allows 60 requests an hour per address. A check over
-	/// the cores somebody actually has is a handful of those and the whole roster is
-	/// about fifteen, which is why the answers are cached by ETag: asking again
-	/// costs nothing at all unless the answer changed. A token in the config raises
-	/// the limit for anyone who hits it for real.
+	/// Unauthenticated GitHub allows 60 requests an hour per address, and one
+	/// question to one repository is one of them: a check over the cores somebody
+	/// actually has is a handful, and the whole roster is about fifteen. Downloading
+	/// the package that answer names is free, so the budget is spent on asking.
+	///
+	/// The ETag cache below does NOT buy quota back. A 304 counts against the limit
+	/// exactly as a 200 does (measured 2026-09-07); the exemption conditional
+	/// requests once had is gone. It is still worth having for the bandwidth and
+	/// because it is what lets an offline manager list what it saw last time - but
+	/// nothing here should be sized as though repeating a check were free.
+	///
+	/// A token in the config raises the limit for anyone who hits it for real.
 	/// </summary>
 	public sealed class CoreFeed
 	{
