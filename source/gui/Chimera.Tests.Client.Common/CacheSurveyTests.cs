@@ -27,6 +27,12 @@ namespace Chimera.Tests.Client.Common
 			Environment.SetEnvironmentVariable("CHIMERA_DATA_HOME", Path.Combine(_dir, "data-home"));
 		}
 
+		/// <summary>See TasMovieProjectFormatTests: ClassCleanup runs at the end
+		/// of the assembly by default, so this is re-established per test.</summary>
+		[TestInitialize]
+		public void UseThePlaygroundDataHome()
+			=> Environment.SetEnvironmentVariable("CHIMERA_DATA_HOME", Path.Combine(_dir, "data-home"));
+
 		[ClassCleanup]
 		public static void RemovePlayground()
 		{

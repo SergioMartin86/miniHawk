@@ -49,9 +49,13 @@ themselves, which are named by their SHA1:
 Not in the project:
 
 - **Paths.** Never stored. Only names and SHA1s.
-- **Greenzone / cached states.** A sibling cache file next to the project;
-  if present it is loaded, otherwise the session starts from a clean
-  state-memory slate. Losing it costs recomputation, never work. It records
+- **Greenzone / cached states.** Kept in the per-user cache, keyed by the
+  project's id (docs/state-manager.md), not beside the project: a project
+  folder is the folder people sync, and a multi-gigabyte sibling there is
+  uploaded again on every save. If present it is loaded, otherwise the
+  session starts from a clean state-memory slate. A greenzone left beside
+  an older project is moved into the cache the first time it is opened.
+  Losing it costs recomputation, never work. It records
   which machine made its states (core build, settings, firmware pins, file
   hashes) and is used only when the project still describes that machine:
   a savestate is the memory of one exact machine, and the sandbox checks

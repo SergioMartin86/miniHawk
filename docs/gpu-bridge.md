@@ -230,9 +230,9 @@ A core declares `video.gpuStatesSurviveTheContext` when its renderer does this,
 and a project records it (`GpuStatesSurvive`) so that the answer is there when
 the cached states are opened - by which time there is no core to ask. For a core
 that says yes, the greenzone is kept like any other core's. For one that does
-not, the states are session-local: the project writes none into its
-`.chimeraGreenZone` and uses none from an older one, branch states included, and
-says so when it opens. Rewind and branches within a session are untouched either
+not, the states are session-local: the project writes none into its greenzone
+and uses none from an older one, branch states included, and says so when it
+opens. Rewind and branches within a session are untouched either
 way - the objects are still there - and a project that loses its cache replays,
 which is what an empty greenzone has always meant.
 

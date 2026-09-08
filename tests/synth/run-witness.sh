@@ -276,6 +276,12 @@ if [ "$level" = "both" ] || [ "$level" = "b" ]; then
 
 	export LD_LIBRARY_PATH="$repo_root/build/dll:$repo_root/build:/usr/lib/x86_64-linux-gnu"
 	export MONO_CRASH_NOFILE=1 MONO_WINFORMS_XIM_STYLE=disabled ALSOFT_DRIVERS=null
+	# The frontend keeps a project's greenzone in the per-user cache now, not
+	# beside the project, so without this the witness would leave its states in
+	# the real one. XDG_DATA_HOME and not CHIMERA_DATA_HOME: the latter moves the
+	# WHOLE data directory, tools and all, and the encode leg then cannot find
+	# ffmpeg. This moves only where per-user data is kept.
+	export XDG_DATA_HOME="$work/data-home"
 	xvfb_pid=""
 	cleanup() { [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null; }
 	trap cleanup EXIT

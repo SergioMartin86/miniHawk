@@ -36,10 +36,28 @@ namespace Chimera.Client.Common
 		public EngineProject Project => _project ??= EngineProject.New();
 
 		/// <summary>
-		/// The greenzone sibling: everything regenerable, beside the project.
-		/// Present = loaded; absent = a clean slate (docs/project.md).
+		/// The greenzone: everything regenerable, in the per-user cache and keyed
+		/// by the project's id. Present = loaded; absent = a clean slate
+		/// (docs/project.md).
+		///
+		/// It used to sit beside the project, and it is the reason that stopped
+		/// being tenable. A .chimeraProject is the one file that exists as far as
+		/// anyone else is concerned, and people keep their projects in synced
+		/// folders - the author's are in Google Drive - where a multi-gigabyte
+		/// sibling is uploaded again on every save, by a client that holds files
+		/// open while it works. Nothing that can be recomputed belongs there. The
+		/// remembered file paths moved first (<see cref="ProjectLocalPaths"/>);
+		/// this is the large one.
 		/// </summary>
-		public string GreenZoneFilename => Path.ChangeExtension(Filename, "chimeraGreenZone");
+		public string GreenZoneFilename
+			=> Path.Combine(ProjectCache.DirectoryFor(Project.Id), "greenzone.chimeraGreenZone");
+
+		/// <summary>
+		/// Where a project written before the cache existed left its greenzone:
+		/// beside the project file. Only ever read, and only to move it here.
+		/// </summary>
+		public static string LegacyGreenZonePathFor(string projectPath)
+			=> Path.ChangeExtension(projectPath, "chimeraGreenZone");
 
 		public string DroppedCacheNote { get; private set; }
 
@@ -265,7 +283,8 @@ namespace Chimera.Client.Common
 			if (!isBackup)
 			{
 				EngineProgress.Report("writing the greenzone");
-				WriteCacheFile(Path.ChangeExtension(fn, "chimeraGreenZone"));
+				ProjectCache.Ensure(p.Id);
+				WriteCacheFile(GreenZoneFilename);
 				// and where this machine keeps the project's files, in a sibling of
 				// its own: the project itself stays distributable, carrying names and
 				// hashes and no paths at all (docs/project.md). Merged over whatever
@@ -578,13 +597,39 @@ namespace Chimera.Client.Common
 		/// clean slate (fresh greenzone, no session position), never a failed
 		/// load - that is the deal that keeps it out of the project's identity.
 		/// </summary>
+		/// <summary>
+		/// The greenzone to read, moving one left beside the project by an older
+		/// Chimera into the cache on the way. Moved rather than copied - it is
+		/// the file whose size is the whole problem - and if the move will not
+		/// happen it is read where it lies, which costs nothing but trying again
+		/// next time. Returns where to read from.
+		/// </summary>
+		private string TakeOverLegacyGreenZone()
+		{
+			var cached = GreenZoneFilename;
+			if (File.Exists(cached)) return cached;
+			var legacy = LegacyGreenZonePathFor(Filename);
+			if (!File.Exists(legacy)) return cached;
+			try
+			{
+				ProjectCache.Ensure(Project.Id);
+				File.Move(legacy, cached);
+				return cached;
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+			{
+				return legacy;
+			}
+		}
+
 		private void LoadCacheFile()
 		{
 			DroppedCacheNote = null;
 			ZipStateLoader bl = null;
 			try
 			{
-				if (File.Exists(GreenZoneFilename)) bl = ZipStateLoader.LoadAndDetect(GreenZoneFilename, true);
+				var path = TakeOverLegacyGreenZone();
+				if (File.Exists(path)) bl = ZipStateLoader.LoadAndDetect(path, true);
 			}
 			catch
 			{

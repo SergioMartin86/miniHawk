@@ -35,6 +35,11 @@ tests_dir="$repo_root/build/tests"
 
 export LD_LIBRARY_PATH="$repo_root/build/dll:$repo_root/build:${LD_LIBRARY_PATH:-}"
 export MONO_CRASH_NOFILE=1 MONO_WINFORMS_XIM_STYLE=disabled
+# A project's greenzone and remembered paths live in the per-user cache, so
+# without this a test run leaves its states in the real one. XDG_DATA_HOME and
+# not CHIMERA_DATA_HOME: the latter moves the whole data directory, tools
+# included, which is more than a test wants to change.
+export XDG_DATA_HOME="$repo_root/build/tests/data-home"
 
 # A display for the window tests. If the caller already has one (a desktop, or a
 # CI step that started Xvfb), use it rather than starting a second.

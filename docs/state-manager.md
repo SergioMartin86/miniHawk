@@ -151,10 +151,17 @@ frame 3711 costs what changed since the last save. No archive is ever
 materialized whole, in managed memory or otherwise, which is the bug class this
 started with.
 
-**The greenzone sidecar retires.** `.chimeraGreenZone` beside the project is
-replaced by the per-user cache. The format may change freely and needs no
-migration: an old cache is ignored, which costs recomputation and never work -
-the rule the greenzone has always been held to.
+**The greenzone sidecar retires.** DONE. `.chimeraGreenZone` beside the project
+is now kept in the per-user cache, keyed by the project's id, so a project's
+folder holds the project and nothing else.
+
+One sentence here said an old cache could simply be ignored, since that costs
+recomputation and never work - and while that is true of the RULE, it is a poor
+thing to do on the release that moves the file. It would throw away somebody's
+hours of greenzone silently AND leave the gigabyte sitting in the synced folder
+that was the whole complaint. So a greenzone found beside a project is moved
+into the cache the first time it is opened, and read where it lies if the move
+will not happen.
 
 ## The ABI, and not breaking what works
 

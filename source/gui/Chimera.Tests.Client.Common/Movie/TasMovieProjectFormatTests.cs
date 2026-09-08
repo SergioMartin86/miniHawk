@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
 using System.Linq;
 
 using Chimera.Client.Common;
@@ -14,16 +15,47 @@ namespace Chimera.Tests.Client.Common.Movie
 	public class TasMovieProjectFormatTests
 	{
 		private static string _dir = "";
+		private static string _dataHomeWas = "";
 
 		[ClassInitialize]
 		public static void MakePlayground(TestContext _)
 		{
 			_dir = Path.Combine(Path.GetTempPath(), $"chimera-tasmovie-project-{System.Diagnostics.Process.GetCurrentProcess().Id}");
 			Directory.CreateDirectory(_dir);
+			// the greenzone lives in the per-user cache now, and a test has no
+			// business writing into the user's
+			_dataHomeWas = Environment.GetEnvironmentVariable("CHIMERA_DATA_HOME") ?? "";
+			Environment.SetEnvironmentVariable("CHIMERA_DATA_HOME", Path.Combine(_dir, "data-home"));
 		}
 
+		/// <summary>
+		/// Per test, not once per class: ClassCleanup defaults to running at the
+		/// END OF THE ASSEMBLY, so another class restoring this variable can land
+		/// in the middle of this one's tests and send a greenzone to the real
+		/// user cache.
+		/// </summary>
+		[TestInitialize]
+		public void UseThePlaygroundDataHome()
+			=> Environment.SetEnvironmentVariable("CHIMERA_DATA_HOME", Path.Combine(_dir, "data-home"));
+
 		[ClassCleanup]
-		public static void RemovePlayground() => Directory.Delete(_dir, recursive: true);
+		public static void RemovePlayground()
+		{
+			Environment.SetEnvironmentVariable("CHIMERA_DATA_HOME", _dataHomeWas.Length is 0 ? null : _dataHomeWas);
+			Directory.Delete(_dir, recursive: true);
+		}
+
+		/// <summary>
+		/// Everything in a project's folder that belongs to THAT project, by
+		/// name. The playground is shared by every test here, so what matters is
+		/// not that the folder is empty but that this project left nothing in it.
+		/// </summary>
+		private static string[] SiblingsOf(string projectPath)
+			=> Directory.GetFiles(Path.GetDirectoryName(projectPath)!,
+					Path.GetFileNameWithoutExtension(projectPath) + ".*")
+				.Select(Path.GetFileName)
+				.OrderBy(static n => n, StringComparer.Ordinal)
+				.ToArray();
 
 		private static TasMovie MakeWorkedMovie(string path, string gpuRenderer = "", bool statesSurvive = false)
 		{
@@ -159,13 +191,17 @@ namespace Chimera.Tests.Client.Common.Movie
 			var movie = MakeWorkedMovie(path);
 			Assert.IsFalse(movie.Save().IsError);
 
-			// it IS the JSON project format, with the cache beside it
+			// it IS the JSON project format, and the cache is NOT beside it
 			using (var fs = File.OpenRead(path))
 			{
 				Assert.AreEqual('{', (char)fs.ReadByte());
 			}
-			Assert.IsTrue(File.Exists(Path.ChangeExtension(path, "chimeraGreenZone")),
-				$"greenzone missing; dir has: {string.Join(",", Directory.GetFiles(_dir).Select(Path.GetFileName))}");
+			Assert.IsTrue(File.Exists(movie.GreenZoneFilename),
+				$"greenzone missing; cache has: {string.Join(",", Directory.GetFiles(Path.GetDirectoryName(movie.GreenZoneFilename)!).Select(Path.GetFileName))}");
+			CollectionAssert.AreEqual(
+				new[] { "roundtrip.chimeraProject" },
+				SiblingsOf(path),
+				"the project's folder holds the project and nothing else - it is the folder people sync");
 
 			var loaded = LoadFresh(path);
 			Assert.AreEqual(6, loaded.InputLogLength);
@@ -327,13 +363,39 @@ namespace Chimera.Tests.Client.Common.Movie
 			Assert.AreEqual(0, Directory.GetFiles(backups, "*.chimeraGreenZone").Length, "a backup carries no cache");
 		}
 
+		/// <summary>
+		/// A greenzone left beside a project by an older Chimera is taken over
+		/// rather than ignored: it is moved into the cache and used. Ignoring it
+		/// would be safe - it is only a cache - but it would also silently throw
+		/// away hours of somebody's greenzone on the release that moved it, and
+		/// leave the gigabyte behind in the folder that was the whole problem.
+		/// </summary>
+		[TestMethod]
+		public void AGreenZoneLeftBesideAProjectIsTakenOver()
+		{
+			var path = Path.Combine(_dir, "legacy.chimeraProject");
+			var movie = MakeWorkedMovie(path);
+			Assert.IsFalse(movie.Save().IsError);
+
+			// put it back where an older Chimera would have left it
+			var legacy = TasMovie.LegacyGreenZonePathFor(path);
+			File.Move(movie.GreenZoneFilename, legacy);
+			Assert.IsFalse(File.Exists(movie.GreenZoneFilename));
+
+			var loaded = LoadFresh(path);
+			Assert.IsFalse(File.Exists(legacy), "the sibling is gone from the project's folder");
+			Assert.IsTrue(File.Exists(loaded.GreenZoneFilename), "and is in the cache instead");
+			Assert.IsNull(loaded.DroppedCacheNote, "it was used, not discarded");
+			CollectionAssert.AreEqual(new[] { "legacy.chimeraProject" }, SiblingsOf(path));
+		}
+
 		[TestMethod]
 		public void ALostCacheCostsRecomputationNeverWork()
 		{
 			var path = Path.Combine(_dir, "nocache.chimeraProject");
 			var movie = MakeWorkedMovie(path);
 			Assert.IsFalse(movie.Save().IsError);
-			File.Delete(Path.ChangeExtension(path, "chimeraGreenZone"));
+			File.Delete(movie.GreenZoneFilename);
 
 			var loaded = LoadFresh(path);
 			Assert.AreEqual(6, loaded.InputLogLength, "the input log is work, not cache");

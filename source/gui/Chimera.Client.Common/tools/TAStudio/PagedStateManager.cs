@@ -92,7 +92,7 @@ namespace Chimera.Client.Common
 			public double NewToMidRatio { get; set; } = 2.0;
 
 			[DisplayName("Frames Between Saved States")]
-			[Description("How many frames from one state to the next, when saving the greenzone (the .chimeraGreenZone beside the project). Higher values will result in faster saves.")]
+			[Description("How many frames from one state to the next, when saving the greenzone (kept in this machine's cache, not beside the project). Higher values will result in faster saves.")]
 			[Range(1, int.MaxValue)]
 			public int FramesBetweenSavedStates { get; set; } = 100;
 
