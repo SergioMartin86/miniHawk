@@ -28,7 +28,7 @@ namespace Chimera.Emulation.Common.Waterbox
 		author: "miniBox",
 		portedVersion: "1.0.0",
 		portedUrl: "https://github.com/SergioMartin86/miniBox")]
-	public sealed partial class WaterboxCore : IEmulator, IVideoProvider, ISoundProvider, IStatable, IInputPollable, IGpuRendered, ICorePrecompile,
+	public sealed partial class WaterboxCore : IEmulator, IVideoProvider, ISoundProvider, IStatable, IStateHistory, IInputPollable, IGpuRendered, ICorePrecompile,
 		ICoreIdentity, ISettable<WaterboxCoreSettings>, IDriveLights
 	{
 		/// <summary>
@@ -431,6 +431,58 @@ namespace Chimera.Emulation.Common.Waterbox
 		}
 
 		public void GetSamplesAsync(short[] samples) => throw new InvalidOperationException("Async mode is not supported.");
+
+		// ---------------- IStateHistory ----------------
+		//
+		// Every one of these is a line: the history is the engine's, and the only
+		// thing this layer adds is the side-band a savestate does not carry.
+		// Which frame it is, whether that frame lagged, and how many have - the
+		// engine has no opinion on any of it, so it rides along as the note it
+		// keeps with the frame and hands back on the way in.
+
+		public void HistoryEnable(long budgetBytes) => _session.GreenzoneEnable((ulong)Math.Max(budgetBytes, 0));
+
+		public void HistorySpillTo(string directory) => _session.GreenzoneSpillTo(directory ?? "");
+
+		public long HistoryCount => _session.GreenzoneCount;
+
+		public int HistoryNearest(int frame) => checked((int)_session.GreenzoneNearest(frame));
+
+		public bool HistoryHas(int frame) => _session.GreenzoneNearest(frame) == frame;
+
+		public void HistoryBeforeAdvance() => _session.GreenzoneBeforeAdvance();
+
+		public void HistoryCapture(int frame)
+		{
+			CheckDisposed();
+			var note = new byte[5];
+			note[0] = IsLagFrame ? (byte)1 : (byte)0;
+			BitConverter.GetBytes(LagCount).CopyTo(note, 1);
+			_session.GreenzoneCapture(frame, note);
+		}
+
+		public bool HistoryRestore(int frame)
+		{
+			CheckDisposed();
+			if (!_session.GreenzoneRestore(frame)) return false;
+			Frame = frame;
+			var note = _session.GreenzoneNote(frame);
+			// A frame with no note is one stored before this machine had a lag
+			// count worth carrying - frame zero's anchor. Leaving the counters
+			// alone is right there: nothing has lagged yet.
+			if (note is { Length: >= 5 })
+			{
+				IsLagFrame = note[0] is not 0;
+				LagCount = BitConverter.ToInt32(note, 1);
+			}
+			return true;
+		}
+
+		public void HistoryInvalidate(int afterFrame) => _session.GreenzoneInvalidate(afterFrame);
+
+		public bool HistorySave(string path, string machineId) => _session.HistorySave(path, machineId);
+
+		public bool HistoryLoad(string path, string machineId) => _session.HistoryLoad(path, machineId);
 
 		// ---------------- IStatable ----------------
 

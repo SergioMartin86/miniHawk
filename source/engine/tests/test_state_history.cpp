@@ -55,10 +55,12 @@ std::vector<uint8_t> historyFile(const char *magic, const char *machineId,
 	put64(out, static_cast<uint64_t>(anchorFrame));
 	put64(out, 4);                      /* an anchor of four bytes; nothing loads it here */
 	out.insert(out.end(), { 1, 2, 3, 4 });
+	put64(out, 0);                      /* and no note */
 	put64(out, landings.size());
 	for (int64_t at : landings)
 	{
 		put64(out, static_cast<uint64_t>(at));
+		put64(out, 0);                  /* no note */
 		put64(out, 2);
 		out.insert(out.end(), { 9, 9 });
 	}
@@ -209,7 +211,7 @@ int main(void)
 	}
 
 	{ // strides above one: every landing is offered, nothing between them is
-		write(historyFile("ChimeraHistory2", "machine", 8, { 10, 12, 16 }));
+		write(historyFile("ChimeraHistory3", "machine", 8, { 10, 12, 16 }));
 		chimera::StateHistory h;
 		assert(h.loadFrom(kPath, "machine", error));
 		assert(h.count() == 4);                        /* the anchor and three links */
@@ -226,17 +228,20 @@ int main(void)
 	}
 
 	{ // a history of another machine is dropped rather than refused
-		write(historyFile("ChimeraHistory2", "one machine", 0, { 1, 2 }));
+		write(historyFile("ChimeraHistory3", "one machine", 0, { 1, 2 }));
 		chimera::StateHistory h;
 		assert(h.loadFrom(kPath, "another machine", error));
 		assert(h.count() == 0);
 	}
 
 	{ // and so is one an older build wrote: losing a cache costs replaying
-		write(historyFile("ChimeraHistory1", "machine", 0, { 1, 2 }));
-		chimera::StateHistory h;
-		assert(h.loadFrom(kPath, "machine", error));
-		assert(h.count() == 0);
+		for (const char *older : { "ChimeraHistory1", "ChimeraHistory2" })
+		{
+			write(historyFile(older, "machine", 0, { 1, 2 }));
+			chimera::StateHistory h;
+			assert(h.loadFrom(kPath, "machine", error));
+			assert(h.count() == 0);
+		}
 	}
 
 	{ // something that is not a history at all is worth saying out loud
@@ -250,22 +255,22 @@ int main(void)
 
 	{ // links that stand still or go backwards would offer frames they cannot
 	  // walk to, so the file is damaged rather than merely odd
-		write(historyFile("ChimeraHistory2", "machine", 0, { 4, 4 }));
+		write(historyFile("ChimeraHistory3", "machine", 0, { 4, 4 }));
 		chimera::StateHistory h;
 		assert(!h.loadFrom(kPath, "machine", error));
 		assert(h.count() == 0);
 
-		write(historyFile("ChimeraHistory2", "machine", 0, { 6, 3 }));
+		write(historyFile("ChimeraHistory3", "machine", 0, { 6, 3 }));
 		assert(!h.loadFrom(kPath, "machine", error));
 		assert(h.count() == 0);
 
-		write(historyFile("ChimeraHistory2", "machine", 10, { 9 }));
+		write(historyFile("ChimeraHistory3", "machine", 10, { 9 }));
 		assert(!h.loadFrom(kPath, "machine", error));
 		assert(h.count() == 0);
 	}
 
 	{ // a file that stops in the middle is damage, not a short history
-		auto bytes = historyFile("ChimeraHistory2", "machine", 0, { 1, 2, 3 });
+		auto bytes = historyFile("ChimeraHistory3", "machine", 0, { 1, 2, 3 });
 		bytes.resize(bytes.size() - 5);
 		write(bytes);
 		chimera::StateHistory h;
@@ -293,7 +298,8 @@ int main(void)
 		{
 			h.beforeAdvance();
 			advance(f);
-			h.capture(f);
+			const uint8_t note[2] = { static_cast<uint8_t>(f & 0xFF), 0xA5 };
+			h.capture(f, note, sizeof note);
 			std::array<uint8_t, Machine::kCells> at{};
 			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
 			truth.push_back(at);
@@ -315,6 +321,21 @@ int main(void)
 			checked++;
 		}
 		assert(checked > 4);   /* including some the bands merged their way to */
+
+		/* The caller's note rides along, and a merge keeps the note of the frame
+		 * the surviving link LANDS on - the note describes that frame, not the
+		 * ones composed into it. */
+		int64_t withNotes = 0;
+		for (int64_t f = 1; f <= kFrames; f++)
+		{
+			if (h.nearest(f) != f) continue;
+			size_t len = 0;
+			const uint8_t *note = h.noteFor(f, len);
+			assert(note != nullptr && len == 2);
+			assert(note[0] == static_cast<uint8_t>(f & 0xFF) && note[1] == 0xA5);
+			withNotes++;
+		}
+		assert(withNotes > 4);
 	}
 
 	{ // A history whose links have been merged still survives a round trip to
@@ -370,7 +391,8 @@ int main(void)
 		{
 			h.beforeAdvance();
 			advance(f);
-			h.capture(f);
+			const uint8_t note[2] = { static_cast<uint8_t>(f & 0xFF), 0xA5 };
+			h.capture(f, note, sizeof note);
 			std::array<uint8_t, Machine::kCells> at{};
 			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
 			truth.push_back(at);
@@ -410,6 +432,12 @@ int main(void)
 			assert(back.nearest(f) == f);
 			assert(back.restore(f, error));
 			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+			/* the notes came through the spill file and the saved history alike */
+			size_t len = 0;
+			const uint8_t *note = back.noteFor(f, len);
+			if (f == 0) continue;
+			assert(note != nullptr && len == 2);
+			assert(note[0] == static_cast<uint8_t>(f & 0xFF) && note[1] == 0xA5);
 		}
 	}
 	/* the spill file belongs to the history and goes with it */

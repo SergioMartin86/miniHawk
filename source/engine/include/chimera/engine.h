@@ -1076,8 +1076,20 @@ CE_API void ce_session_greenzone_bands(ce_session *s, int64_t near_frames, int64
  * ce_session_movie_advance and ce_session_seek are these same three, for a
  * caller that lets the engine hold the movie. 0 on success. */
 CE_API void ce_session_greenzone_before_advance(ce_session *s);
-CE_API int32_t ce_session_greenzone_capture(ce_session *s, int64_t frame);
+CE_API int32_t ce_session_greenzone_capture(
+	ce_session *s, int64_t frame, const uint8_t *note, uint32_t note_len);
 CE_API int32_t ce_session_greenzone_restore(ce_session *s, int64_t frame);
+
+/* What _capture was given for `frame`, copied into `out` (which may be NULL to
+ * ask only the size). Returns the note's length, or 0 when there is none.
+ *
+ * The note is for the caller's own bookkeeping beside the machine: a frontend
+ * has a lag flag, a lag count and a frame number that a savestate does not
+ * carry, and keeping those in a table of its own would mean mirroring every
+ * invalidation, eviction, coarsening and spill the history does. Riding along
+ * is the only way it stays true. The engine never looks inside it. */
+CE_API uint32_t ce_session_greenzone_note(
+	const ce_session *s, int64_t frame, uint8_t *out, uint32_t out_len);
 
 /* Where the far band goes once the budget is full; NULL or "" for nowhere.
  *

@@ -577,6 +577,48 @@ namespace Chimera.Emulation.Common.Engine
 		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract int ce_session_load_state(IntPtr session, byte[] data, ulong len);
 
+		// ---- the state history (docs/state-manager.md) ----
+		// Every declaration keeps its own attribute: an attribute separated from
+		// the declaration it belongs to leaves an unimplemented abstract slot,
+		// and the invoker then fails to load with "invalid vtable method slot".
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_enable(IntPtr session, ulong budgetBytes);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_bands(
+			IntPtr session, long nearFrames, long midFrames, long midStride, long farStride, long anchorSpacing);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_spill(IntPtr session, string dir);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract long ce_session_greenzone_count(IntPtr session);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract long ce_session_greenzone_nearest(IntPtr session, long frame);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_invalidate(IntPtr session, long afterFrame);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_before_advance(IntPtr session);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract int ce_session_greenzone_capture(IntPtr session, long frame, byte[] note, uint noteLen);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract uint ce_session_greenzone_note(IntPtr session, long frame, byte[] outBuf, uint outLen);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract int ce_session_greenzone_restore(IntPtr session, long frame);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract int ce_session_history_save(IntPtr session, string path, string machineId);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract int ce_session_history_load(IntPtr session, string path, string machineId);
+
 		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract int ce_session_domain_count(IntPtr session);
 
@@ -1654,6 +1696,63 @@ namespace Chimera.Emulation.Common.Engine
 				throw new InvalidOperationException(LastError);
 			}
 		}
+
+		// ---- the state history (docs/state-manager.md) ----
+		//
+		// The engine keeps the history now, deltas, bands, spilling and all. The
+		// caller drives it because the caller owns the movie and the frame
+		// advance: BeforeAdvance marks the epoch before the machine moves,
+		// Capture stores the frame just reached, and Restore puts the machine on
+		// a stored frame and leaves the replay to whoever asked.
+
+		public void GreenzoneEnable(ulong budgetBytes) => E.ce_session_greenzone_enable(_session, budgetBytes);
+
+		public void GreenzoneBands(long nearFrames, long midFrames, long midStride, long farStride, long anchorSpacing)
+			=> E.ce_session_greenzone_bands(_session, nearFrames, midFrames, midStride, farStride, anchorSpacing);
+
+		public void GreenzoneSpillTo(string dir) => E.ce_session_greenzone_spill(_session, dir ?? "");
+
+		public long GreenzoneCount => E.ce_session_greenzone_count(_session);
+
+		/// <summary>The greatest stored frame at or before this one, or -1.</summary>
+		public long GreenzoneNearest(long frame) => E.ce_session_greenzone_nearest(_session, frame);
+
+		public void GreenzoneInvalidate(long afterFrame) => E.ce_session_greenzone_invalidate(_session, afterFrame);
+
+		public void GreenzoneBeforeAdvance() => E.ce_session_greenzone_before_advance(_session);
+
+		/// <summary>
+		/// Stores the frame just reached, with the caller's own bookkeeping for
+		/// it. The note rides along so it survives every invalidation, eviction,
+		/// coarsening and spill the history does; keeping it in a table here
+		/// would mean mirroring all of that.
+		/// </summary>
+		public void GreenzoneCapture(long frame, byte[] note = null)
+			=> E.ce_session_greenzone_capture(_session, frame, note, (uint)(note?.Length ?? 0));
+
+		/// <summary>What was stored with that frame, or null.</summary>
+		public byte[] GreenzoneNote(long frame)
+		{
+			var len = E.ce_session_greenzone_note(_session, frame, null, 0);
+			if (len is 0) return null;
+			var buf = new byte[len];
+			E.ce_session_greenzone_note(_session, frame, buf, len);
+			return buf;
+		}
+
+		/// <summary>False when that frame is not one the history can produce.</summary>
+		public bool GreenzoneRestore(long frame) => E.ce_session_greenzone_restore(_session, frame) is 0;
+
+		/// <summary>
+		/// The history across sessions. A history naming a different machine is
+		/// dropped rather than refused, so both of these say "it did not throw",
+		/// never "the states are there" - losing them costs replaying.
+		/// </summary>
+		public bool HistorySave(string path, string machineId)
+			=> E.ce_session_history_save(_session, path, machineId ?? "") is 0;
+
+		public bool HistoryLoad(string path, string machineId)
+			=> E.ce_session_history_load(_session, path, machineId ?? "") is 0;
 
 		public int DomainCount => E.ce_session_domain_count(_session);
 		public string DomainName(int index) => ChimeraEngine.PtrToStringUtf8(E.ce_session_domain_name(_session, index)) ?? $"Domain {index}";

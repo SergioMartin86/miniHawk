@@ -83,8 +83,20 @@ public:
 	 * forced: an epoch has to be open before the machine moves. */
 	void beforeAdvance();
 
-	/* Called immediately after that advance, with the frame now standing at. */
-	void capture(int64_t frame);
+	/* Called immediately after that advance, with the frame now standing at.
+	 *
+	 * `note` is the caller's own bookkeeping for this frame, stored with it and
+	 * handed back by noteFor. The engine never looks inside it. It exists
+	 * because a frontend has side-band state a savestate does not carry - a lag
+	 * flag, a lag count, its own frame number - and keeping that in a table of
+	 * the caller's own would mean mirroring every invalidation, eviction,
+	 * coarsening and spill this class does. Riding along is the only way it
+	 * stays true. */
+	void capture(int64_t frame, const uint8_t *note = nullptr, size_t noteLen = 0);
+
+	/* What was stored with `frame`, or nullptr. Borrowed, and invalidated by the
+	 * next capture. */
+	const uint8_t *noteFor(int64_t frame, size_t &lenOut) const;
 
 	/* Drops everything after `frame`. An input edit at a frame makes every
 	 * later state a lie, while the state AT it still holds. */
@@ -131,12 +143,14 @@ private:
 	{
 		std::vector<uint8_t> bytes;
 		int64_t endFrame = 0;
+		std::vector<uint8_t> note;   /* the caller's, for the frame this lands on */
 	};
 
 	struct Segment
 	{
 		int64_t anchorFrame = 0;
 		std::vector<uint8_t> anchor;   /* a whole machine, unless spilled */
+		std::vector<uint8_t> anchorNote;
 		std::vector<Link> links;
 		uint64_t bytes = 0;
 
@@ -167,6 +181,7 @@ private:
 	/* Moves one segment out to the spill file, freeing what it held in memory.
 	 * False when there is nowhere to put it or the write failed, which is not
 	 * an error - the budget then falls back to dropping frames. */
+	static bool writeSegmentBody(std::FILE *f, const Segment &seg);
 	bool spill(Segment &seg);
 	void dropSpillFile();
 

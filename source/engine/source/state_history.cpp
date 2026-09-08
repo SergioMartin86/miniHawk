@@ -93,6 +93,10 @@ intptr_t fileRead(uintptr_t ud, void *out, uintptr_t len)
 	return static_cast<intptr_t>(got);
 }
 
+/* Skips forward without reading, for a part of a segment this pass does not
+ * want - a note, or the tail of an anchor the sandbox stopped reading early. */
+bool skipBy(std::FILE *f, uint64_t n) { return seekBy(f, n); }
+
 /* CHIMERA_HISTORY_TRACE=1 says what the history stored and what it cost. A
  * delta silently falling back to a whole state is the failure mode with no
  * symptom - everything still works, it just costs a hundred times more - so
@@ -147,6 +151,33 @@ static bool deltasRefused()
 		return e != nullptr && e[0] != '\0' && e[0] != '0' ? 1 : 0;
 	}();
 	return off != 0;
+}
+
+/* One layout, used by the spill file and by a saved history alike - which is
+ * what lets a saved history copy a spilled segment through byte for byte
+ * instead of rebuilding it:
+ *
+ *   anchor: length, bytes, note length, note
+ *   links:  count, then per link: the frame it lands on, note length, note,
+ *           length, bytes
+ */
+bool StateHistory::writeSegmentBody(std::FILE *f, const Segment &seg)
+{
+	bool ok = writeU64(f, seg.anchor.size())
+		&& writeAll(f, seg.anchor.data(), seg.anchor.size())
+		&& writeU64(f, seg.anchorNote.size())
+		&& writeAll(f, seg.anchorNote.data(), seg.anchorNote.size())
+		&& writeU64(f, seg.links.size());
+	for (const Link &l : seg.links)
+	{
+		if (!ok) break;
+		ok = writeU64(f, static_cast<uint64_t>(l.endFrame))
+			&& writeU64(f, l.note.size())
+			&& writeAll(f, l.note.data(), l.note.size())
+			&& writeU64(f, l.bytes.size())
+			&& writeAll(f, l.bytes.data(), l.bytes.size());
+	}
+	return ok;
 }
 
 StateHistory::~StateHistory()
@@ -233,6 +264,26 @@ int64_t StateHistory::count() const
 	return n;
 }
 
+const uint8_t *StateHistory::noteFor(int64_t frame, size_t &lenOut) const
+{
+	lenOut = 0;
+	for (const Segment &seg : m_segments)
+	{
+		if (seg.anchorFrame > frame) break;
+		if (seg.anchorFrame == frame)
+		{
+			lenOut = seg.anchorNote.size();
+			return seg.anchorNote.empty() ? nullptr : seg.anchorNote.data();
+		}
+		const int64_t steps = seg.stepsTo(frame);
+		if (steps <= 0) continue;
+		const Link &l = seg.links[static_cast<size_t>(steps) - 1];
+		lenOut = l.note.size();
+		return l.note.empty() ? nullptr : l.note.data();
+	}
+	return nullptr;
+}
+
 int64_t StateHistory::nearest(int64_t frame) const
 {
 	int64_t best = -1;
@@ -259,8 +310,9 @@ void StateHistory::beforeAdvance()
 	m_epochOpen = r.ok();
 }
 
-void StateHistory::capture(int64_t frame)
+void StateHistory::capture(int64_t frame, const uint8_t *note, size_t noteLen)
 {
+	std::vector<uint8_t> carried(note, note + (note != nullptr ? noteLen : 0));
 	if (!enabled()) return;
 
 	/* A capture describes the frame we now stand on. Anything at or after it is
@@ -292,7 +344,7 @@ void StateHistory::capture(int64_t frame)
 					m_segments.back().links.size() + 1, (unsigned long long)m_bytes);
 				fflush(stderr);
 			}
-			m_segments.back().links.push_back(Link{ std::move(bytes), frame });
+			m_segments.back().links.push_back(Link{ std::move(bytes), frame, std::move(carried) });
 			coarsen(frame);
 			evict();
 			return;
@@ -306,6 +358,7 @@ void StateHistory::capture(int64_t frame)
 	seg.anchorFrame = frame;
 	seg.bytes = bytes.size();
 	seg.anchor = std::move(bytes);
+	seg.anchorNote = std::move(carried);
 	m_bytes += seg.bytes;
 	if (historyTrace())
 	{
@@ -427,16 +480,7 @@ bool StateHistory::spill(Segment &seg)
 	if (!seekEnd(m_spill)) return false;
 
 	const uint64_t at = m_spillBytes;
-	bool ok = writeU64(m_spill, seg.anchor.size())
-		&& writeAll(m_spill, seg.anchor.data(), seg.anchor.size())
-		&& writeU64(m_spill, seg.links.size());
-	for (const Link &l : seg.links)
-	{
-		if (!ok) break;
-		ok = writeU64(m_spill, static_cast<uint64_t>(l.endFrame))
-			&& writeU64(m_spill, l.bytes.size())
-			&& writeAll(m_spill, l.bytes.data(), l.bytes.size());
-	}
+	bool ok = writeSegmentBody(m_spill, seg);
 	if (!ok || std::fflush(m_spill) != 0)
 	{
 		/* a half written segment is unreadable, so the file goes back to where
@@ -451,7 +495,9 @@ bool StateHistory::spill(Segment &seg)
 	seg.spillLength = m_spillBytes - at;
 	m_bytes -= seg.bytes;
 
-	/* what it held is now the file's; give the memory back for real */
+	/* What it held is now the file's; give the memory back for real. The notes
+	 * stay: they are metadata, like the landings, and answering what was stored
+	 * with a frame must not touch a disk. */
 	std::vector<uint8_t>().swap(seg.anchor);
 	for (Link &l : seg.links) std::vector<uint8_t>().swap(l.bytes);
 
@@ -473,6 +519,7 @@ bool StateHistory::restoreSpilled(const Segment &seg, int64_t steps, std::string
 		return false;
 	}
 	uint64_t anchorLen = 0, linkCount = 0;
+	uint64_t noteLen = 0;
 	if (!readU64(m_spill, anchorLen))
 	{
 		error = "the spilled state history could not be read";
@@ -490,7 +537,8 @@ bool StateHistory::restoreSpilled(const Segment &seg, int64_t steps, std::string
 		return false;
 	}
 
-	if (!readU64(m_spill, linkCount))
+	/* the anchor's note is already in memory; step over the file's copy */
+	if (!readU64(m_spill, noteLen) || !skipBy(m_spill, noteLen) || !readU64(m_spill, linkCount))
 	{
 		error = "the spilled state history could not be read";
 		return false;
@@ -498,7 +546,8 @@ bool StateHistory::restoreSpilled(const Segment &seg, int64_t steps, std::string
 	for (int64_t i = 0; i < steps; i++)
 	{
 		uint64_t endFrame = 0, len = 0;
-		if (!readU64(m_spill, endFrame) || !readU64(m_spill, len))
+		if (!readU64(m_spill, endFrame) || !readU64(m_spill, noteLen)
+			|| !skipBy(m_spill, noteLen) || !readU64(m_spill, len))
 		{
 			error = "the spilled state history could not be read";
 			return false;
@@ -636,15 +685,22 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 namespace
 {
 
-const char kMagic[] = "ChimeraHistory2";
+const char kMagic[] = "ChimeraHistory3";
 
 /* Versions this build can no longer read. A history from one of these is not
  * damage and not the user's doing: it is a cache written by an older build, and
  * the contract for losing a cache is that it costs recomputation and never
  * work. So it is treated exactly as a history of another machine is - dropped,
  * quietly, and rebuilt by playing. 1 had a stride of one frame per link, from
- * before links could span more than a frame. */
-const char *const kSuperseded[] = { "ChimeraHistory1" };
+ * before links could span more than a frame; 2 had no room for the caller's
+ * note. */
+const char *const kSuperseded[] = { "ChimeraHistory1", "ChimeraHistory2" };
+
+/* A note is a frontend's lag flag and its counters - a few bytes, ridden along
+ * because keeping them in a table of the caller's own would mean mirroring
+ * every eviction this class does. It is not a place to keep things, and a file
+ * claiming otherwise is damaged. */
+const uint64_t kMaxNote = 4096;
 
 } // namespace
 
@@ -682,16 +738,7 @@ bool StateHistory::saveTo(const char *path, const char *machineId, std::string &
 			}
 			continue;
 		}
-		ok = writeU64(f, seg.anchor.size())
-			&& writeAll(f, seg.anchor.data(), seg.anchor.size())
-			&& writeU64(f, seg.links.size());
-		for (const Link &l : seg.links)
-		{
-			if (!ok) break;
-			ok = writeU64(f, static_cast<uint64_t>(l.endFrame))
-				&& writeU64(f, l.bytes.size())
-				&& writeAll(f, l.bytes.data(), l.bytes.size());
-		}
+		ok = writeSegmentBody(f, seg);
 	}
 	if (std::fclose(f) != 0) ok = false;
 	if (!ok)
@@ -747,18 +794,27 @@ bool StateHistory::loadFrom(const char *path, const char *machineId, std::string
 	for (uint64_t i = 0; i < segCount; i++)
 	{
 		Segment seg;
-		uint64_t anchorFrame = 0, anchorLen = 0, deltaCount = 0;
+		uint64_t anchorFrame = 0, anchorLen = 0, deltaCount = 0, noteLen = 0;
 		if (!readU64(f, anchorFrame) || !readU64(f, anchorLen)) return give_up("the state history is damaged");
 		seg.anchorFrame = static_cast<int64_t>(anchorFrame);
 		seg.anchor.resize(static_cast<size_t>(anchorLen));
 		if (!readAll(f, seg.anchor.data(), seg.anchor.size())) return give_up("the state history is damaged");
+		if (!readU64(f, noteLen) || noteLen > kMaxNote) return give_up("the state history is damaged");
+		seg.anchorNote.resize(static_cast<size_t>(noteLen));
+		if (!readAll(f, seg.anchorNote.data(), seg.anchorNote.size())) return give_up("the state history is damaged");
 		if (!readU64(f, deltaCount)) return give_up("the state history is damaged");
 		seg.bytes = anchorLen;
 		int64_t landed = seg.anchorFrame;
 		for (uint64_t d = 0; d < deltaCount; d++)
 		{
 			uint64_t endFrame = 0, len = 0;
-			if (!readU64(f, endFrame) || !readU64(f, len)) return give_up("the state history is damaged");
+			if (!readU64(f, endFrame) || !readU64(f, noteLen) || noteLen > kMaxNote)
+			{
+				return give_up("the state history is damaged");
+			}
+			std::vector<uint8_t> note(static_cast<size_t>(noteLen));
+			if (!readAll(f, note.data(), note.size())) return give_up("the state history is damaged");
+			if (!readU64(f, len)) return give_up("the state history is damaged");
 			/* the spans have to tile: a file whose links go backwards or stand
 			 * still would offer frames it cannot walk to */
 			if (static_cast<int64_t>(endFrame) <= landed) return give_up("the state history is damaged");
@@ -766,7 +822,7 @@ bool StateHistory::loadFrom(const char *path, const char *machineId, std::string
 			std::vector<uint8_t> delta(static_cast<size_t>(len));
 			if (!readAll(f, delta.data(), delta.size())) return give_up("the state history is damaged");
 			seg.bytes += len;
-			seg.links.push_back(Link{ std::move(delta), landed });
+			seg.links.push_back(Link{ std::move(delta), landed, std::move(note) });
 		}
 		m_bytes += seg.bytes;
 		m_segments.push_back(std::move(seg));

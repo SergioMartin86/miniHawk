@@ -1974,11 +1974,27 @@ void ce_session_greenzone_before_advance(ce_session *s)
 	s->greenzoneBeforeAdvance();
 }
 
-int32_t ce_session_greenzone_capture(ce_session *s, int64_t frame)
+int32_t ce_session_greenzone_capture(
+	ce_session *s, int64_t frame, const uint8_t *note, uint32_t note_len)
 {
 	if (s == nullptr) return 1;
-	s->history.capture(frame);
+	s->history.capture(frame, note, note_len);
 	return 0;
+}
+
+uint32_t ce_session_greenzone_note(
+	const ce_session *s, int64_t frame, uint8_t *out, uint32_t out_len)
+{
+	if (s == nullptr) return 0;
+	size_t len = 0;
+	const uint8_t *note = s->history.noteFor(frame, len);
+	if (note == nullptr) return 0;
+	if (out != nullptr && out_len != 0)
+	{
+		const size_t n = len < out_len ? len : out_len;
+		std::memcpy(out, note, n);
+	}
+	return static_cast<uint32_t>(len);
 }
 
 int32_t ce_session_greenzone_restore(ce_session *s, int64_t frame)
