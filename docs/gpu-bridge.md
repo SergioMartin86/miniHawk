@@ -261,7 +261,7 @@ do it on one driver and not the other:
 | flycast | yes - identical |
 | pcsx2 | yes - identical, once booted far enough to be drawing a game |
 | ruffle | yes, once fixed - see below |
-| dolphin | no, and it now says so |
+| dolphin | yes, once fixed - see below |
 | rpcs3 | not known: it will not boot on this machine, failing in its own audio overlay setup |
 
 Both failures reproduced identically on the two drivers, so neither was a driver
@@ -279,51 +279,37 @@ again re-pushes it. Verified by rebuilding the core: identical at low, high and
 best, and the reopened run now lands on the high-quality pixel count it used to
 miss.
 
-**Dolphin's rebuild crashed, and underneath that it desyncs.** The crash was a
-null framebuffer: the rebuild cleared `m_current_framebuffer` and the machine
-draws through `BPFunctions::SetScissorAndViewport` as soon as it runs, which
-dereferences it. Binding the EFB afterwards fixes that, and dolphin now survives
-a reopen and draws.
+**Dolphin needed two fixes, and the second one was the interesting one.** The
+crash was a null framebuffer: the rebuild cleared `m_current_framebuffer` and
+the machine draws through `BPFunctions::SetScissorAndViewport` as soon as it
+runs, which dereferences it. Binding the EFB afterwards fixes that.
 
-The picture it comes back with is still not the one that was saved, and it does
-not recover: 62% of it differs 40 frames after the load, 99.7% after 240.
+Underneath was a picture that came back wrong and never recovered - 62% of the
+pixels 40 frames after the load, 99.7% after 240. `GetXFBTexture`, asked for the
+picture, prefers a copy of the XFB kept in VRAM: the crisp one, rendered at
+internal resolution and never round-tripped through the console's YUV
+framebuffer. That copy lives in a GL context and nowhere in the machine, so no
+savestate carries it, and a reopened run had only the RAM decode to fall back
+on. Dolphin now always decodes the XFB from the machine's own memory.
 
-What differs is worth stating exactly, because it is less bad than "the machine
-desynced" and more bad than "a wobble". Of the three memory domains only System
-RAM ever differs - ARAM and the L1 cache stay identical throughout. Within it
-the difference sits in a few megabyte-sized regions, in tens of thousands of
-runs two to eight bytes apart with none longer than about 940: pixel scatter
-between two renderings, not a structure diverging. It shrinks rather than
-compounds, 807 KB at the first frame down to 318 KB by the 120th, and the one
-word outside those regions - a pointer at `0x800000d8` - matches again later.
-The GameCube's framebuffer lives in MEM1, which is why RAM sees a rendering
-difference at all. So the game's own simulation looks intact and the PICTURE is
-what comes back wrong: the same kind of fault ruffle had, an order of magnitude
-larger.
+That is the rule the core already applied to the copies themselves
+(`SKIP_XFB_COPY_TO_RAM` off, "the machine's video memory stays machine state");
+presenting from VRAM while hashing RAM was the half that had been left out, and
+it meant what you watched was not what the machine held. The check that it is
+the right way round: the GL renderer now agrees with the software renderer,
+which has no VRAM to prefer and is the machine's own answer. It costs the
+upscaled presentation - a fidelity a TAS has no business depending on.
 
-Isolated by
-building the core without each part of the rebuild in turn: it is
-`g_texture_cache->Invalidate()`, and within it the single line
-`m_textures_by_address.clear()`. With that one clear left out and everything
-else intact the reopen is byte-identical, picture included. Ruled out the same
-way - `FlushEFBCopies`, `TMEM::InvalidateAll`, the bounding box, the perf query,
-`RecreateEFBFramebuffer`, the shader recompile.
+A reopened dolphin run is now byte-identical to one that never stopped, across
+RAM, ARAM, the L1 cache, audio and every pixel, at 40, 120 and 240 frames past
+the load. Its package declares `gpuStatesSurviveTheContext: true` again.
 
-The clear cannot simply go: those entries' textures name a context that is gone
-once the process is, and EFB copies read back THROUGH them into RAM, so keeping
-dead ones would trade a wrong picture for a quieter fault. What is wanted is a
-texture cache that survives a context change with its contents - re-uploading
-what came from RAM, preserving what came from rendering - and that is real work
-in dolphin's texture cache. Until it exists dolphin declares
-`gpuStatesSurviveTheContext: false`: a discarded greenzone costs replaying, and
-a kept one means a resumed run renders differently, which is a run that encodes
-differently.
-
-Worth keeping in mind for whoever picks this up: the GL context is made once per
-PROCESS, so an in-process reopen still has the first session's objects alive -
-which is why disabling the rebuild entirely also reads as byte-identical here
-and would not be a fix. The harness cannot tell that case apart from a genuine
-cross-process reopen, and the id it keys on cannot either.
+Getting there took three wrong explanations - the EFB framebuffer, then EFB
+copies, then the texture cache as a whole - each of them reasoned rather than
+measured, and each disproved by building the core without the part it blamed.
+What finally pointed at the XFB was counting what the cache actually held at
+rebuild time: ten entries, none of them EFB copies, and keeping only the single
+XFB one made the reopen identical.
 
 The isolation that found both is worth keeping in mind: reload into the session
 that MADE the state, and reopen with no GPU bridge at all. When those two are
