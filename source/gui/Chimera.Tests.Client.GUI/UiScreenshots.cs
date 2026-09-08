@@ -191,6 +191,7 @@ namespace Chimera.Tests.Client.GUI
 			form.Location = new Point(0, 0);
 			form.Show();
 			_ = form.Select(@"C:\Users\you\AppData\Local\Chimera\Projects\9f2c14ab7d3e5501");
+			form.TickOrphans();   // the one selection the window makes on your behalf
 			Shoot(form, "cache-manager");
 		}
 

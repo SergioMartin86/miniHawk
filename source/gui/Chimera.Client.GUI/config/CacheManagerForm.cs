@@ -2,11 +2,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 
 using Chimera.Client.Common;
+using Chimera.Common;
 
 namespace Chimera.Client.GUI
 {
@@ -22,6 +24,10 @@ namespace Chimera.Client.GUI
 	/// Manager, because a movie needs the exact build that recorded it, and
 	/// projects, roms and firmware are not caches at all.
 	///
+	/// TICKING is for doing the same thing to several rows; SELECTING is for
+	/// looking closely at one - the same division the Core Manager draws. So
+	/// Remove acts on what is ticked, and Open Folder on what is highlighted.
+	///
 	/// Thin over <see cref="CacheSurvey"/>, like the firmware windows are over
 	/// their surveys: what is listed, what it costs and what may not be deleted
 	/// are the model's, which is tested without a UI, and this arranges it.
@@ -30,10 +36,34 @@ namespace Chimera.Client.GUI
 	{
 		private readonly Func<IReadOnlyList<CacheItem>> _survey;
 		private readonly ListView _list;
+		private readonly CheckBox _selectAll;
 		private readonly Label _header;
 		private readonly Label _detail;
 		private readonly Label _status;
 		private readonly Button _remove;
+		private readonly Button _selectOrphans;
+		private readonly Button _openFolder;
+
+		/// <summary>
+		/// The rows whose box is ticked, by cache location - which is unique, and
+		/// survives the list being rebuilt under a different sort.
+		///
+		/// Kept as a set rather than read back off the ListView for the reason the
+		/// Core Manager learned: the event reporting a tick arrives as a posted
+		/// Windows message, and by the time it is delivered the collection may be
+		/// mid-rebuild, so walking it from the handler is what crashes the window.
+		/// </summary>
+		private readonly HashSet<string> _ticked = new(StringComparer.Ordinal);
+
+		private bool _suppressCheckEvents;
+
+		/// <summary>
+		/// False until every control exists. A ListView raises ItemChecked while
+		/// its handle is being created, which on .NET Framework happens inside the
+		/// constructor - before the buttons the handler wants to enable are there.
+		/// Mono does not, so a Linux test would never see it.
+		/// </summary>
+		private bool _ready;
 
 		/// <summary>the column the list is sorted by, and whether it is reversed</summary>
 		private int _sortColumn = SizeColumn;
@@ -52,15 +82,14 @@ namespace Chimera.Client.GUI
 			_survey = survey;
 
 			SuspendLayout();
-			// seven columns of paths and sizes; the two location columns are the
-			// wide ones and are the reason to be here at all
-			ClientSize = new(UIHelper.ScaleX(1460), UIHelper.ScaleY(470));
-			MinimumSize = new(UIHelper.ScaleX(900), UIHelper.ScaleY(360));
+			ClientSize = new(UIHelper.ScaleX(1460), UIHelper.ScaleY(500));
+			MinimumSize = new(UIHelper.ScaleX(900), UIHelper.ScaleY(380));
 			StartPosition = FormStartPosition.CenterParent;
 			ShowIcon = false;
 
 			var margin = UIHelper.ScaleX(8);
 			var footer = UIHelper.ScaleY(138);
+			var listTop = UIHelper.ScaleY(70);
 
 			_header = new Label
 			{
@@ -70,13 +99,26 @@ namespace Chimera.Client.GUI
 				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(32)),
 			};
 
+			// Above the list rather than in the header: a WinForms ListView header
+			// is not a place a control can live, and here it also says how many are
+			// ticked and what they weigh, which a header box could not.
+			_selectAll = new CheckBox
+			{
+				Anchor = AnchorStyles.Top | AnchorStyles.Left,
+				AutoSize = true,
+				Location = new(margin + UIHelper.ScaleX(2), UIHelper.ScaleY(46)),
+				Text = "Select all",
+			};
+			_selectAll.CheckedChanged += (_, _) => SelectAllChanged();
+
 			_list = new ListView
 			{
 				Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+				CheckBoxes = true,
 				FullRowSelect = true,
 				HideSelection = false,
-				Location = new(margin, UIHelper.ScaleY(46)),
-				Size = new(ClientSize.Width - (2 * margin), ClientSize.Height - UIHelper.ScaleY(46) - footer),
+				Location = new(margin, listTop),
+				Size = new(ClientSize.Width - (2 * margin), ClientSize.Height - listTop - footer),
 				MultiSelect = false,
 				View = View.Details,
 			};
@@ -93,9 +135,31 @@ namespace Chimera.Client.GUI
 			_list.SelectedIndexChanged += (_, _) => ShowSelected();
 			// The reason to open this window is almost always "what is taking the
 			// room", and the answer is a sort away. Size and date sort largest and
-			// newest first, because that is the question being asked; the text
-			// columns sort the way text does.
+			// newest first, because that is the question being asked.
 			_list.ColumnClick += (_, e) => SortBy(e.Column);
+			// What a session is standing on may not be ticked at all: refusing the
+			// tick is plainer than letting it be ticked and then skipped.
+			_list.ItemCheck += (_, e) =>
+			{
+				if (_suppressCheckEvents) return;
+				if (e.Index >= 0 && e.Index < _list.Items.Count
+					&& _list.Items[e.Index].Tag is CacheItem { InUse: true })
+				{
+					e.NewValue = CheckState.Unchecked;
+				}
+			};
+			_list.ItemChecked += (_, e) =>
+			{
+				if (_suppressCheckEvents) return;
+				// e.Item is the one this message is about; its collection is not
+				// safe to walk from here
+				if (e.Item?.Tag is CacheItem item)
+				{
+					if (e.Item.Checked) _ticked.Add(item.Path);
+					else _ticked.Remove(item.Path);
+				}
+				UpdateButtons();
+			};
 
 			_detail = new Label
 			{
@@ -114,15 +178,35 @@ namespace Chimera.Client.GUI
 			};
 
 			var buttonRow = ClientSize.Height - UIHelper.ScaleY(32);
-			var bw = UIHelper.ScaleX(150);
+			var bw = UIHelper.ScaleX(160);
+			var gap = UIHelper.ScaleX(8);
+
 			_remove = new Button
 			{
 				Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
 				Location = new(margin, buttonRow),
 				Size = new(bw, UIHelper.ScaleY(26)),
-				Text = "Remove Entry",
+				Text = "Remove Ticked",
 			};
-			_remove.Click += (_, _) => RemoveSelected();
+			_remove.Click += (_, _) => RemoveTicked();
+
+			_selectOrphans = new Button
+			{
+				Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
+				Location = new(margin + bw + gap, buttonRow),
+				Size = new(bw, UIHelper.ScaleY(26)),
+				Text = "Select all orphans",
+			};
+			_selectOrphans.Click += (_, _) => SelectOrphans();
+
+			_openFolder = new Button
+			{
+				Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
+				Location = new(margin + (2 * (bw + gap)), buttonRow),
+				Size = new(bw, UIHelper.ScaleY(26)),
+				Text = "Open Folder",
+			};
+			_openFolder.Click += (_, _) => OpenSelectedFolder();
 
 			Button close = new()
 			{
@@ -133,19 +217,27 @@ namespace Chimera.Client.GUI
 				Text = "Close",
 			};
 
-			Controls.AddRange(new Control[] { _header, _list, _detail, _status, _remove, close });
+			Controls.AddRange(new Control[]
+			{
+				_header, _selectAll, _list, _detail, _status, _remove, _selectOrphans, _openFolder, close,
+			});
 			AcceptButton = close;
 			ResumeLayout();
 
+			_ready = true;
 			Reload();
 		}
 
-		/// <summary>Takes stock again, keeping the selection where it still exists.</summary>
+		/// <summary>Takes stock again, keeping the selection and the ticks that still have rows.</summary>
 		private void Reload()
 		{
 			var wasSelected = Selected()?.Path;
 			_items = Sorted(_survey()).ToList();
+			// a tick whose row has gone leaves with it, or Remove would act on
+			// something no longer listed
+			_ticked.IntersectWith(_items.Select(static i => i.Path));
 
+			_suppressCheckEvents = true;
 			_list.BeginUpdate();
 			_list.Items.Clear();
 			foreach (var item in _items)
@@ -163,9 +255,11 @@ namespace Chimera.Client.GUI
 				row.SubItems.Add(CacheSurvey.Size(item.Bytes));
 				row.SubItems.Add(item.LastUsed == default ? "" : item.LastUsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
 				if (item.InUse) row.ForeColor = SystemColors.GrayText;
+				row.Checked = _ticked.Contains(item.Path);
 				_list.Items.Add(row);
 			}
 			_list.EndUpdate();
+			_suppressCheckEvents = false;
 
 			var total = _items.Sum(static i => i.Bytes);
 			var orphaned = _items.Where(static i => i.Orphaned).ToList();
@@ -187,6 +281,56 @@ namespace Chimera.Client.GUI
 			}
 			if (_list.SelectedItems.Count is 0 && _list.Items.Count > 0) _list.Items[0].Selected = true;
 			ShowSelected();
+			UpdateButtons();
+		}
+
+		/// <summary>The rows whose box is ticked, in list order.</summary>
+		private List<CacheItem> Ticked() => _items.FindAll(i => _ticked.Contains(i.Path));
+
+		private void UpdateButtons()
+		{
+			if (!_ready) return;
+			var ticked = Ticked();
+			_remove.Enabled = ticked.Count is not 0;
+			_selectOrphans.Enabled = _items.Any(static i => i.Orphaned && !i.InUse);
+			_openFolder.Enabled = Selected() is not null;
+			_selectAll.Text = ticked.Count is 0
+				? "Select all"
+				: $"Select all ({ticked.Count} ticked, {CacheSurvey.Size(ticked.Sum(static i => i.Bytes))})";
+		}
+
+		private void SelectAllChanged()
+		{
+			if (_suppressCheckEvents) return;
+			SetTicks(_selectAll.Checked ? _items.Where(static i => !i.InUse) : Enumerable.Empty<CacheItem>());
+		}
+
+		/// <summary>
+		/// Ticks exactly the caches whose project is no longer where it was. Those
+		/// are the rows nothing is asking for any more, which makes this the one
+		/// selection worth making on somebody's behalf.
+		/// </summary>
+		private void SelectOrphans()
+		{
+			SetTicks(_items.Where(static i => i.Orphaned && !i.InUse));
+			var ticked = Ticked();
+			_status.Text = ticked.Count is 0
+				? "No cache belongs to a project that has gone."
+				: $"Ticked {ticked.Count} orphaned item(s), {CacheSurvey.Size(ticked.Sum(static i => i.Bytes))}.";
+		}
+
+		/// <summary>Makes the ticks exactly these rows, without the list's events answering back.</summary>
+		private void SetTicks(IEnumerable<CacheItem> wanted)
+		{
+			_ticked.Clear();
+			foreach (var item in wanted) _ticked.Add(item.Path);
+			_suppressCheckEvents = true;
+			foreach (ListViewItem row in _list.Items)
+			{
+				row.Checked = row.Tag is CacheItem item && _ticked.Contains(item.Path);
+			}
+			_suppressCheckEvents = false;
+			UpdateButtons();
 		}
 
 		/// <summary>
@@ -250,32 +394,70 @@ namespace Chimera.Client.GUI
 				lines.Add($"Cache: {item.Path}");
 				_detail.Text = string.Join(Environment.NewLine, lines);
 			}
-			_remove.Enabled = item is { InUse: false };
+			UpdateButtons();
 		}
 
-		private void RemoveSelected()
+		private void RemoveTicked()
 		{
-			if (Selected() is not { } item) return;
-			if (!Confirm(1, item.Bytes, item.Cost)) return;
-			var refused = CacheSurvey.Remove(item);
+			var wanted = Ticked().Where(static i => !i.InUse).ToList();
+			if (wanted.Count is 0) return;
+			if (!Confirm(wanted.Count, wanted.Sum(static i => i.Bytes), wanted)) return;
+
+			var removed = 0;
+			List<string> kept = new();
+			foreach (var item in wanted)
+			{
+				if (CacheSurvey.Remove(item) is null) removed++;
+				else kept.Add(item.Label);
+			}
+			_suppressCheckEvents = true;
+			_selectAll.Checked = false;
+			_suppressCheckEvents = false;
 			Reload();
-			_status.Text = refused is null ? $"Removed {item.Label}." : $"{item.Label} was not removed: {refused}";
+			_status.Text = kept.Count is 0
+				? $"Removed {removed} item(s)."
+				: $"Removed {removed}; left {string.Join(", ", kept)}.";
 		}
 
 		/// <summary>
 		/// Says what is about to go and what it costs. A cache is safe to lose, so
 		/// this is a confirmation and not a warning - but it is still somebody's
-		/// afternoon of recomputation, so it says so in those terms.
+		/// afternoon of recomputation, so it says so in those terms, and names each
+		/// distinct cost rather than only the one the first row happens to carry.
 		/// </summary>
-		private bool Confirm(int count, long bytes, string cost)
-			=> MessageBox.Show(
+		private bool Confirm(int count, long bytes, IEnumerable<CacheItem> items)
+		{
+			var costs = items.Select(static i => i.Cost).Distinct().ToList();
+			return MessageBox.Show(
 				this,
-				$"Remove {count} cached item(s), freeing {CacheSurvey.Size(bytes)}?{Environment.NewLine}{Environment.NewLine}{cost}",
+				$"Remove {count} cached item(s), freeing {CacheSurvey.Size(bytes)}?{Environment.NewLine}{Environment.NewLine}"
+					+ string.Join(Environment.NewLine, costs),
 				"Remove cached data",
 				MessageBoxButtons.OKCancel,
 				MessageBoxIcon.Question) is DialogResult.OK;
+		}
 
-		/// <summary>Selects a row by its path. For tests and screenshots.</summary>
+		/// <summary>
+		/// Shows the highlighted row's directory in whatever the machine uses to
+		/// look at directories. A machine with nothing to open it with says so
+		/// rather than throwing: this is a convenience, not a capability.
+		/// </summary>
+		private void OpenSelectedFolder()
+		{
+			if (Selected() is not { } item) return;
+			try
+			{
+				if (OSTailoredCode.IsUnixHost) Process.Start("xdg-open", item.Path);
+				else Process.Start("explorer.exe", $"\"{item.Path}\"");
+				_status.Text = $"Opened {item.Path}";
+			}
+			catch (Exception ex)
+			{
+				_status.Text = $"Could not open {item.Path}: {ex.Message}";
+			}
+		}
+
+		/// <summary>Selects a row by its cache location. For tests and screenshots.</summary>
 		public bool Select(string path)
 		{
 			foreach (ListViewItem row in _list.Items)
@@ -285,11 +467,44 @@ namespace Chimera.Client.GUI
 			return false;
 		}
 
-		/// <summary>What the window is showing, for tests.</summary>
+		/// <summary>
+		/// Ticks or unticks one row by its cache location, refusing what a session
+		/// is standing on. For tests and screenshots.
+		///
+		/// The refusal is HERE as well as in the list's ItemCheck because setting
+		/// Checked in code does not go through that event on every runtime - Mono
+		/// ignores the handler's override - and a rule that holds only when a
+		/// mouse is involved is not a rule.
+		/// </summary>
+		public bool SetChecked(string path, bool ticked)
+		{
+			foreach (ListViewItem row in _list.Items)
+			{
+				if (row.Tag is not CacheItem item || item.Path != path) continue;
+				if (ticked && item.InUse) return false;
+				row.Checked = ticked;
+				if (row.Checked) _ticked.Add(item.Path);
+				else _ticked.Remove(item.Path);
+				UpdateButtons();
+				return row.Checked;
+			}
+			return false;
+		}
+
+		/// <summary>Ticks every orphaned row, as the button does. For tests and screenshots.</summary>
+		public void TickOrphans() => SelectOrphans();
+
+		/// <summary>What the window is showing, by name.</summary>
 		public IReadOnlyList<string> Rows
 			=> _list.Items.Cast<ListViewItem>().Select(static r => r.SubItems[1].Text).ToList();
 
-		/// <summary>Whether the selected row may be removed.</summary>
+		/// <summary>The cache locations currently ticked.</summary>
+		public IReadOnlyList<string> TickedPaths => Ticked().Select(static i => i.Path).ToList();
+
+		/// <summary>Whether Remove would do anything.</summary>
 		public bool RemoveEnabled => _remove.Enabled;
+
+		/// <summary>Whether Open Folder would do anything.</summary>
+		public bool OpenFolderEnabled => _openFolder.Enabled;
 	}
 }
