@@ -90,15 +90,42 @@ public:
 	bool loadFrom(const char *path, const char *machineId, std::string &error);
 
 private:
+	/* One step along a segment: the bytes that walk the machine from wherever
+	 * the link before it landed to `endFrame`.
+	 *
+	 * A link spans a single frame when it is captured, and more than one once
+	 * the history has thinned it - two adjacent links compose into one that
+	 * spans both (docs/state-manager.md). That is why a link carries the frame
+	 * it lands ON rather than being counted from the anchor: the stride is no
+	 * longer a constant, and a frame in the middle of a span is not a frame
+	 * this segment can produce.
+	 *
+	 * The contiguity invariant survives in the units it actually holds in: the
+	 * spans tile the segment without gaps, so whatever the strides, every frame
+	 * the history OFFERS is one it can walk to exactly. */
+	struct Link
+	{
+		std::vector<uint8_t> bytes;
+		int64_t endFrame = 0;
+	};
+
 	struct Segment
 	{
 		int64_t anchorFrame = 0;
-		std::vector<uint8_t> anchor;               /* a whole machine */
-		std::vector<std::vector<uint8_t>> deltas;  /* deltas[i]: anchorFrame+i -> +i+1 */
+		std::vector<uint8_t> anchor;   /* a whole machine */
+		std::vector<Link> links;
 		uint64_t bytes = 0;
 
-		int64_t lastFrame() const { return anchorFrame + static_cast<int64_t>(deltas.size()); }
-		bool covers(int64_t f) const { return f >= anchorFrame && f <= lastFrame(); }
+		int64_t lastFrame() const { return links.empty() ? anchorFrame : links.back().endFrame; }
+
+		/* The greatest frame this segment can produce at or before `f`, or -1.
+		 * Not the same as being inside the segment: with strides above one,
+		 * most frames between two links are not stored anywhere. */
+		int64_t nearestIn(int64_t f) const;
+
+		/* How many links to apply to land exactly on `f`, or -1 when `f` is
+		 * not one of this segment's frames. */
+		int64_t stepsTo(int64_t f) const;
 	};
 
 	/* How long a delta chain may get before the next anchor. A seek pays one

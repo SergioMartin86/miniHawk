@@ -94,10 +94,31 @@ bool StateHistory::deltasAvailable() const
 		&& m_host->wbx_save_delta != nullptr && m_host->wbx_load_delta != nullptr;
 }
 
+/* Links land on strictly ascending frames, so both of these are searches
+ * rather than walks - a segment near the playhead is thousands of links long. */
+int64_t StateHistory::Segment::nearestIn(int64_t f) const
+{
+	if (f < anchorFrame) return -1;
+	if (f >= lastFrame()) return lastFrame();
+	const auto it = std::upper_bound(links.begin(), links.end(), f,
+		[](int64_t v, const Link &l) { return v < l.endFrame; });
+	return it == links.begin() ? anchorFrame : (it - 1)->endFrame;
+}
+
+int64_t StateHistory::Segment::stepsTo(int64_t f) const
+{
+	if (f == anchorFrame) return 0;
+	if (f < anchorFrame || f > lastFrame()) return -1;
+	const auto it = std::lower_bound(links.begin(), links.end(), f,
+		[](const Link &l, int64_t v) { return l.endFrame < v; });
+	if (it == links.end() || it->endFrame != f) return -1;
+	return static_cast<int64_t>(it - links.begin()) + 1;
+}
+
 int64_t StateHistory::count() const
 {
 	int64_t n = 0;
-	for (const Segment &s : m_segments) n += 1 + static_cast<int64_t>(s.deltas.size());
+	for (const Segment &s : m_segments) n += 1 + static_cast<int64_t>(s.links.size());
 	return n;
 }
 
@@ -107,7 +128,8 @@ int64_t StateHistory::nearest(int64_t frame) const
 	for (const Segment &s : m_segments)
 	{
 		if (s.anchorFrame > frame) break;              /* ordered: nothing later helps */
-		best = std::min(frame, s.lastFrame());         /* every frame in a segment is reachable */
+		const int64_t here = s.nearestIn(frame);
+		if (here > best) best = here;
 	}
 	return best;
 }
@@ -118,7 +140,7 @@ void StateHistory::beforeAdvance()
 	if (!enabled() || !deltasAvailable()) return;
 	/* A delta continues the newest segment, and only while there is one with
 	 * room. Otherwise the coming capture is an anchor and needs no epoch. */
-	if (m_segments.empty() || m_segments.back().deltas.size() >= kMaxChain) return;
+	if (m_segments.empty() || m_segments.back().links.size() >= kMaxChain) return;
 	WbxReturn r{};
 	m_host->wbx_epoch_begin(m_obj, &r);
 	m_epochOpen = r.ok();
@@ -140,7 +162,7 @@ void StateHistory::capture(int64_t frame)
 	const bool wantDelta = m_epochOpen
 		&& !m_segments.empty()
 		&& m_segments.back().lastFrame() == frame - 1
-		&& m_segments.back().deltas.size() < kMaxChain;
+		&& m_segments.back().links.size() < kMaxChain;
 	m_epochOpen = false;
 
 	if (wantDelta)
@@ -154,10 +176,10 @@ void StateHistory::capture(int64_t frame)
 			{
 				fprintf(stderr, "[history] frame %lld: delta %zu bytes (segment %zu links, %llu total)\n",
 					(long long)frame, bytes.size(),
-					m_segments.back().deltas.size() + 1, (unsigned long long)m_bytes);
+					m_segments.back().links.size() + 1, (unsigned long long)m_bytes);
 				fflush(stderr);
 			}
-			m_segments.back().deltas.push_back(std::move(bytes));
+			m_segments.back().links.push_back(Link{ std::move(bytes), frame });
 			evict();
 			return;
 		}
@@ -191,12 +213,12 @@ void StateHistory::invalidateAfter(int64_t frame)
 	}
 	if (m_segments.empty()) return;
 	Segment &s = m_segments.back();
-	while (s.lastFrame() > frame && !s.deltas.empty())
+	while (s.lastFrame() > frame && !s.links.empty())
 	{
-		uint64_t n = s.deltas.back().size();
+		uint64_t n = s.links.back().bytes.size();
 		s.bytes -= n;
 		m_bytes -= n;
-		s.deltas.pop_back();
+		s.links.pop_back();
 	}
 }
 
@@ -212,14 +234,14 @@ void StateHistory::evict()
 		Segment *victim = nullptr;
 		for (Segment &s : m_segments)
 		{
-			if (!s.deltas.empty()) { victim = &s; break; }
+			if (!s.links.empty()) { victim = &s; break; }
 		}
 		if (victim != nullptr)
 		{
-			uint64_t n = victim->deltas.back().size();
+			uint64_t n = victim->links.back().bytes.size();
 			victim->bytes -= n;
 			m_bytes -= n;
-			victim->deltas.pop_back();
+			victim->links.pop_back();
 			continue;
 		}
 		/* nothing but anchors left: drop the oldest that is neither the first
@@ -233,9 +255,11 @@ void StateHistory::evict()
 bool StateHistory::restore(int64_t frame, std::string &error)
 {
 	const Segment *seg = nullptr;
+	int64_t steps = -1;
 	for (const Segment &s : m_segments)
 	{
-		if (s.covers(frame)) { seg = &s; break; }
+		const int64_t n = s.stepsTo(frame);
+		if (n >= 0) { seg = &s; steps = n; break; }
 	}
 	if (seg == nullptr)
 	{
@@ -253,9 +277,9 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 		return false;
 	}
 	const double t1 = historyTrace() ? nowSeconds() : 0.0;
-	for (int64_t i = 0; i < frame - seg->anchorFrame; i++)
+	for (int64_t i = 0; i < steps; i++)
 	{
-		const std::vector<uint8_t> &d = seg->deltas[static_cast<size_t>(i)];
+		const std::vector<uint8_t> &d = seg->links[static_cast<size_t>(i)].bytes;
 		ByteSource src{ d.data(), d.size(), 0 };
 		m_host->wbx_load_delta(m_obj, sourceRead, reinterpret_cast<uintptr_t>(&src), &r);
 		if (!r.ok())
@@ -266,7 +290,7 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 	}
 	if (historyTrace())
 	{
-		const int64_t chain = frame - seg->anchorFrame;
+		const int64_t chain = steps;
 		const double t2 = nowSeconds();
 		fprintf(stderr,
 			"[history] restore %lld: anchor %lld (%.1f MB) %.0f ms + %lld deltas %.0f ms = %.0f ms\n",
@@ -287,7 +311,15 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 namespace
 {
 
-const char kMagic[] = "ChimeraHistory1";
+const char kMagic[] = "ChimeraHistory2";
+
+/* Versions this build can no longer read. A history from one of these is not
+ * damage and not the user's doing: it is a cache written by an older build, and
+ * the contract for losing a cache is that it costs recomputation and never
+ * work. So it is treated exactly as a history of another machine is - dropped,
+ * quietly, and rebuilt by playing. 1 had a stride of one frame per link, from
+ * before links could span more than a frame. */
+const char *const kSuperseded[] = { "ChimeraHistory1" };
 
 bool writeAll(std::FILE *f, const void *data, size_t n)
 {
@@ -323,11 +355,13 @@ bool StateHistory::saveTo(const char *path, const char *machineId, std::string &
 		ok = writeU64(f, static_cast<uint64_t>(seg.anchorFrame))
 			&& writeU64(f, seg.anchor.size())
 			&& writeAll(f, seg.anchor.data(), seg.anchor.size())
-			&& writeU64(f, seg.deltas.size());
-		for (const std::vector<uint8_t> &d : seg.deltas)
+			&& writeU64(f, seg.links.size());
+		for (const Link &l : seg.links)
 		{
 			if (!ok) break;
-			ok = writeU64(f, d.size()) && writeAll(f, d.data(), d.size());
+			ok = writeU64(f, static_cast<uint64_t>(l.endFrame))
+				&& writeU64(f, l.bytes.size())
+				&& writeAll(f, l.bytes.data(), l.bytes.size());
 		}
 	}
 	if (std::fclose(f) != 0) ok = false;
@@ -354,8 +388,16 @@ bool StateHistory::loadFrom(const char *path, const char *machineId, std::string
 	};
 
 	char magic[sizeof kMagic - 1];
-	if (!readAll(f, magic, sizeof magic) || std::memcmp(magic, kMagic, sizeof magic) != 0)
+	if (!readAll(f, magic, sizeof magic)) return give_up("that is not a state history");
+	if (std::memcmp(magic, kMagic, sizeof magic) != 0)
 	{
+		for (const char *old : kSuperseded)
+		{
+			if (std::memcmp(magic, old, sizeof magic) != 0) continue;
+			std::fclose(f);
+			clear();
+			return true;
+		}
 		return give_up("that is not a state history");
 	}
 	uint64_t idLen = 0;
@@ -383,14 +425,19 @@ bool StateHistory::loadFrom(const char *path, const char *machineId, std::string
 		if (!readAll(f, seg.anchor.data(), seg.anchor.size())) return give_up("the state history is damaged");
 		if (!readU64(f, deltaCount)) return give_up("the state history is damaged");
 		seg.bytes = anchorLen;
+		int64_t landed = seg.anchorFrame;
 		for (uint64_t d = 0; d < deltaCount; d++)
 		{
-			uint64_t len = 0;
-			if (!readU64(f, len)) return give_up("the state history is damaged");
+			uint64_t endFrame = 0, len = 0;
+			if (!readU64(f, endFrame) || !readU64(f, len)) return give_up("the state history is damaged");
+			/* the spans have to tile: a file whose links go backwards or stand
+			 * still would offer frames it cannot walk to */
+			if (static_cast<int64_t>(endFrame) <= landed) return give_up("the state history is damaged");
+			landed = static_cast<int64_t>(endFrame);
 			std::vector<uint8_t> delta(static_cast<size_t>(len));
 			if (!readAll(f, delta.data(), delta.size())) return give_up("the state history is damaged");
 			seg.bytes += len;
-			seg.deltas.push_back(std::move(delta));
+			seg.links.push_back(Link{ std::move(delta), landed });
 		}
 		m_bytes += seg.bytes;
 		m_segments.push_back(std::move(seg));
