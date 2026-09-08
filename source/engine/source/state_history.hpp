@@ -59,6 +59,18 @@ public:
 	void bands(int64_t nearFrames, int64_t midFrames, int64_t midStride,
 	           int64_t farStride, int64_t anchorSpacing);
 
+	/* How far back stepping backwards has to be instant, in frames; 0 turns it
+	 * off. Left alone it follows the near band.
+	 *
+	 * It is a knob of its own because it is the one part of this that costs on
+	 * every captured frame whether or not anybody rewinds: a reverse delta is
+	 * free of faults, the pre-images being captured already, but it still has to
+	 * be written. Measured on xemu that is about 9 ms a frame, against a rewind
+	 * that drops from a restore's second to about five milliseconds. Worth it
+	 * for someone stepping back and forth over a hard trick, and not worth it
+	 * for an unattended encode. */
+	void rewindFrames(int64_t frames);
+
 	/* Where the far band goes once the budget is full, or nullptr for nowhere.
 	 *
 	 * The oldest stretches are the right thing to put on disk: large, rarely
@@ -115,6 +127,20 @@ public:
 	bool pinned(int64_t frame) const;
 	void unpinAll();
 
+	/* Walks the machine BACKWARDS from `from` towards `to`, one stored link at
+	 * a time, and answers with the frame it reached.
+	 *
+	 * This is what rewinding is. Going back a frame through restore() costs an
+	 * anchor load and every link between it and the target - up to a second on
+	 * a heavy core - to undo a single frame's work. A reverse delta undoes
+	 * exactly that frame, and costs what the frame changed.
+	 *
+	 * It stops early rather than failing: at the anchor, at the first link with
+	 * no reverse delta kept, or at `to`. The caller compares what it got with
+	 * what it asked for, and falls back to a seek for the rest. -1 with `error`
+	 * set means the machine did not move at all. */
+	int64_t rewind(int64_t from, int64_t to, std::string &error);
+
 	/* Puts the machine back to `frame`, which must be one nearest() offered.
 	 * Restores that frame's segment anchor and walks its deltas forward.
 	 * False with `error` set. */
@@ -157,6 +183,13 @@ private:
 		std::vector<uint8_t> bytes;
 		int64_t endFrame = 0;
 		std::vector<uint8_t> note;   /* the caller's, for the frame this lands on */
+
+		/* The same step measured the other way: the machine as it was when this
+		 * link began. Kept only while the frame is in the near band, because
+		 * that is where stepping backwards happens and it doubles what a frame
+		 * costs. Empty once the playhead has moved on, and never persisted -
+		 * playing forward makes it again. */
+		std::vector<uint8_t> reverse;
 	};
 
 	struct Segment
@@ -217,6 +250,10 @@ private:
 	 * and the result independent of the order frames arrive in. */
 	void tidy(int64_t frame, int64_t stride);
 
+	/* Frees the reverse delta of the landing at `frame`, which has just left the
+	 * near band and will not be stepped back through again. */
+	void forgetReverse(int64_t frame);
+
 	const HostApi *m_host = nullptr;
 	void *m_obj = nullptr;
 	uint64_t m_budget = 0;
@@ -234,6 +271,9 @@ private:
 	                                    * being wider than a segment, collapses
 	                                    * an old segment to its anchor */
 	int64_t m_anchorSpacing = 600;     /* a new anchor every 10 s */
+	int64_t m_rewindFrames = -1;       /* -1: follow the near band */
+
+	int64_t rewindWindow() const { return m_rewindFrames < 0 ? m_nearFrames : m_rewindFrames; }
 
 	std::set<int64_t> m_pinned;
 

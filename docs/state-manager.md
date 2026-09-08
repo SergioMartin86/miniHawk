@@ -405,6 +405,27 @@ on disk is close to free until the disk is slow.
 coarsening is real work done every frame. That is the trade the design makes on
 purpose: a little per frame, always, instead of a stall when the budget fills.
 
+## What rewinding costs
+
+The same xemu run, 1200 frames, 4 GB budget, with the reverse deltas on and off:
+
+| | kept | not kept |
+|---|---|---|
+| a captured frame | 56.9 ms | 48.6 ms |
+| one frame back | 5.2 ms | a seek, up to 1.0 s |
+| the history on disk | 1557 MB | 1557 MB |
+
+The file is the same size either way: a reverse delta is never written out,
+because playing forward makes it again and it is only ever wanted near the
+playhead.
+
+So it is 8 ms on every captured frame, paid whether or not anybody rewinds,
+against the gesture somebody makes over and over dropping from a second to five
+milliseconds. That is worth it for a person stepping back and forth over a hard
+trick and not worth it for an unattended encode, which is why it is a knob -
+`ce_session_greenzone_rewind_frames`, 0 to turn it off - rather than a decree.
+An encode does not pay it in any case: it suppresses state capture entirely.
+
 ## Phasing
 
 Each phase is separately gated and separately landable.
@@ -459,9 +480,17 @@ Each phase is separately gated and separately landable.
    navigation pins its frame instead, which is cheap to name, impossible for the
    engine to guess, and far cheaper than a whole state each.
 
-   STILL TO COME: the rewind gesture as a reverse delta rather than a backwards
-   seek - it works today, it is simply paying for a restore where it could pay
-   for one link.
+   The rewind gesture followed. Going back a frame was a seek: restore the
+   nearest stored frame and replay to the target, which costs an anchor load and
+   every link taken since it in order to undo one frame's work. It is now a
+   reverse delta, which undoes exactly that frame.
+
+   Reverse deltas are free of faults - the pre-images are captured already, by
+   the same fault that serves the forward one - so they cost only the write, and
+   they are kept only near the playhead, which is where stepping backwards
+   happens. `LoadStateAt` tries the walk first and falls through to the restore,
+   and the walk never goes further than its window, so a long jump does not pay
+   a hundred applications to discover it should have seeked.
 
 ## Sharp edges to expect
 

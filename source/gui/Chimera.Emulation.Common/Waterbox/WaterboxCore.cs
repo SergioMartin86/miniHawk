@@ -478,6 +478,21 @@ namespace Chimera.Emulation.Common.Waterbox
 			return true;
 		}
 
+		public int RewindTo(int frame, int from)
+		{
+			CheckDisposed();
+			var landed = _session.GreenzoneRewind(from, frame);
+			if (landed < 0) return -1;
+			Frame = checked((int)landed);
+			var note = _session.GreenzoneNote(landed);
+			if (note is { Length: >= 5 })
+			{
+				IsLagFrame = note[0] is not 0;
+				LagCount = BitConverter.ToInt32(note, 1);
+			}
+			return Frame;
+		}
+
 		public void InvalidateAfter(int afterFrame) => _session.GreenzoneInvalidate(afterFrame);
 
 		public bool Save(string path, string machineId) => _session.HistorySave(path, machineId);

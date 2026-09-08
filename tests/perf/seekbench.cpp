@@ -50,6 +50,9 @@ int main(int argc, char **argv) {
 	double bare = (now() - bare0) / 100.0;
 
 	if (spillDir != nullptr) ce_session_greenzone_spill(s, spillDir);
+	/* CHIMERA_NO_REWIND=1 keeps no reverse deltas, which is the A to the B of
+	 * what making rewinding instant costs on every captured frame. */
+	if (getenv("CHIMERA_NO_REWIND") != nullptr) ce_session_greenzone_rewind_frames(s, 0);
 	ce_session_greenzone_enable(s, budget);
 	double cap0 = now();
 	for (long i = 0; i < frames; i++) {
@@ -110,6 +113,21 @@ int main(int argc, char **argv) {
 		sum += el[1]; n++;
 	}
 	printf("\nworst seek        %.0f ms\nmean seek         %.0f ms over %d\n", worst * 1000, n ? sum / n * 1000 : 0, n);
+
+	/* Rewinding: one frame back, the gesture somebody makes over and over. It
+	 * is the same question as a seek to the frame before, so both are timed
+	 * from the same place. */
+	ce_session_seek(s, (long)at - 1);
+	double rw = 0; int rwn = 0;
+	for (int i = 0; i < 20; i++) {
+		int64_t here = ce_session_frame(s);
+		double t0 = now();
+		int64_t landed = ce_session_greenzone_rewind(s, here, here - 1);
+		double el = now() - t0;
+		if (landed != here - 1) break;
+		rw += el; rwn++;
+	}
+	printf("\nrewind one frame  %.1f ms, mean of %d\n", rwn ? rw / rwn * 1000 : 0, rwn);
 	ce_session_free(s);
 	return 0;
 }

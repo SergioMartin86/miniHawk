@@ -225,6 +225,11 @@ void StateHistory::bands(int64_t nearFrames, int64_t midFrames, int64_t midStrid
 	if (m_farStride < m_midStride) m_farStride = m_midStride;
 }
 
+void StateHistory::rewindFrames(int64_t frames)
+{
+	m_rewindFrames = frames < 0 ? -1 : frames;
+}
+
 bool StateHistory::composeAvailable() const
 {
 	return m_host != nullptr && m_host->wbx_compose_delta != nullptr;
@@ -344,7 +349,22 @@ void StateHistory::capture(int64_t frame, const uint8_t *note, size_t noteLen)
 					m_segments.back().links.size() + 1, (unsigned long long)m_bytes);
 				fflush(stderr);
 			}
-			m_segments.back().links.push_back(Link{ std::move(bytes), frame, std::move(carried) });
+			/* The same epoch, measured the other way. It is free of faults - the
+			 * pre-images are already captured - and costs only the write, which
+			 * is what makes stepping back a frame cost that frame rather than an
+			 * anchor and everything since. */
+			std::vector<uint8_t> back;
+			if (rewindWindow() != 0)
+			{
+				ByteSink backSink{ &back };
+				WbxReturn br{};
+				m_host->wbx_save_delta(m_obj, false, sinkWrite, reinterpret_cast<uintptr_t>(&backSink), &br);
+				if (!br.ok()) back.clear();
+			}
+			m_bytes += back.size();
+			m_segments.back().bytes += back.size();
+
+			m_segments.back().links.push_back(Link{ std::move(bytes), frame, std::move(carried), std::move(back) });
 			coarsen(frame);
 			evict();
 			return;
@@ -427,9 +447,32 @@ static bool holdsPinned(const std::set<int64_t> &pins, int64_t from, int64_t to)
 
 void StateHistory::coarsen(int64_t newestFrame)
 {
+	/* Stepping backwards happens where the work is, so a reverse delta is worth
+	 * keeping only in the near band - it doubles what a frame costs, and playing
+	 * forward makes it again. Dropped as the playhead leaves it behind, whether
+	 * or not this host can compose. */
+	forgetReverse(newestFrame - rewindWindow());
 	if (!composeAvailable()) return;   /* an older host: keep every link */
 	tidy(newestFrame - m_nearFrames, m_midStride);
 	tidy(newestFrame - m_nearFrames - m_midFrames, m_farStride);
+}
+
+void StateHistory::forgetReverse(int64_t frame)
+{
+	if (frame <= 0) return;
+	for (Segment &seg : m_segments)
+	{
+		if (seg.lastFrame() < frame) continue;
+		if (seg.anchorFrame >= frame) break;
+		const int64_t steps = seg.stepsTo(frame);
+		if (steps <= 0) return;
+		Link &l = seg.links[static_cast<size_t>(steps) - 1];
+		if (l.reverse.empty()) return;
+		seg.bytes -= l.reverse.size();
+		m_bytes -= l.reverse.size();
+		std::vector<uint8_t>().swap(l.reverse);
+		return;
+	}
 }
 
 void StateHistory::tidy(int64_t frame, int64_t stride)
@@ -478,6 +521,14 @@ void StateHistory::tidy(int64_t frame, int64_t stride)
 				(long long)frame, (long long)b.endFrame, (unsigned long long)was, merged.size());
 			fflush(stderr);
 		}
+		/* The surviving link now spans both, so the reverse of its old single
+		 * step describes something that is no longer a step. */
+		if (!b.reverse.empty())
+		{
+			seg.bytes -= b.reverse.size();
+			m_bytes -= b.reverse.size();
+			std::vector<uint8_t>().swap(b.reverse);
+		}
 		b.bytes = std::move(merged);
 		seg.links.erase(seg.links.begin() + static_cast<std::ptrdiff_t>(i));
 		return;
@@ -524,7 +575,11 @@ bool StateHistory::spill(Segment &seg)
 	 * stay: they are metadata, like the landings, and answering what was stored
 	 * with a frame must not touch a disk. */
 	std::vector<uint8_t>().swap(seg.anchor);
-	for (Link &l : seg.links) std::vector<uint8_t>().swap(l.bytes);
+	for (Link &l : seg.links)
+	{
+		std::vector<uint8_t>().swap(l.bytes);
+		std::vector<uint8_t>().swap(l.reverse);   /* not written out: it is near-band only */
+	}
 
 	if (historyTrace())
 	{
@@ -645,6 +700,58 @@ void StateHistory::evict()
 		m_bytes -= m_segments[drop].bytes;
 		m_segments.erase(m_segments.begin() + static_cast<std::ptrdiff_t>(drop));
 	}
+}
+
+int64_t StateHistory::rewind(int64_t from, int64_t to, std::string &error)
+{
+	Segment *seg = nullptr;
+	for (Segment &sg : m_segments)
+	{
+		if (sg.stepsTo(from) >= 0) { seg = &sg; break; }
+	}
+	if (seg == nullptr || seg->spilled)
+	{
+		error = "no stored state at that frame";
+		return -1;
+	}
+
+	/* Never walk further than the near band, whatever was asked. Beyond it
+	 * there are no reverse deltas to walk anyway, and a caller that asked for
+	 * the far past would otherwise pay a hundred applications to discover that
+	 * before falling back to the restore it should have done. */
+	const int64_t reach = from - rewindWindow();
+	const int64_t floor = reach > to ? reach : to;
+
+	int64_t cur = from;
+	while (cur > floor)
+	{
+		const int64_t steps = seg->stepsTo(cur);
+		if (steps <= 0) break;                       /* the anchor: no further back */
+		Link &l = seg->links[static_cast<size_t>(steps) - 1];
+		if (l.reverse.empty()) break;                /* out of the near band */
+
+		ByteSource src{ l.reverse.data(), l.reverse.size(), 0 };
+		WbxReturn r{};
+		m_host->wbx_load_delta(m_obj, sourceRead, reinterpret_cast<uintptr_t>(&src), &r);
+		if (!r.ok())
+		{
+			error = r.errorMessage;
+			return cur == from ? -1 : cur;
+		}
+		cur = steps >= 2 ? seg->links[static_cast<size_t>(steps) - 2].endFrame : seg->anchorFrame;
+	}
+	if (cur == from)
+	{
+		error = "no reverse delta for that frame";
+		return -1;
+	}
+	m_epochOpen = false;
+	if (historyTrace())
+	{
+		fprintf(stderr, "[history] rewound %lld -> %lld\n", (long long)from, (long long)cur);
+		fflush(stderr);
+	}
+	return cur;
 }
 
 bool StateHistory::restore(int64_t frame, std::string &error)

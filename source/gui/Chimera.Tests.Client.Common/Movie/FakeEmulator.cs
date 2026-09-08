@@ -88,6 +88,21 @@ namespace Chimera.Tests.Client.Common.Movie
 			return true;
 		}
 
+		/// <summary>Steps back through the frames it holds, one at a time.</summary>
+		public int RewindTo(int frame, int from)
+		{
+			var at = from;
+			while (at > frame)
+			{
+				var next = Nearest(at - 1);
+				if (next < 0) break;
+				at = next;
+			}
+			if (at == from) return -1;
+			Frame = at;
+			return at;
+		}
+
 		public void InvalidateAfter(int afterFrame) => _states.RemoveWhere(f => f > afterFrame);
 
 		/// <summary>

@@ -1080,6 +1080,29 @@ CE_API int32_t ce_session_greenzone_capture(
 	ce_session *s, int64_t frame, const uint8_t *note, uint32_t note_len);
 CE_API int32_t ce_session_greenzone_restore(ce_session *s, int64_t frame);
 
+/* Walks the machine BACKWARDS from `from` towards `to`, and answers with the
+ * frame it reached, or -1 if it could not move.
+ *
+ * This is what rewinding wants. Going back one frame through _restore costs an
+ * anchor load and every link between it and the target - up to a second on a
+ * heavy core - to undo one frame's work; a reverse delta undoes exactly that
+ * frame and costs what the frame changed. Reverse deltas are kept only near the
+ * playhead, which is where stepping backwards happens, so this stops early
+ * rather than failing: at the anchor, at the first frame with none kept, or at
+ * `to`. Compare what you asked for with what you got, and seek for the rest. */
+CE_API int64_t ce_session_greenzone_rewind(ce_session *s, int64_t from, int64_t to);
+
+/* How far back rewinding has to be instant, in frames; 0 turns it off, and a
+ * negative value follows the near band, which is the default.
+ *
+ * Its own knob because it is the one part of the history that costs on every
+ * captured frame whether or not anybody rewinds: the reverse delta is free of
+ * faults, the pre-images being captured already, but it still has to be
+ * written. On xemu that is about 9 ms a frame, against a rewind that drops from
+ * a restore's second to about five milliseconds. Worth it for somebody stepping
+ * back and forth over a hard trick; not worth it for an unattended encode. */
+CE_API void ce_session_greenzone_rewind_frames(ce_session *s, int64_t frames);
+
 /* What _capture was given for `frame`, copied into `out` (which may be NULL to
  * ask only the size). Returns the note's length, or 0 when there is none.
  *

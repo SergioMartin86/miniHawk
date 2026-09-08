@@ -1982,6 +1982,25 @@ int32_t ce_session_greenzone_capture(
 	return 0;
 }
 
+void ce_session_greenzone_rewind_frames(ce_session *s, int64_t frames)
+{
+	if (s == nullptr) return;
+	s->history.rewindFrames(frames);
+}
+
+int64_t ce_session_greenzone_rewind(ce_session *s, int64_t from, int64_t to)
+{
+	if (s == nullptr) return -1;
+	const int64_t landed = s->history.rewind(from, to, s->error);
+	if (landed < 0) return -1;
+	/* the same bookkeeping a restore breaks: the guest's wide-input latches were
+	 * rewritten, and the renderer was told nothing about it */
+	std::fill(s->btnSent.begin(), s->btnSent.end(), uint8_t{ 0xFF });
+	s->renderingSent = -1;
+	s->frame = landed;
+	return landed;
+}
+
 uint32_t ce_session_greenzone_note(
 	const ce_session *s, int64_t frame, uint8_t *out, uint32_t out_len)
 {

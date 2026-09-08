@@ -134,17 +134,16 @@ void fakeEpochBegin(void *, chimera::WbxReturn *r)
 	g_machine.epochBase.assign(g_machine.cell, g_machine.cell + Machine::kCells);
 }
 
-void fakeSaveDelta(void *, bool, chimera::WbxWriteCb cb, uintptr_t ud, chimera::WbxReturn *r)
+void fakeSaveDelta(void *, bool forward, chimera::WbxWriteCb cb, uintptr_t ud, chimera::WbxReturn *r)
 {
 	*r = {};
 	if (g_machine.epochBase.empty()) { std::snprintf(r->errorMessage, sizeof r->errorMessage, "no epoch"); return; }
 	Cells changed;
 	for (size_t i = 0; i < Machine::kCells; i++)
 	{
-		if (g_machine.cell[i] != g_machine.epochBase[i])
-		{
-			changed.emplace_back(static_cast<uint8_t>(i), g_machine.cell[i]);
-		}
+		if (g_machine.cell[i] == g_machine.epochBase[i]) continue;
+		// forward: as the frame left it. reverse: as the frame found it.
+		changed.emplace_back(static_cast<uint8_t>(i), forward ? g_machine.cell[i] : g_machine.epochBase[i]);
 	}
 	writeCells(cb, ud, changed);
 }
@@ -336,6 +335,63 @@ int main(void)
 			withNotes++;
 		}
 		assert(withNotes > 4);
+	}
+
+	{ // Rewinding: stepping back through reverse deltas lands on exactly the
+	  // machine playing forward had at that frame, and costs one link a frame
+	  // instead of an anchor and everything since.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 64ull << 20);
+		h.bands(20, 40, 3, 12, 1000);   /* a near band 20 frames wide */
+		h.capture(0);
+
+		std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+		const int64_t kFrames = 60;
+		for (int64_t f = 1; f <= kFrames; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+
+		/* one frame back, the gesture this exists for */
+		assert(h.rewind(kFrames, kFrames - 1, error) == kFrames - 1);
+		assert(std::memcmp(g_machine.cell, truth[kFrames - 1].data(), Machine::kCells) == 0);
+
+		/* and on back, a frame at a time, well inside the near band */
+		int64_t at = kFrames - 1;
+		for (int i = 0; i < 10; i++)
+		{
+			const int64_t next = h.rewind(at, at - 1, error);
+			assert(next == at - 1);
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(next)].data(), Machine::kCells) == 0);
+			at = next;
+		}
+
+		/* Asked to go further than the reverse deltas reach, it stops where they
+		 * do rather than failing or lying: the machine is at the frame it says
+		 * it is, and the caller seeks for the rest. */
+		const int64_t stopped = h.rewind(at, 0, error);
+		assert(stopped >= 0 && stopped < at);
+		assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(stopped)].data(), Machine::kCells) == 0);
+
+		/* and once there is nothing left to undo it says so */
+		int64_t floor = stopped;
+		for (int i = 0; i < 100 && floor > 0; i++)
+		{
+			const int64_t next = h.rewind(floor, 0, error);
+			if (next < 0) break;
+			assert(next < floor);
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(next)].data(), Machine::kCells) == 0);
+			floor = next;
+		}
+		assert(h.rewind(floor, 0, error) == -1);
 	}
 
 	{ // A pinned frame stays reachable however hard the bands thin around it -
