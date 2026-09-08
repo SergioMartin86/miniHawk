@@ -260,16 +260,41 @@ do it on one driver and not the other:
 | xemu | yes - RAM, audio and picture all identical |
 | flycast | yes - identical |
 | pcsx2 | yes - identical, once booted far enough to be drawing a game |
-| ruffle | NO - the machine is unverifiable and the picture comes back 11.6% different |
-| dolphin | NO - crashes on the first frame after the load |
+| ruffle | yes, once fixed - see below |
+| dolphin | no, and it now says so |
 | rpcs3 | not known: it will not boot on this machine, failing in its own audio overlay setup |
 
-Both failures reproduce identically on the two drivers, so neither is a driver
-quirk. Ruffle's picture is pixel-identical when the state is reloaded into the
-session that MADE it and 11.6% different across a reopen, which is the same
-isolation dolphin's crash has: whatever the renderer is holding does not survive
-the new context. Ruffle exposing no memory domains is its own problem - it means
-nobody can check whether its machine desynced, only whether its picture did.
+Both failures reproduced identically on the two drivers, so neither was a driver
+quirk. Both were fixed in their own repos; what follows is what they were,
+because they are the two shapes this bridge's contract can be got wrong in.
+
+**Ruffle rebuilt its renderer but not its quality.** The stage's quality lives
+in the player and is pushed down to the backend only when it is SET
+(`Stage::set_quality` ends in `renderer.set_quality`), so a backend built during
+a rebuild started at its own default - which for wgpu decides the MSAA sample
+count. The movie carried on being drawn with anti-aliasing effectively off:
+11.6% of pixels differed at the default `high`, 0% at `low`, where there is
+nothing smoothed to lose. Reading the quality back off the player and setting it
+again re-pushes it. Verified by rebuilding the core: identical at low, high and
+best, and the reopened run now lands on the high-quality pixel count it used to
+miss.
+
+**Dolphin's rebuild crashed, and underneath that it desyncs.** The crash was a
+null framebuffer: the rebuild cleared `m_current_framebuffer` and the machine
+draws through `BPFunctions::SetScissorAndViewport` as soon as it runs, which
+dereferences it. Binding the EFB afterwards fixes that, and dolphin now survives
+a reopen and draws - but the machine it comes back with is not the one that was
+saved. The rebuild remakes the EFB framebuffer, and the EFB's pixels are not
+merely a picture: the game copies them into its own RAM. So the console's 24 MB
+of System RAM diverges, which is a silent desync rather than a crash. Dolphin's
+package therefore declares `gpuStatesSurviveTheContext: false` until the EFB
+survives a rebuild - a discarded greenzone costs recomputation, and a kept one
+that desyncs costs the run.
+
+The isolation that found both is worth keeping in mind: reload into the session
+that MADE the state, and reopen with no GPU bridge at all. When those two are
+byte-identical and only the reopen-with-bridge differs, the rebuild is the only
+thing left.
 
 Dolphin declares that its states survive and has the patch that ought to make
 them (`0020-chimera-the-renderer-rebuilds-its-gl-objects-when-the-context-is-gone`),
