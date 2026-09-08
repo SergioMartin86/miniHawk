@@ -2003,6 +2003,18 @@ int32_t ce_session_greenzone_restore(ce_session *s, int64_t frame)
 	return s->greenzoneRestore(frame) ? 0 : 1;
 }
 
+void ce_session_greenzone_pin(ce_session *s, int64_t frame, int32_t pinned)
+{
+	if (s == nullptr) return;
+	s->history.pin(frame, pinned != 0);
+}
+
+void ce_session_greenzone_unpin_all(ce_session *s)
+{
+	if (s == nullptr) return;
+	s->history.unpinAll();
+}
+
 void ce_session_greenzone_spill(ce_session *s, const char *dir)
 {
 	if (s == nullptr) return;

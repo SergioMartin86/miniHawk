@@ -338,6 +338,58 @@ int main(void)
 		assert(withNotes > 4);
 	}
 
+	{ // A pinned frame stays reachable however hard the bands thin around it -
+	  // the marker somebody wants to jump to instantly.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 64ull << 20);
+		h.bands(2, 6, 3, 12, 1000);
+
+		/* frames deliberately off every band's grid, so nothing but the pin
+		 * could keep them */
+		const int64_t wanted[] = { 7, 13, 31, 55 };
+		for (int64_t f : wanted) h.pin(f, true);
+
+		std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+		h.capture(0);
+		for (int64_t f = 1; f <= 120; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+
+		for (int64_t f : wanted)
+		{
+			assert(h.nearest(f) == f);      /* still there */
+			assert(h.restore(f, error));
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+		}
+
+		/* and unpinning lets the bands have them - checked on a second run,
+		 * because coarsening a frame already past is not something that happens
+		 * again just for being asked */
+		chimera::StateHistory loose;
+		g_machine = Machine{};
+		loose.configure(&api, nullptr, 64ull << 20);
+		loose.bands(2, 6, 3, 12, 1000);
+		loose.capture(0);
+		for (int64_t f = 1; f <= 120; f++)
+		{
+			loose.beforeAdvance();
+			advance(f);
+			loose.capture(f);
+		}
+		int64_t survived = 0;
+		for (int64_t f : wanted) if (loose.nearest(f) == f) survived++;
+		assert(survived < 4);   /* the pin was doing the work, not luck */
+	}
+
 	{ // A history whose links have been merged still survives a round trip to
 	  // disk, landings and all.
 		const chimera::HostApi api = fakeHost();

@@ -18,45 +18,54 @@ namespace Chimera.Emulation.Common
 	public interface IStateHistory
 	{
 		/// <summary>Bytes to keep in memory; 0 turns it off and drops everything.</summary>
-		void HistoryEnable(long budgetBytes);
+		void Enable(long budgetBytes);
 
 		/// <summary>Where the far band goes when the budget is full; null for nowhere.</summary>
-		void HistorySpillTo(string? directory);
+		void SpillTo(string? directory);
 
 		/// <summary>Frames it can produce - not the number of stored objects.</summary>
-		long HistoryCount { get; }
+		long Count { get; }
 
 		/// <summary>The greatest frame it can produce at or before this one, or -1.</summary>
-		int HistoryNearest(int frame);
+		int Nearest(int frame);
 
-		bool HistoryHas(int frame);
+		bool Has(int frame);
 
 		/// <summary>
 		/// Before the machine moves, every time. A delta is what changed since a
 		/// marked moment, so the moment has to be marked first; skipping it is
 		/// not wrong, it just makes the next capture a whole state.
 		/// </summary>
-		void HistoryBeforeAdvance();
+		void BeforeAdvance();
 
 		/// <summary>After it has moved, with the frame now stood on.</summary>
-		void HistoryCapture(int frame);
+		void Capture(int frame);
 
 		/// <summary>
 		/// Puts the machine on a stored frame, restoring the emulator's own
 		/// side-band with it. False when that frame is not one it can produce.
 		/// </summary>
-		bool HistoryRestore(int frame);
+		bool RestoreTo(int frame);
 
 		/// <summary>Drops everything after this frame - what an input edit means.</summary>
-		void HistoryInvalidate(int afterFrame);
+		void InvalidateAfter(int afterFrame);
 
 		/// <summary>
 		/// The history across sessions. Both answer "it did not throw", never
 		/// "the states are there": a history of another machine is dropped
 		/// rather than refused, because losing it costs replaying and never work.
 		/// </summary>
-		bool HistorySave(string path, string machineId);
+		bool Save(string path, string machineId);
 
-		bool HistoryLoad(string path, string machineId);
+		bool Load(string path, string machineId);
+
+		/// <summary>
+		/// Frames to keep reachable whatever the thinning would otherwise do.
+		/// What deserves it is this layer's business - a marker somebody wants
+		/// to jump to instantly - and nothing the engine could work out itself.
+		/// </summary>
+		void Pin(int frame, bool pinned);
+
+		void UnpinAll();
 	}
 }

@@ -593,6 +593,12 @@ namespace Chimera.Emulation.Common.Engine
 		public abstract void ce_session_greenzone_spill(IntPtr session, string dir);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_pin(IntPtr session, long frame, int pinned);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_unpin_all(IntPtr session);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract long ce_session_greenzone_count(IntPtr session);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
@@ -1711,6 +1717,10 @@ namespace Chimera.Emulation.Common.Engine
 			=> E.ce_session_greenzone_bands(_session, nearFrames, midFrames, midStride, farStride, anchorSpacing);
 
 		public void GreenzoneSpillTo(string dir) => E.ce_session_greenzone_spill(_session, dir ?? "");
+
+		public void GreenzonePin(long frame, bool pinned) => E.ce_session_greenzone_pin(_session, frame, pinned ? 1 : 0);
+
+		public void GreenzoneUnpinAll() => E.ce_session_greenzone_unpin_all(_session);
 
 		public long GreenzoneCount => E.ce_session_greenzone_count(_session);
 

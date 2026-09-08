@@ -28,6 +28,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -101,6 +102,18 @@ public:
 	/* Drops everything after `frame`. An input edit at a frame makes every
 	 * later state a lie, while the state AT it still holds. */
 	void invalidateAfter(int64_t frame);
+
+	/* Frames to keep reachable whatever the bands would otherwise do: a landing
+	 * that is pinned is never merged away, and a stretch holding one is spilled
+	 * rather than dropped.
+	 *
+	 * What deserves pinning is the caller's business - a marker somebody wants
+	 * to jump to instantly, and nothing the engine could work out for itself.
+	 * Pinning a frame the history does not hold is not an error; it takes
+	 * effect if that frame is ever stored. */
+	void pin(int64_t frame, bool pinned);
+	bool pinned(int64_t frame) const;
+	void unpinAll();
 
 	/* Puts the machine back to `frame`, which must be one nearest() offered.
 	 * Restores that frame's segment anchor and walks its deltas forward.
@@ -221,6 +234,8 @@ private:
 	                                    * being wider than a segment, collapses
 	                                    * an old segment to its anchor */
 	int64_t m_anchorSpacing = 600;     /* a new anchor every 10 s */
+
+	std::set<int64_t> m_pinned;
 
 	std::string m_spillDir;
 	std::FILE *m_spill = nullptr;      /* one file, appended to, holes and all */

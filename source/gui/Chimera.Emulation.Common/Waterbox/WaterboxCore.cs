@@ -440,19 +440,19 @@ namespace Chimera.Emulation.Common.Waterbox
 		// engine has no opinion on any of it, so it rides along as the note it
 		// keeps with the frame and hands back on the way in.
 
-		public void HistoryEnable(long budgetBytes) => _session.GreenzoneEnable((ulong)Math.Max(budgetBytes, 0));
+		public void Enable(long budgetBytes) => _session.GreenzoneEnable((ulong)Math.Max(budgetBytes, 0));
 
-		public void HistorySpillTo(string directory) => _session.GreenzoneSpillTo(directory ?? "");
+		public void SpillTo(string directory) => _session.GreenzoneSpillTo(directory ?? "");
 
-		public long HistoryCount => _session.GreenzoneCount;
+		public long Count => _session.GreenzoneCount;
 
-		public int HistoryNearest(int frame) => checked((int)_session.GreenzoneNearest(frame));
+		public int Nearest(int frame) => checked((int)_session.GreenzoneNearest(frame));
 
-		public bool HistoryHas(int frame) => _session.GreenzoneNearest(frame) == frame;
+		public bool Has(int frame) => _session.GreenzoneNearest(frame) == frame;
 
-		public void HistoryBeforeAdvance() => _session.GreenzoneBeforeAdvance();
+		public void BeforeAdvance() => _session.GreenzoneBeforeAdvance();
 
-		public void HistoryCapture(int frame)
+		public void Capture(int frame)
 		{
 			CheckDisposed();
 			var note = new byte[5];
@@ -461,7 +461,7 @@ namespace Chimera.Emulation.Common.Waterbox
 			_session.GreenzoneCapture(frame, note);
 		}
 
-		public bool HistoryRestore(int frame)
+		public bool RestoreTo(int frame)
 		{
 			CheckDisposed();
 			if (!_session.GreenzoneRestore(frame)) return false;
@@ -478,11 +478,15 @@ namespace Chimera.Emulation.Common.Waterbox
 			return true;
 		}
 
-		public void HistoryInvalidate(int afterFrame) => _session.GreenzoneInvalidate(afterFrame);
+		public void InvalidateAfter(int afterFrame) => _session.GreenzoneInvalidate(afterFrame);
 
-		public bool HistorySave(string path, string machineId) => _session.HistorySave(path, machineId);
+		public bool Save(string path, string machineId) => _session.HistorySave(path, machineId);
 
-		public bool HistoryLoad(string path, string machineId) => _session.HistoryLoad(path, machineId);
+		public bool Load(string path, string machineId) => _session.HistoryLoad(path, machineId);
+
+		public void Pin(int frame, bool pinned) => _session.GreenzonePin(frame, pinned);
+
+		public void UnpinAll() => _session.GreenzoneUnpinAll();
 
 		// ---------------- IStatable ----------------
 

@@ -401,6 +401,30 @@ void StateHistory::invalidateAfter(int64_t frame)
  * that safe: it does not matter when a landing is examined or in what order,
  * because whether it survives depends only on where it lands.
  */
+void StateHistory::pin(int64_t frame, bool isPinned)
+{
+	if (isPinned) m_pinned.insert(frame);
+	else m_pinned.erase(frame);
+}
+
+bool StateHistory::pinned(int64_t frame) const
+{
+	return m_pinned.count(frame) != 0;
+}
+
+void StateHistory::unpinAll()
+{
+	m_pinned.clear();
+}
+
+/* True when anything between the anchor and the last landing is pinned - the
+ * question eviction asks before throwing a stretch away. */
+static bool holdsPinned(const std::set<int64_t> &pins, int64_t from, int64_t to)
+{
+	const auto it = pins.lower_bound(from);
+	return it != pins.end() && *it <= to;
+}
+
 void StateHistory::coarsen(int64_t newestFrame)
 {
 	if (!composeAvailable()) return;   /* an older host: keep every link */
@@ -412,6 +436,7 @@ void StateHistory::tidy(int64_t frame, int64_t stride)
 {
 	if (stride <= 1 || frame <= 0) return;
 	if (frame % stride == 0) return;   /* on the grid: this band wants it */
+	if (pinned(frame)) return;         /* and somebody wants this one whatever the band says */
 
 	for (Segment &seg : m_segments)
 	{
@@ -589,7 +614,10 @@ void StateHistory::evict()
 		Segment *victim = nullptr;
 		for (Segment &s : m_segments)
 		{
-			if (!s.links.empty() && !s.spilled) { victim = &s; break; }
+			if (s.links.empty() || s.spilled) continue;
+			if (pinned(s.links.back().endFrame)) continue;   /* somebody wants that one */
+			victim = &s;
+			break;
 		}
 		if (victim != nullptr)
 		{
@@ -605,7 +633,13 @@ void StateHistory::evict()
 		size_t drop = 0;
 		for (size_t i = 1; i + 1 < m_segments.size(); i++)
 		{
-			if (!m_segments[i].spilled) { drop = i; break; }
+			if (m_segments[i].spilled) continue;
+			/* a stretch somebody pinned a frame in is spilled, never dropped -
+			 * and if it could not be spilled it stays, and the budget is missed
+			 * rather than the promise */
+			if (holdsPinned(m_pinned, m_segments[i].anchorFrame, m_segments[i].lastFrame())) continue;
+			drop = i;
+			break;
 		}
 		if (drop == 0) return;
 		m_bytes -= m_segments[drop].bytes;

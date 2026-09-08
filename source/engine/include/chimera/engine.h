@@ -1091,6 +1091,16 @@ CE_API int32_t ce_session_greenzone_restore(ce_session *s, int64_t frame);
 CE_API uint32_t ce_session_greenzone_note(
 	const ce_session *s, int64_t frame, uint8_t *out, uint32_t out_len);
 
+/* Frames to keep reachable whatever the bands would otherwise do: a pinned
+ * frame is never coarsened away, and a stretch holding one is spilled rather
+ * than dropped. What deserves pinning is the caller's business - a marker
+ * somebody wants to jump to instantly is the case this exists for, and nothing
+ * the engine could work out for itself. Pinning a frame the history does not
+ * hold is not an error; it takes effect if that frame is ever stored.
+ * _unpin_all forgets the lot, for a caller rebuilding its set. */
+CE_API void ce_session_greenzone_pin(ce_session *s, int64_t frame, int32_t pinned);
+CE_API void ce_session_greenzone_unpin_all(ce_session *s);
+
 /* Where the far band goes once the budget is full; NULL or "" for nowhere.
  *
  * The oldest stretches are the right thing to put on disk - large, rarely
