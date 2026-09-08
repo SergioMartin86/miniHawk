@@ -71,6 +71,24 @@ public:
 	 * False with `error` set. */
 	bool restore(int64_t frame, std::string &error);
 
+	/* Writes the history to a file, and reads one back.
+	 *
+	 * Streamed, one segment at a time, straight to and from the file: no part of
+	 * this may be assembled in memory first. That is not an optimisation, it is
+	 * the bug this design exists to remove - the greenzone used to serialize
+	 * itself through a managed byte[], which stops near 2GB, and a history of
+	 * any real length silently failed to save and took the work with it.
+	 *
+	 * `machineId` describes the machine the states belong to - the caller's
+	 * business, since it is the caller that knows about cores and settings and
+	 * files. Loading a history that names a different machine refuses and leaves
+	 * the history empty: a state is the memory of one exact machine, and the
+	 * sandbox only checks the core binary. An absent or unreadable file is that
+	 * same empty answer, because losing this costs recomputation and never work.
+	 * False with `error` set. */
+	bool saveTo(const char *path, const char *machineId, std::string &error);
+	bool loadFrom(const char *path, const char *machineId, std::string &error);
+
 private:
 	struct Segment
 	{

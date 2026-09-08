@@ -32,6 +32,9 @@
  * log itself, and it is written to <out.txt>. Feeding that file back in as an
  * ordinary movie must reach the same machine - which is what witnesses record
  * mode and entry generation, the paths playback never touches.
+ * --history-out <file> keeps the state history, and --history-in <file> starts
+ * from one kept earlier - which is what reopening a project does, and the only
+ * way to witness that a history outlives the process that made it.
  * --export-savedata writes the core's exported save-data tree under <dir>
  * after the run (docs/save-data.md) - the gates diff it like a memory dump.
  * --firmware <id>=<path> mounts a firmware file under the id the core declares
@@ -156,6 +159,7 @@ int main(int argc, char **argv)
 	std::string recordPath;
 	std::string savedataDir;
 	std::string projectPath;
+	std::string historyIn, historyOut;
 	std::vector<std::string> fileDirs;
 	bool allowCoreMismatch = false;
 	bool wantGpu = false;
@@ -173,6 +177,8 @@ int main(int argc, char **argv)
 		else if (arg == "--files" && i + 1 < argc) fileDirs.push_back(argv[++i]);
 		else if (arg == "--allow-core-mismatch") allowCoreMismatch = true;
 		else if (arg == "--gpu") wantGpu = true;
+		else if (arg == "--history-in" && i + 1 < argc) historyIn = argv[++i];
+		else if (arg == "--history-out" && i + 1 < argc) historyOut = argv[++i];
 		else if (arg == "--firmware" && i + 1 < argc)
 		{
 			std::string spec = argv[++i];
@@ -461,7 +467,17 @@ int main(int argc, char **argv)
 	 * a limit applied after it would leave the decoded input shorter than the
 	 * run. */
 	if (frameLimit >= 0 && (frameLimit < frames || !recordPath.empty())) frames = frameLimit;
-	if (seekFrame >= 0) ce_session_greenzone_enable(session, 256ull << 20);
+	if (seekFrame >= 0 || !historyIn.empty() || !historyOut.empty())
+	{
+		ce_session_greenzone_enable(session, 256ull << 20);
+	}
+	/* A history kept from a previous run, which is the thing a reopened project
+	 * lives on. The machine id is this tool's own convention; a frontend passes
+	 * whatever it knows about cores, settings and files. */
+	if (!historyIn.empty() && ce_session_history_load(session, historyIn.c_str(), "chimera-run") != 0)
+	{
+		return fail(metaPath, std::string("history: ") + ce_session_last_error(session));
+	}
 
 	/* Record mode: decode the source movie's entries into machine input and
 	 * hand THAT to the session, which generates its own log. The source is an
@@ -652,6 +668,11 @@ int main(int argc, char **argv)
 			if (!ok) return fail(metaPath, "could not write " + path);
 		}
 		std::printf("savedata=%d\n", files);
+	}
+
+	if (!historyOut.empty() && ce_session_history_save(session, historyOut.c_str(), "chimera-run") != 0)
+	{
+		return fail(metaPath, std::string("history: ") + ce_session_last_error(session));
 	}
 
 	if (!metaPath.empty())

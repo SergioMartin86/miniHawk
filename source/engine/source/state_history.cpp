@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 
@@ -241,6 +242,129 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 	}
 	/* whatever epoch was marked described the machine we have just left */
 	m_epochOpen = false;
+	return true;
+}
+
+/* ---- persistence ----
+ *
+ * One file, written and read a segment at a time. Nothing here assembles the
+ * history in memory: the old greenzone did, through a managed array that stops
+ * near 2GB, and a long run's history therefore failed to save and said nothing.
+ */
+namespace
+{
+
+const char kMagic[] = "ChimeraHistory1";
+
+bool writeAll(std::FILE *f, const void *data, size_t n)
+{
+	return n == 0 || std::fwrite(data, 1, n, f) == n;
+}
+
+bool readAll(std::FILE *f, void *data, size_t n)
+{
+	return n == 0 || std::fread(data, 1, n, f) == n;
+}
+
+bool writeU64(std::FILE *f, uint64_t v) { return writeAll(f, &v, sizeof v); }
+bool readU64(std::FILE *f, uint64_t &v) { return readAll(f, &v, sizeof v); }
+
+} // namespace
+
+bool StateHistory::saveTo(const char *path, const char *machineId, std::string &error)
+{
+	std::FILE *f = std::fopen(path, "wb");
+	if (f == nullptr)
+	{
+		error = std::string("could not write the state history: ") + std::strerror(errno);
+		return false;
+	}
+	const std::string id = machineId != nullptr ? machineId : "";
+	bool ok = writeAll(f, kMagic, sizeof kMagic - 1)
+		&& writeU64(f, id.size())
+		&& writeAll(f, id.data(), id.size())
+		&& writeU64(f, m_segments.size());
+	for (const Segment &seg : m_segments)
+	{
+		if (!ok) break;
+		ok = writeU64(f, static_cast<uint64_t>(seg.anchorFrame))
+			&& writeU64(f, seg.anchor.size())
+			&& writeAll(f, seg.anchor.data(), seg.anchor.size())
+			&& writeU64(f, seg.deltas.size());
+		for (const std::vector<uint8_t> &d : seg.deltas)
+		{
+			if (!ok) break;
+			ok = writeU64(f, d.size()) && writeAll(f, d.data(), d.size());
+		}
+	}
+	if (std::fclose(f) != 0) ok = false;
+	if (!ok)
+	{
+		error = "the state history could not be written in full";
+		std::remove(path);   /* half a history is worse than none */
+		return false;
+	}
+	return true;
+}
+
+bool StateHistory::loadFrom(const char *path, const char *machineId, std::string &error)
+{
+	clear();
+	std::FILE *f = std::fopen(path, "rb");
+	if (f == nullptr) return true;   /* no history yet is not a failure */
+
+	auto give_up = [&](std::string why) {
+		std::fclose(f);
+		clear();
+		error = std::move(why);
+		return false;
+	};
+
+	char magic[sizeof kMagic - 1];
+	if (!readAll(f, magic, sizeof magic) || std::memcmp(magic, kMagic, sizeof magic) != 0)
+	{
+		return give_up("that is not a state history");
+	}
+	uint64_t idLen = 0;
+	if (!readU64(f, idLen) || idLen > (1u << 20)) return give_up("the state history is damaged");
+	std::string id(static_cast<size_t>(idLen), '\0');
+	if (!readAll(f, id.data(), id.size())) return give_up("the state history is damaged");
+	if (id != (machineId != nullptr ? machineId : ""))
+	{
+		/* Not damage, and not an error the user did anything about: these states
+		 * belong to a machine with other settings, files or core. */
+		std::fclose(f);
+		clear();
+		return true;
+	}
+
+	uint64_t segCount = 0;
+	if (!readU64(f, segCount)) return give_up("the state history is damaged");
+	for (uint64_t i = 0; i < segCount; i++)
+	{
+		Segment seg;
+		uint64_t anchorFrame = 0, anchorLen = 0, deltaCount = 0;
+		if (!readU64(f, anchorFrame) || !readU64(f, anchorLen)) return give_up("the state history is damaged");
+		seg.anchorFrame = static_cast<int64_t>(anchorFrame);
+		seg.anchor.resize(static_cast<size_t>(anchorLen));
+		if (!readAll(f, seg.anchor.data(), seg.anchor.size())) return give_up("the state history is damaged");
+		if (!readU64(f, deltaCount)) return give_up("the state history is damaged");
+		seg.bytes = anchorLen;
+		for (uint64_t d = 0; d < deltaCount; d++)
+		{
+			uint64_t len = 0;
+			if (!readU64(f, len)) return give_up("the state history is damaged");
+			std::vector<uint8_t> delta(static_cast<size_t>(len));
+			if (!readAll(f, delta.data(), delta.size())) return give_up("the state history is damaged");
+			seg.bytes += len;
+			seg.deltas.push_back(std::move(delta));
+		}
+		m_bytes += seg.bytes;
+		m_segments.push_back(std::move(seg));
+	}
+	std::fclose(f);
+	/* what was read may be more than this session's budget allows to be kept */
+	if (enabled()) evict();
 	return true;
 }
 

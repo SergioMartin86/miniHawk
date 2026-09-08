@@ -166,6 +166,29 @@ if [ "$level" = "both" ] || [ "$level" = "e" ]; then
 			fi
 		done
 
+		# the history OUTLIVES its process, which is what reopening a project
+		# asks of it. One run plays the movie and keeps its history to a file; a
+		# second, fresh process starts from that file, seeks back into states it
+		# did not make, and replays. The dumps must still be the goldens. This is
+		# the leg the old greenzone would have failed silently: it serialized
+		# itself through an array that stops near 2GB, so a long history simply
+		# did not save and nothing said so.
+		for movie in "$here"/movies/*.txt; do
+			hname="$(basename "$movie" .txt)"
+			hrom="$here/roms/${hname%%.*}.testrom"
+			htag="$hname.engine.history"
+			rm -f "$work/$htag.ram.bin" "$work/$htag.vram.bin" "$work/$htag.hist"
+			"$chimera_run" "$epkg" "$hrom" "$movie" --history-out "$work/$htag.hist" 				> "$work/$htag.save.log" 2>&1
+			"$chimera_run" "$epkg" "$hrom" "$movie" --history-in "$work/$htag.hist" --seek 10 				--dump "RAM=$work/$htag.ram.bin" --dump "VRAM=$work/$htag.vram.bin" 				> "$work/$htag.log" 2>&1
+			if [ ! -s "$work/$htag.hist" ]; then
+				report "E:$hname:history" FAIL "nothing was written (see work/$htag.save.log)"
+			elif cmp -s "$work/$htag.ram.bin" "$golden_dir/$hname.ram.bin" 				&& cmp -s "$work/$htag.vram.bin" "$golden_dir/$hname.vram.bin"; then
+				report "E:$hname:history" PASS "a history kept across processes seeks to the goldens"
+			else
+				report "E:$hname:history" FAIL "RAM or VRAM differs after reloading the history (see work/$htag.log)"
+			fi
+		done
+
 		# RECORD mode: playback never generates an entry, so the paths that turn
 		# machine input back into movie text have no other witness. Each movie is
 		# replayed as an INPUT SOURCE into a recording session, which writes its

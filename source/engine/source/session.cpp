@@ -1956,6 +1956,18 @@ void ce_session_greenzone_invalidate(ce_session *s, int64_t after_frame)
 	s->history.invalidateAfter(after_frame);
 }
 
+int32_t ce_session_history_save(ce_session *s, const char *path, const char *machine_id)
+{
+	s->error.clear();
+	return s->history.saveTo(path, machine_id, s->error) ? 0 : 1;
+}
+
+int32_t ce_session_history_load(ce_session *s, const char *path, const char *machine_id)
+{
+	s->error.clear();
+	return s->history.loadFrom(path, machine_id, s->error) ? 0 : 1;
+}
+
 int32_t ce_session_seek(ce_session *s, int64_t frame)
 {
 	s->error.clear();

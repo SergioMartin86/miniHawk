@@ -1048,6 +1048,23 @@ CE_API void ce_session_greenzone_invalidate(ce_session *s, int64_t after_frame);
  * movie to frame. Needs the movie's entries up to frame. 0 on success. */
 CE_API int32_t ce_session_seek(ce_session *s, int64_t frame);
 
+/* The history, kept between sessions. It is written to one file, streamed a
+ * segment at a time - nothing about it is ever assembled in memory, which is
+ * the whole point: the greenzone this replaces serialized itself through a
+ * managed array that stops near 2GB, so a long run's history silently failed
+ * to save and took the work with it.
+ *
+ * machine_id says which machine these states belong to. The caller owns that
+ * question, knowing about cores, settings and files as it does; the engine
+ * only carries the string and refuses a history that names a different one,
+ * because a state is the memory of one exact machine and the sandbox checks
+ * only the core binary. Loading an absent, unreadable or foreign history is
+ * not an error - it leaves the history empty and costs recomputation, never
+ * work, which is what a cold greenzone has always meant. 0 on success, and
+ * see _last_error otherwise. */
+CE_API int32_t ce_session_history_save(ce_session *s, const char *path, const char *machine_id);
+CE_API int32_t ce_session_history_load(ce_session *s, const char *path, const char *machine_id);
+
 #ifdef __cplusplus
 }
 #endif
