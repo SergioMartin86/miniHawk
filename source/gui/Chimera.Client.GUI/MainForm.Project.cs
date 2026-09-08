@@ -267,6 +267,7 @@ namespace Chimera.Client.GUI
 				progress.Step("finding the project's files");
 				project.ResolveDir(Path.GetDirectoryName(Path.GetFullPath(path)));
 				local = ProjectLocalPaths.Read(project, path);
+				ProjectCache.Remember(project.Id, ProjectCache.FactsOf(project, path));
 				local.ApplyTo(project);
 			}
 			if (!project.FilesOk)

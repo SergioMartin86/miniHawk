@@ -178,18 +178,19 @@ namespace Chimera.Tests.Client.GUI
 			if (ShotDir is null) { Assert.Inconclusive("set CHIMERA_UI_SHOTS to write screenshots"); return; }
 			var items = new List<CacheItem>
 			{
-				new() { Kind = CacheKind.Project, Label = "Prince of Persia The Sands of Time", Detail = "9f2c14ab7d3e5501", Path = "/cache/9f2c14ab7d3e5501", Bytes = 2_684_354_560L, LastUsed = new DateTime(2026, 9, 7) },
-				new() { Kind = CacheKind.Project, Label = "Street Fighter EX3", Detail = "1a77b0c9de42f318", Path = "/cache/1a77b0c9de42f318", Bytes = 412_876_800L, LastUsed = new DateTime(2026, 9, 2), InUse = true },
-				new() { Kind = CacheKind.CorePackage, Label = "xemu", Detail = "23df374e", Path = "/CoreCache/xemu-23df374e", Bytes = 52_428_800L, LastUsed = new DateTime(2026, 9, 7) },
-				new() { Kind = CacheKind.CompiledCode, Label = "rpcs3", Detail = "e6bdd2b2", Path = "/CoreCache/rpcs3/e6bdd2b2", Bytes = 1_073_741_824L, LastUsed = new DateTime(2026, 9, 5) },
-				new() { Kind = CacheKind.CoreVersions, Label = "Published core versions", Detail = "", Path = "/Cores/.feed-cache", Bytes = 48_128L, LastUsed = new DateTime(2026, 9, 8) },
+				new() { Kind = CacheKind.Project, Label = "Prince of Persia The Sands of Time", Detail = "9f2c14ab7d3e5501", System = "XBOX", Core = "xemu", Games = new[] { "Prince of Persia The Sands of Time.iso" }, ProjectPath = @"D:\TAS\projects\xbox\Prince of Persia.chimeraProject", Path = @"C:\Users\you\AppData\Local\Chimera\Projects\9f2c14ab7d3e5501", Bytes = 2_684_354_560L, LastUsed = new DateTime(2026, 9, 7, 18, 42, 0) },
+				new() { Kind = CacheKind.Project, Label = "Street Fighter EX3", Detail = "1a77b0c9de42f318", System = "PS2", Core = "pcsx2", Games = new[] { "Street Fighter EX3 (USA).iso" }, ProjectPath = @"D:\TAS\projects\ps2\Street Fighter EX3.chimeraProject", Path = @"C:\Users\you\AppData\Local\Chimera\Projects\1a77b0c9de42f318", Bytes = 412_876_800L, LastUsed = new DateTime(2026, 9, 2, 9, 15, 0), InUse = true },
+				new() { Kind = CacheKind.Project, Label = "an experiment", Detail = "77c0aa31be905412", System = "PS3", Core = "rpcs3", Games = new[] { "GTA San Andreas.iso" }, ProjectPath = @"D:\TAS\scratch\try again.chimeraProject", Path = @"C:\Users\you\AppData\Local\Chimera\Projects\77c0aa31be905412", Bytes = 890_000_000L, LastUsed = new DateTime(2026, 8, 11, 22, 3, 0), Orphaned = true },
+				new() { Kind = CacheKind.CorePackage, Label = "xemu", Core = "xemu", Detail = "23df374e", Path = @"C:\Chimera\CoreCache\xemu-23df374e", Bytes = 52_428_800L, LastUsed = new DateTime(2026, 9, 7, 18, 40, 0) },
+				new() { Kind = CacheKind.CompiledCode, Label = "rpcs3", Core = "rpcs3", Detail = "e6bdd2b2", Path = @"C:\Chimera\CoreCache\rpcs3\e6bdd2b2", Bytes = 1_073_741_824L, LastUsed = new DateTime(2026, 9, 5, 11, 27, 0) },
+				new() { Kind = CacheKind.CoreVersions, Label = "Published core versions", Detail = "", Path = @"C:\Users\you\AppData\Local\Chimera\Cores\.feed-cache", Bytes = 48_128L, LastUsed = new DateTime(2026, 9, 8, 7, 2, 0) },
 			};
 
 			using CacheManagerForm form = new(() => items);
 			form.StartPosition = FormStartPosition.Manual;
 			form.Location = new Point(0, 0);
 			form.Show();
-			_ = form.Select("/cache/9f2c14ab7d3e5501");
+			_ = form.Select(@"C:\Users\you\AppData\Local\Chimera\Projects\9f2c14ab7d3e5501");
 			Shoot(form, "cache-manager");
 		}
 

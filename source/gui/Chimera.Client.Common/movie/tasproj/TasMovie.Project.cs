@@ -271,6 +271,9 @@ namespace Chimera.Client.Common
 				// hashes and no paths at all (docs/project.md). Merged over whatever
 				// is already there, so firmware locations recorded at load survive.
 				ProjectLocalPaths.Read(p, fn).Save(p);
+				// and who this cache belongs to, so the cache manager can name it
+				// and say where the project it serves was last seen
+				ProjectCache.Remember(p.Id, ProjectCache.FactsOf(p, fn));
 				Changes = false;
 			}
 			return new FileWriteResult();

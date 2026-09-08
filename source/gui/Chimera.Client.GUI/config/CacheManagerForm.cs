@@ -11,7 +11,7 @@ using Chimera.Client.Common;
 namespace Chimera.Client.GUI
 {
 	/// <summary>
-	/// File &gt; Cache Manager: everything Chimera keeps on disk that it could work
+	/// Tools &gt; Cache Manager: everything Chimera keeps on disk that it could work
 	/// out again, and how much room it is taking.
 	///
 	/// One rule makes this window safe, and it is worth stating where somebody can
@@ -34,7 +34,13 @@ namespace Chimera.Client.GUI
 		private readonly Label _detail;
 		private readonly Label _status;
 		private readonly Button _remove;
-		private readonly Button _removeKind;
+
+		/// <summary>the column the list is sorted by, and whether it is reversed</summary>
+		private int _sortColumn = SizeColumn;
+		private bool _sortAscending;
+
+		private const int SizeColumn = 8;
+		private const int DateColumn = 9;
 
 		private List<CacheItem> _items = new();
 
@@ -46,13 +52,15 @@ namespace Chimera.Client.GUI
 			_survey = survey;
 
 			SuspendLayout();
-			ClientSize = new(UIHelper.ScaleX(760), UIHelper.ScaleY(440));
-			MinimumSize = new(UIHelper.ScaleX(620), UIHelper.ScaleY(360));
+			// seven columns of paths and sizes; the two location columns are the
+			// wide ones and are the reason to be here at all
+			ClientSize = new(UIHelper.ScaleX(1460), UIHelper.ScaleY(470));
+			MinimumSize = new(UIHelper.ScaleX(900), UIHelper.ScaleY(360));
 			StartPosition = FormStartPosition.CenterParent;
 			ShowIcon = false;
 
 			var margin = UIHelper.ScaleX(8);
-			var footer = UIHelper.ScaleY(104);
+			var footer = UIHelper.ScaleY(138);
 
 			_header = new Label
 			{
@@ -72,50 +80,49 @@ namespace Chimera.Client.GUI
 				MultiSelect = false,
 				View = View.Details,
 			};
-			_list.Columns.Add("What", UIHelper.ScaleX(130));
-			_list.Columns.Add("Name", UIHelper.ScaleX(250));
-			_list.Columns.Add("Detail", UIHelper.ScaleX(160));
-			_list.Columns.Add("Size", UIHelper.ScaleX(80), HorizontalAlignment.Right);
-			_list.Columns.Add("Last used", UIHelper.ScaleX(100));
+			_list.Columns.Add("What", UIHelper.ScaleX(100));
+			_list.Columns.Add("Name", UIHelper.ScaleX(180));
+			_list.Columns.Add("System", UIHelper.ScaleX(70));
+			_list.Columns.Add("Core", UIHelper.ScaleX(90));
+			_list.Columns.Add("Game", UIHelper.ScaleX(200));
+			_list.Columns.Add("Project id", UIHelper.ScaleX(120));
+			_list.Columns.Add("Project file", UIHelper.ScaleX(230));
+			_list.Columns.Add("Cache location", UIHelper.ScaleX(230));
+			_list.Columns.Add("Size", UIHelper.ScaleX(70), HorizontalAlignment.Right);
+			_list.Columns.Add("Last modified", UIHelper.ScaleX(110));
 			_list.SelectedIndexChanged += (_, _) => ShowSelected();
+			// The reason to open this window is almost always "what is taking the
+			// room", and the answer is a sort away. Size and date sort largest and
+			// newest first, because that is the question being asked; the text
+			// columns sort the way text does.
+			_list.ColumnClick += (_, e) => SortBy(e.Column);
 
 			_detail = new Label
 			{
 				Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
 				AutoSize = false,
 				Location = new(margin, ClientSize.Height - footer + UIHelper.ScaleY(6)),
-				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(32)),
+				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(66)),
 			};
 
 			_status = new Label
 			{
 				Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
 				AutoSize = false,
-				Location = new(margin, ClientSize.Height - footer + UIHelper.ScaleY(40)),
+				Location = new(margin, ClientSize.Height - footer + UIHelper.ScaleY(74)),
 				Size = new(ClientSize.Width - (2 * margin), UIHelper.ScaleY(18)),
 			};
 
 			var buttonRow = ClientSize.Height - UIHelper.ScaleY(32);
 			var bw = UIHelper.ScaleX(150);
-			var gap = UIHelper.ScaleX(8);
-
 			_remove = new Button
 			{
 				Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
 				Location = new(margin, buttonRow),
 				Size = new(bw, UIHelper.ScaleY(26)),
-				Text = "Remove",
+				Text = "Remove Entry",
 			};
 			_remove.Click += (_, _) => RemoveSelected();
-
-			_removeKind = new Button
-			{
-				Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-				Location = new(margin + bw + gap, buttonRow),
-				Size = new(bw, UIHelper.ScaleY(26)),
-				Text = "Remove all of this kind",
-			};
-			_removeKind.Click += (_, _) => RemoveKind();
 
 			Button close = new()
 			{
@@ -126,7 +133,7 @@ namespace Chimera.Client.GUI
 				Text = "Close",
 			};
 
-			Controls.AddRange(new Control[] { _header, _list, _detail, _status, _remove, _removeKind, close });
+			Controls.AddRange(new Control[] { _header, _list, _detail, _status, _remove, close });
 			AcceptButton = close;
 			ResumeLayout();
 
@@ -137,7 +144,7 @@ namespace Chimera.Client.GUI
 		private void Reload()
 		{
 			var wasSelected = Selected()?.Path;
-			_items = _survey().ToList();
+			_items = Sorted(_survey()).ToList();
 
 			_list.BeginUpdate();
 			_list.Items.Clear();
@@ -145,19 +152,31 @@ namespace Chimera.Client.GUI
 			{
 				ListViewItem row = new(CacheSurvey.Describe(item.Kind)) { Tag = item };
 				row.SubItems.Add(item.Label);
-				row.SubItems.Add(item.Detail);
+				row.SubItems.Add(item.System);
+				row.SubItems.Add(item.Core);
+				row.SubItems.Add(item.Game);
+				row.SubItems.Add(item.Kind is CacheKind.Project ? item.Detail : "");
+				row.SubItems.Add(item.ProjectPath.Length is not 0
+					? item.ProjectPath + (item.Orphaned ? "   (not found)" : "")
+					: item.Kind is CacheKind.Project ? "(never recorded)" : item.Detail);
+				row.SubItems.Add(item.Path);
 				row.SubItems.Add(CacheSurvey.Size(item.Bytes));
-				row.SubItems.Add(item.LastUsed == default ? "" : item.LastUsed.ToLocalTime().ToString("yyyy-MM-dd"));
+				row.SubItems.Add(item.LastUsed == default ? "" : item.LastUsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
 				if (item.InUse) row.ForeColor = SystemColors.GrayText;
 				_list.Items.Add(row);
 			}
 			_list.EndUpdate();
 
 			var total = _items.Sum(static i => i.Bytes);
+			var orphaned = _items.Where(static i => i.Orphaned).ToList();
 			_header.Text = _items.Count is 0
 				? "Nothing is cached. Everything here is rebuilt as it is needed."
 				: $"{_items.Count} cached item(s), {CacheSurvey.Size(total)} in all. Everything here can be"
-					+ " removed: what it costs is time, never work.";
+					+ " removed: what it costs is time, never work."
+					+ (orphaned.Count is 0
+						? ""
+						: $"{Environment.NewLine}{orphaned.Count} belong to projects that are no longer where they were"
+							+ $" ({CacheSurvey.Size(orphaned.Sum(static i => i.Bytes))}).");
 
 			if (wasSelected is not null)
 			{
@@ -170,19 +189,68 @@ namespace Chimera.Client.GUI
 			ShowSelected();
 		}
 
+		/// <summary>
+		/// Sorts by a column, reversing it when it is already the one sorted by.
+		/// Size and date start largest and newest, since "what is taking the room"
+		/// and "what have I not touched in months" are the two questions this
+		/// window exists to answer.
+		/// </summary>
+		private void SortBy(int column)
+		{
+			if (column == _sortColumn) _sortAscending = !_sortAscending;
+			else
+			{
+				_sortColumn = column;
+				_sortAscending = column is not (SizeColumn or DateColumn);
+			}
+			Reload();
+		}
+
+		/// <summary>
+		/// Always built ASCENDING and reversed when it should not be, so that
+		/// "which way round is this" has one answer instead of one per column.
+		/// </summary>
+		private IEnumerable<CacheItem> Sorted(IEnumerable<CacheItem> items)
+		{
+			IEnumerable<CacheItem> ordered = _sortColumn switch
+			{
+				0 => items.OrderBy(static i => i.Kind).ThenBy(static i => i.Bytes),
+				1 => items.OrderBy(static i => i.Label, StringComparer.CurrentCultureIgnoreCase),
+				2 => items.OrderBy(static i => i.System, StringComparer.OrdinalIgnoreCase),
+				3 => items.OrderBy(static i => i.Core, StringComparer.OrdinalIgnoreCase),
+				4 => items.OrderBy(static i => i.Game, StringComparer.CurrentCultureIgnoreCase),
+				5 => items.OrderBy(static i => i.Detail, StringComparer.OrdinalIgnoreCase),
+				6 => items.OrderBy(static i => i.ProjectPath, StringComparer.CurrentCultureIgnoreCase),
+				7 => items.OrderBy(static i => i.Path, StringComparer.CurrentCultureIgnoreCase),
+				DateColumn => items.OrderBy(static i => i.LastUsed),
+				_ => items.OrderBy(static i => i.Bytes),
+			};
+			return _sortAscending ? ordered : ordered.Reverse();
+		}
+
 		private CacheItem? Selected()
 			=> _list.SelectedItems.Count is 0 ? null : _list.SelectedItems[0].Tag as CacheItem;
 
 		private void ShowSelected()
 		{
 			var item = Selected();
-			_detail.Text = item is null
-				? ""
-				: item.InUse
-					? $"{item.Cost}{Environment.NewLine}In use right now, so it cannot be removed while it is open."
-					: $"{item.Cost}{Environment.NewLine}{item.Path}";
+			if (item is null)
+			{
+				_detail.Text = "";
+			}
+			else
+			{
+				// The columns clip a long path, and a path that cannot be read in
+				// full is not much use for deciding whether to delete something.
+				List<string> lines = new() { item.Cost };
+				if (item.InUse) lines.Add("In use right now, so it cannot be removed while it is open.");
+				else if (item.Note.Length is not 0) lines.Add(item.Note);
+				if (item.Games.Count > 1) lines.Add($"Game files: {string.Join(", ", item.Games)}");
+				if (item.ProjectPath.Length is not 0) lines.Add($"Project file: {item.ProjectPath}");
+				lines.Add($"Cache: {item.Path}");
+				_detail.Text = string.Join(Environment.NewLine, lines);
+			}
 			_remove.Enabled = item is { InUse: false };
-			_removeKind.Enabled = item is not null && _items.Any(i => i.Kind == item.Kind && !i.InUse);
 		}
 
 		private void RemoveSelected()
@@ -192,26 +260,6 @@ namespace Chimera.Client.GUI
 			var refused = CacheSurvey.Remove(item);
 			Reload();
 			_status.Text = refused is null ? $"Removed {item.Label}." : $"{item.Label} was not removed: {refused}";
-		}
-
-		private void RemoveKind()
-		{
-			if (Selected() is not { } chosen) return;
-			var wanted = _items.Where(i => i.Kind == chosen.Kind && !i.InUse).ToList();
-			if (wanted.Count is 0) return;
-			if (!Confirm(wanted.Count, wanted.Sum(static i => i.Bytes), chosen.Cost)) return;
-
-			var removed = 0;
-			List<string> kept = new();
-			foreach (var item in wanted)
-			{
-				if (CacheSurvey.Remove(item) is null) removed++;
-				else kept.Add(item.Label);
-			}
-			Reload();
-			_status.Text = kept.Count is 0
-				? $"Removed {removed} item(s)."
-				: $"Removed {removed}; left {string.Join(", ", kept)}.";
 		}
 
 		/// <summary>

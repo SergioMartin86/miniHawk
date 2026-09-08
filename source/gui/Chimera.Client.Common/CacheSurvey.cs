@@ -36,6 +36,40 @@ namespace Chimera.Client.Common
 
 		public string Path { get; init; } = "";
 
+		/// <summary>
+		/// Where the project this belongs to was last seen, for a project cache
+		/// that was told; "" otherwise, and always "" for the other kinds.
+		/// </summary>
+		public string ProjectPath { get; init; } = "";
+
+		/// <summary>The machine, as the movie records it (XBOX, NES); "" when not known.</summary>
+		public string System { get; init; } = "";
+
+		/// <summary>The core it is pinned to, by name; "" when not known.</summary>
+		public string Core { get; init; } = "";
+
+		/// <summary>The game's own files, as the project names them. Empty when not known.</summary>
+		public IReadOnlyList<string> Games { get; init; } = Array.Empty<string>();
+
+		/// <summary>
+		/// The game in one column's worth of words. Most projects are one file;
+		/// the ones that are not say how many rather than running off the edge.
+		/// </summary>
+		public string Game => Games.Count switch
+		{
+			0 => "",
+			1 => Games[0],
+			_ => $"{Games[0]}  (+{Games.Count - 1} more)",
+		};
+
+		/// <summary>
+		/// True when this belongs to a project whose file is not where it was last
+		/// seen - deleted, or moved and not opened since. These are the rows worth
+		/// reclaiming: nothing points at them any more, and if the project turns up
+		/// again it simply builds its history back.
+		/// </summary>
+		public bool Orphaned { get; init; }
+
 		public long Bytes { get; init; }
 
 		/// <summary>When anything in it was last written; default when unknown.</summary>
@@ -47,6 +81,14 @@ namespace Chimera.Client.Common
 		/// rather than asking.
 		/// </summary>
 		public bool InUse { get; init; }
+
+		/// <summary>
+		/// Why this row is worth a second look, or "". Only ever advice: an orphan
+		/// is still perfectly good, it is simply the one nothing is asking for.
+		/// </summary>
+		public string Note => Orphaned
+			? "The project this belongs to is not where it was last seen."
+			: "";
 
 		/// <summary>What is actually lost by deleting it. Never work; always time.</summary>
 		public string Cost => Kind switch
@@ -95,15 +137,24 @@ namespace Chimera.Client.Common
 
 			foreach (var project in ProjectCache.All())
 			{
+				var inUse = openProjectId is { Length: > 0 }
+					&& string.Equals(openProjectId, project.Id, StringComparison.OrdinalIgnoreCase);
 				items.Add(new CacheItem
 				{
 					Kind = CacheKind.Project,
 					Label = project.Label.Length is not 0 ? project.Label : "(a project that never said its name)",
 					Detail = project.Id,
 					Path = project.Path,
+					ProjectPath = project.ProjectPath,
+					System = project.System,
+					Core = project.Core,
+					Games = project.Games,
+					// a project that is open is obviously not missing, whatever the
+					// note says - it was opened from somewhere
+					Orphaned = !inUse && project.ProjectPath.Length is not 0 && !File.Exists(project.ProjectPath),
 					Bytes = project.Bytes,
 					LastUsed = project.LastUsed,
-					InUse = openProjectId is { Length: > 0 } && string.Equals(openProjectId, project.Id, StringComparison.OrdinalIgnoreCase),
+					InUse = inUse,
 				});
 			}
 
@@ -119,6 +170,7 @@ namespace Chimera.Client.Common
 				{
 					Kind = CacheKind.CorePackage,
 					Label = label,
+					Core = label,
 					Detail = sha1.Length >= 8 ? sha1.Substring(0, 8) : sha1,
 					Path = dir,
 					Bytes = SizeOf(dir),

@@ -37,6 +37,7 @@ namespace Chimera.Client.GUI
 			this.EncodeVideoMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.CoreManagerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.CacheManagerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
+			this.toolStripSeparatorManagers = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.CoreManagerSeparator = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.ScreenshotSubMenu = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.ScreenshotMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
@@ -204,8 +205,6 @@ namespace Chimera.Client.GUI
             this.EncodeVideoMenuItem,
             this.ScreenshotSubMenu,
             this.CoreManagerSeparator,
-            this.CoreManagerMenuItem,
-            this.CacheManagerMenuItem,
             this.toolStripSeparator4,
             this.ExitMenuItem});
 			this.FileSubMenu.Text = "&File";
@@ -798,6 +797,9 @@ namespace Chimera.Client.GUI
 			// ToolsSubMenu
 			// 
 			this.ToolsSubMenu.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.CoreManagerMenuItem,
+            this.CacheManagerMenuItem,
+            this.toolStripSeparatorManagers,
             this.RamWatchMenuItem,
             this.RamSearchMenuItem,
             this.LuaConsoleMenuItem,
@@ -1231,6 +1233,7 @@ namespace Chimera.Client.GUI
 
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx CoreManagerMenuItem;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx CacheManagerMenuItem;
+		private Chimera.WinForms.Controls.ToolStripSeparatorEx toolStripSeparatorManagers;
 
 		private Chimera.WinForms.Controls.ToolStripSeparatorEx CoreManagerSeparator;
 		private Chimera.WinForms.Controls.StatusLabelEx AVStatusLabel;

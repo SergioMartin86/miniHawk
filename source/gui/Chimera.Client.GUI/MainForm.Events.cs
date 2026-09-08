@@ -471,7 +471,7 @@ namespace Chimera.Client.GUI
 		}
 
 		/// <summary>
-		/// File &gt; Cache Manager: what Chimera keeps on disk that it could work
+		/// Tools &gt; Cache Manager: what Chimera keeps on disk that it could work
 		/// out again, and how much room it is taking. Everything it lists is safe
 		/// to delete - the cost is time, never work - which is why installed cores
 		/// and projects are not in it.

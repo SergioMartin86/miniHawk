@@ -227,9 +227,6 @@ namespace Chimera.Client.Common
 			try
 			{
 				ProjectCache.Ensure(project.Id);
-				// so the cache manager can name this directory after the project
-				// rather than after its id
-				ProjectCache.RememberLabel(project.Id, project.Title);
 				File.WriteAllText(PathFor(project), root.ToString(Formatting.Indented));
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
