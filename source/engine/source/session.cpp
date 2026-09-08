@@ -14,6 +14,7 @@
 #include "file_io.hpp"
 #include "host_dyn.hpp"
 #include "progress.hpp"
+#include "state_history.hpp"
 
 #include "../../extern/cjson/cJSON.h"
 
@@ -449,10 +450,10 @@ struct ce_session
 	std::string mnemonics; // one char per button, for generated entries
 	chimera::EntryLayout layout; // the Bk2 entry order (see movie_entry.hpp)
 
-	// ---- the greenzone ----
-	uint64_t gzBudget = 0;
-	uint64_t gzBytes = 0;
-	std::map<int64_t, std::vector<uint8_t>> gzStates;
+	// ---- the state history (docs/state-manager.md) ----
+	// Anchors and the deltas that walk forward from them, so a stored frame
+	// costs what the frame changed rather than what the machine is.
+	chimera::StateHistory history;
 
 	void probeOptionalGroups();
 	int32_t advanceCore(const uint8_t *buttons, int32_t render);
@@ -461,6 +462,9 @@ struct ce_session
 	const uint8_t *computeEffective(uint64_t mask);
 	uint64_t sendButtons(const uint8_t *states);
 	void greenzoneCapture();
+	/* the half that must run BEFORE the advance: an epoch has to be marked
+	 * while the machine is still where the delta will be measured from */
+	void greenzoneBeforeAdvance() { history.beforeAdvance(); }
 
 	bool activate(std::string &err)
 	{
@@ -848,25 +852,7 @@ int32_t ce_session::advanceCore(const uint8_t *buttons, int32_t render)
 
 void ce_session::greenzoneCapture()
 {
-	if (gzBudget == 0) return;
-	std::vector<uint8_t> state;
-	chimera::WbxReturn r{};
-	host->wbx_save_state(obj, vectorWrite, reinterpret_cast<uintptr_t>(&state), &r);
-	if (!r.ok()) return; // a missed capture only costs a longer replay later
-	auto it = gzStates.find(frame);
-	if (it != gzStates.end()) gzBytes -= it->second.size();
-	gzBytes += state.size();
-	gzStates[frame] = std::move(state);
-	/* evict the earliest state above the anchor: the anchor keeps every frame
-	 * reachable, the recent tail keeps nearby seeks fast, and the thinned
-	 * middle merely replays longer */
-	while (gzBytes > gzBudget && gzStates.size() > 2)
-	{
-		auto victim = std::next(gzStates.begin());
-		if (victim->first == frame) break; // never evict what we just stored
-		gzBytes -= victim->second.size();
-		gzStates.erase(victim);
-	}
+	history.capture(frame);
 }
 
 extern "C" {
@@ -1901,6 +1887,10 @@ int32_t ce_session_movie_advance(ce_session *s, uint64_t buttons, const int32_t 
 		return -1;
 	}
 
+	/* the epoch the coming frame's delta is measured against, marked while the
+	 * machine is still where it starts */
+	s->greenzoneBeforeAdvance();
+
 	int32_t lag;
 	if (s->movieMode == 1 && s->frame < ce_movie_log_count(s->movie))
 	{
@@ -1947,32 +1937,23 @@ int32_t ce_session_movie_advance(ce_session *s, uint64_t buttons, const int32_t 
 
 void ce_session_greenzone_enable(ce_session *s, uint64_t budget_bytes)
 {
-	s->gzBudget = budget_bytes;
-	s->gzStates.clear();
-	s->gzBytes = 0;
+	s->history.configure(s->host, s->obj, budget_bytes);
 	if (budget_bytes != 0) s->greenzoneCapture(); // the anchor: the frame we stand on now
 }
 
 int64_t ce_session_greenzone_count(const ce_session *s)
 {
-	return static_cast<int64_t>(s->gzStates.size());
+	return s->history.count();
 }
 
 int64_t ce_session_greenzone_nearest(const ce_session *s, int64_t frame)
 {
-	auto it = s->gzStates.upper_bound(frame);
-	if (it == s->gzStates.begin()) return -1;
-	return std::prev(it)->first;
+	return s->history.nearest(frame);
 }
 
 void ce_session_greenzone_invalidate(ce_session *s, int64_t after_frame)
 {
-	auto it = s->gzStates.upper_bound(after_frame);
-	while (it != s->gzStates.end())
-	{
-		s->gzBytes -= it->second.size();
-		it = s->gzStates.erase(it);
-	}
+	s->history.invalidateAfter(after_frame);
 }
 
 int32_t ce_session_seek(ce_session *s, int64_t frame)
@@ -1992,15 +1973,7 @@ int32_t ce_session_seek(ce_session *s, int64_t frame)
 	int64_t base = ce_session_greenzone_nearest(s, frame);
 	if (base >= 0 && (base > s->frame || s->frame > frame))
 	{
-		const auto &state = s->gzStates[base];
-		ByteStream stream{ state.data(), state.size() };
-		chimera::WbxReturn r{};
-		s->host->wbx_load_state(s->obj, streamRead, reinterpret_cast<uintptr_t>(&stream), &r);
-		if (!r.ok())
-		{
-			s->error = r.errorMessage;
-			return 1;
-		}
+		if (!s->history.restore(base, s->error)) return 1;
 		if (s->traceSetEnabled != nullptr)
 		{
 			s->traceSetEnabled(s->traceDesired ? 1 : 0);
@@ -2032,6 +2005,7 @@ int32_t ce_session_seek(ce_session *s, int64_t frame)
 		{
 			if (s->setAxis != nullptr) s->setAxis(static_cast<int32_t>(i), movieAxes[i]);
 		}
+		s->greenzoneBeforeAdvance();
 		s->advanceCore(s->movieButtons.data(), 0);
 		s->greenzoneCapture();
 	}

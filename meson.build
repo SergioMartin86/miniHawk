@@ -281,6 +281,7 @@ engine_src = files(
   'source/engine/source/host_dyn.cpp',
   'source/engine/source/movie_entry.cpp',
   'source/engine/source/session.cpp',
+  'source/engine/source/state_history.cpp',
   'source/engine/source/gl_bridge.cpp',
   'extern/miniz/miniz.c',  # vendored (MIT): the zip half of the state container
   'extern/cjson/cJSON.c',  # vendored (MIT): bundle JSON

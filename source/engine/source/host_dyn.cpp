@@ -98,6 +98,21 @@ void loadOnce()
 		&& bind(g_api.wbx_save_state, "wbx_save_state")
 		&& bind(g_api.wbx_load_state, "wbx_load_state");
 	if (!g_ok) g_error = "libminiboxhost is missing expected wbx_ symbols";
+
+	/* The optional four, bound on their own: a host without them is not a
+	 * broken host, it is one that predates epochs, and the state history falls
+	 * back to whole states. Only offered as a set - half of it is no use. */
+	if (g_ok
+		&& !(bind(g_api.wbx_epoch_begin, "wbx_epoch_begin")
+			&& bind(g_api.wbx_save_delta, "wbx_save_delta")
+			&& bind(g_api.wbx_load_delta, "wbx_load_delta")
+			&& bind(g_api.wbx_get_epoch_page_count, "wbx_get_epoch_page_count")))
+	{
+		g_api.wbx_epoch_begin = nullptr;
+		g_api.wbx_save_delta = nullptr;
+		g_api.wbx_load_delta = nullptr;
+		g_api.wbx_get_epoch_page_count = nullptr;
+	}
 }
 
 } // namespace

@@ -52,6 +52,16 @@ struct HostApi
 	void (*wbx_mount_file_path)(void *obj, const char *name, const char *host_path, WbxReturn *ret);
 	void (*wbx_save_state)(void *obj, WbxWriteCb cb, uintptr_t userdata, WbxReturn *ret);
 	void (*wbx_load_state)(void *obj, WbxReadCb cb, uintptr_t userdata, WbxReturn *ret);
+
+	/* Epochs and deltas: what changed since a moment, rather than since the
+	 * seal. OPTIONAL - a host older than these leaves them null, and the state
+	 * history then stores whole states as it always did. The engine loads the
+	 * host from beside itself, so an older one beside a newer libchimera is an
+	 * ordinary situation and must not stop a session opening. */
+	void (*wbx_epoch_begin)(void *obj, WbxReturn *ret);
+	void (*wbx_save_delta)(void *obj, bool forward, WbxWriteCb cb, uintptr_t userdata, WbxReturn *ret);
+	void (*wbx_load_delta)(void *obj, WbxReadCb cb, uintptr_t userdata, WbxReturn *ret);
+	void (*wbx_get_epoch_page_count)(void *obj, WbxReturn *ret);
 };
 
 /* The loaded host, or nullptr with *error set. Loads once, then cached. */
