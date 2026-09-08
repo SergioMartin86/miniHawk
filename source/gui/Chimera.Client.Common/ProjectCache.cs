@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 using Chimera.Common;
@@ -78,6 +79,95 @@ namespace Chimera.Client.Common
 			var dir = DirectoryFor(projectId);
 			Directory.CreateDirectory(dir);
 			return dir;
+		}
+
+		/// <summary>
+		/// A name for this project's cache, so the cache manager can show something
+		/// a person recognises instead of sixteen hex digits. Written whenever the
+		/// project is saved; it is a label and nothing depends on it.
+		/// </summary>
+		public static void RememberLabel(string projectId, string label)
+		{
+			if (string.IsNullOrWhiteSpace(label)) return;
+			try
+			{
+				Ensure(projectId);
+				File.WriteAllText(Path.Combine(DirectoryFor(projectId), LabelFile), label);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// a label that cannot be written costs a less friendly list, nothing more
+			}
+		}
+
+		/// <summary>What this project calls itself, or "" if the cache never learned.</summary>
+		public static string LabelOf(string projectId)
+		{
+			try
+			{
+				var path = Path.Combine(DirectoryFor(projectId), LabelFile);
+				return File.Exists(path) ? File.ReadAllText(path).Trim() : "";
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				return "";
+			}
+		}
+
+		private const string LabelFile = "about.txt";
+
+		/// <summary>
+		/// Every project this machine has cached anything for: the id, what it
+		/// calls itself, how much room it takes and when it was last touched.
+		/// Nothing here is authority - a directory whose project has been deleted
+		/// is listed exactly like one whose project is sitting open.
+		/// </summary>
+		public static IReadOnlyList<CachedProject> All()
+		{
+			List<CachedProject> found = new();
+			try
+			{
+				if (!Directory.Exists(Root)) return found;
+				foreach (var dir in Directory.EnumerateDirectories(Root))
+				{
+					var id = Path.GetFileName(dir);
+					long bytes = 0;
+					var touched = DateTime.MinValue;
+					try
+					{
+						foreach (var f in new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories))
+						{
+							bytes += f.Length;
+							if (f.LastWriteTimeUtc > touched) touched = f.LastWriteTimeUtc;
+						}
+					}
+					catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+					{
+						// a directory that will not be measured is still worth listing
+					}
+					found.Add(new CachedProject { Id = id, Label = LabelOf(id), Path = dir, Bytes = bytes, LastUsed = touched });
+				}
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				return found;
+			}
+			return found;
+		}
+
+		/// <summary>One project's cache, as the cache manager lists it.</summary>
+		public sealed class CachedProject
+		{
+			public string Id { get; init; } = "";
+
+			/// <summary>What the project calls itself, or "" when the cache never learned.</summary>
+			public string Label { get; init; } = "";
+
+			public string Path { get; init; } = "";
+
+			public long Bytes { get; init; }
+
+			public DateTime LastUsed { get; init; }
 		}
 
 		/// <summary>Forgets everything cached for one project. Costs recomputation, never work.</summary>

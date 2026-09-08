@@ -168,6 +168,32 @@ namespace Chimera.Tests.Client.GUI
 		}
 
 		/// <summary>
+		/// File &gt; Cache Manager: what is on disk that could be worked out again.
+		/// Every row is safe to delete, so the picture is mostly about whether the
+		/// sizes and the cost line read clearly.
+		/// </summary>
+		[TestMethod]
+		public void CacheManager()
+		{
+			if (ShotDir is null) { Assert.Inconclusive("set CHIMERA_UI_SHOTS to write screenshots"); return; }
+			var items = new List<CacheItem>
+			{
+				new() { Kind = CacheKind.Project, Label = "Prince of Persia The Sands of Time", Detail = "9f2c14ab7d3e5501", Path = "/cache/9f2c14ab7d3e5501", Bytes = 2_684_354_560L, LastUsed = new DateTime(2026, 9, 7) },
+				new() { Kind = CacheKind.Project, Label = "Street Fighter EX3", Detail = "1a77b0c9de42f318", Path = "/cache/1a77b0c9de42f318", Bytes = 412_876_800L, LastUsed = new DateTime(2026, 9, 2), InUse = true },
+				new() { Kind = CacheKind.CorePackage, Label = "xemu", Detail = "23df374e", Path = "/CoreCache/xemu-23df374e", Bytes = 52_428_800L, LastUsed = new DateTime(2026, 9, 7) },
+				new() { Kind = CacheKind.CompiledCode, Label = "rpcs3", Detail = "e6bdd2b2", Path = "/CoreCache/rpcs3/e6bdd2b2", Bytes = 1_073_741_824L, LastUsed = new DateTime(2026, 9, 5) },
+				new() { Kind = CacheKind.CoreVersions, Label = "Published core versions", Detail = "", Path = "/Cores/.feed-cache", Bytes = 48_128L, LastUsed = new DateTime(2026, 9, 8) },
+			};
+
+			using CacheManagerForm form = new(() => items);
+			form.StartPosition = FormStartPosition.Manual;
+			form.Location = new Point(0, 0);
+			form.Show();
+			_ = form.Select("/cache/9f2c14ab7d3e5501");
+			Shoot(form, "cache-manager");
+		}
+
+		/// <summary>
 		/// What a fresh install meets: no cores, so a sentence and a choice.
 		/// </summary>
 		[TestMethod]

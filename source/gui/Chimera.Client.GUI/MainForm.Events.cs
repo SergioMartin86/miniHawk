@@ -460,7 +460,35 @@ namespace Chimera.Client.GUI
 		/// from. Opened by hand here, and by itself once when nothing is installed
 		/// (see <see cref="OpenCoreManagerIfNothingIsInstalled"/>).
 		/// </summary>
-		private void CoreManagerMenuItem_Click(object sender, EventArgs e) => ShowCoreManager();
+		private void CoreManagerMenuItem_Click(object sender, EventArgs e) => ShowCacheManagerOrCoreManager(core: true);
+
+		private void CacheManagerMenuItem_Click(object sender, EventArgs e) => ShowCacheManagerOrCoreManager(core: false);
+
+		private void ShowCacheManagerOrCoreManager(bool core)
+		{
+			if (core) ShowCoreManager();
+			else ShowCacheManager();
+		}
+
+		/// <summary>
+		/// File &gt; Cache Manager: what Chimera keeps on disk that it could work
+		/// out again, and how much room it is taking. Everything it lists is safe
+		/// to delete - the cost is time, never work - which is why installed cores
+		/// and projects are not in it.
+		/// </summary>
+		public void ShowCacheManager()
+		{
+			using CacheManagerForm form = new(() => CacheSurvey.Take(
+				corePackageCacheRoot: Path.Combine(Chimera.Common.PathExtensions.PathUtils.ExeDirectoryPath, "CoreCache"),
+				compiledCodeRoot: Config.PathEntries.CoreCacheAbsolutePath(),
+				// what is open right now may not be pulled out from under itself
+				openProjectId: _openProject?.Id,
+				loadedPackageSha1s: CoreRegistry.Instance.LoadedPackages
+					.Select(static p => p.Sha1)
+					.Where(static s => !string.IsNullOrEmpty(s))
+					.ToList()!));
+			this.ShowDialogWithTempMute(form);
+		}
 
 		public void ShowCoreManager()
 		{
