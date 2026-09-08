@@ -512,3 +512,52 @@ Each phase is separately gated and separately landable.
 - **Anchors still cost the machine.** Deltas make the frames between anchors
   cheap; an anchor is a full state. The budget is spent mostly on how often
   anchors are taken, which is what the latency target decides.
+
+## What a rewind was blamed for, and was not
+
+A PS2 project crashed on rewind, and a Flycast one crashed on a piano-roll
+edit. Both are the state history's paths, so the state history was where the
+search started. It was not there, and the way that was established is worth
+keeping, because the next report of this shape will look identical.
+
+The measurements, all on the reporter's own machine and their own game:
+
+| what was asked | answer |
+| --- | --- |
+| does a rewind land where the forward pass was | guest RAM identical at every depth, 1 to 29 steps |
+| does a rewound machine still follow the same trajectory | rewind 20, replay 180: identical every frame |
+| does `restore` agree with a run that never stopped | identical at every frame |
+| is a PS2 savestate even stable to compare | stable, and deterministic across a reload |
+| plain playback, 1200 frames, real GPU | survives |
+| with the greenzone capturing and spilling | survives |
+| with every memory domain swept by raw pointer each frame | survives |
+| with the piano roll open, 1500 frames (tests/soak) | survives |
+
+Two wrong turns, kept because each cost real time:
+
+**A savestate is not a machine.** The first comparison digested whole
+savestates and reported a mismatch from the fourth rewind step back. It was
+bookkeeping: a page restored to the value it already held is DIRTY in one path
+and clean in the other, so the state carries it in one and not the other while
+the machine is identical. Compare guest memory - `ce_session_domain_read`, or
+replay and compare trajectories - and the difference disappears. A savestate
+parser that ignores which pages are invisible will also mis-assign every
+payload after the first invisible dirty page, which is how the same run
+produced a confident, wrong page number.
+
+**The loudest fault is not always the first.** The reported fault was a host
+address reading a no-access page, which reads like host code running off the
+end of a buffer. It was the second fault of two in the same second: the guest
+faulted first on a null pointer, and Windows then dispatched that exception on
+the guest's own 1 MiB stack until it reached the guard at the bottom. The
+guard-page fault was the symptom of reporting the real one. miniBox now names
+the region an address lands in, so that reads as "the guard at the bottom of
+the alt stack - this stack overflowed" rather than as a page number.
+
+What the evidence does point at: three faults in three unrelated PS2
+subsystems - a `std::map` insert, the microVU dispatch, an INI setting write -
+all reading through a near-null pointer, preceded in the log by a refused guest
+`mmap` of 64 GiB into a 3072 MiB arena. That is an allocation failing and going
+unchecked, not a delta being wrong. miniBox now prints the guest return
+addresses on a refusal that large, and a core package ships `core.wbx`
+unstripped, so `addr2line` names the caller.
