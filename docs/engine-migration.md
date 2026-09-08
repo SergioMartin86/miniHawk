@@ -134,6 +134,10 @@ long-lived dual paths.
      latch/record path and TAStudio's state history onto ce_session's
      movie + greenzone. This is one entangled surgery (the input chain,
      LoadState-position sync, IStateManager) and comes as its own step.
+     The state-history half is now designed in its own right, as a
+     redesign rather than a port - three implementations become one, and
+     a stored state costs what the frame changed instead of what the
+     machine is: see docs/state-manager.md.
 6. Memory domains + tooling services
 7. Lua (real Lua replaces NLua; script API preserved)
 8. AV dumping
