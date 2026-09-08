@@ -10,17 +10,26 @@ TAStudio's state history would move onto the session's.
 
 ## Why this is being redone
 
-There are three answers in the tree to one question - what did this machine
-look like at frame N:
+There are two answers in the tree to one question - what did this machine look
+like at frame N:
 
 - the engine's greenzone (`ce_session_greenzone_*`): budget-bounded, anchored,
   with seek and invalidate. Witnessed by the gates. Only `chimera-run` uses it.
 - `PagedStateManager` (C#): what TAStudio actually uses, with the older
-  `ZwinderStateManager` still selectable beside it.
-- `ZwinderBuffer` (C#): a third one, for rewind.
+  `ZwinderStateManager` still selectable beside it and `ZwinderBuffer`
+  underneath that one as its storage.
 
-Two of them are BizHawk-lineage designs, written when a savestate was kilobytes
-and a big one was a few megabytes. Chimera's cores are whole sandboxed
+There is deliberately no third one for rewind, and it is worth being exact
+about why, because the name suggests otherwise. `MainForm.Rewind` does nothing
+unless a tool claims `WantsToControlRewind`; TAStudio is the only tool that
+does, and in a TAS-only frontend TAStudio is always there. Its `Rewind()` is
+`WheelSeek` - a seek backwards through the greenzone - and its `CaptureRewind`
+is a no-op with a comment saying TAStudio handles this just fine. There is no
+rewind buffer and no rewind setting left in config. Rewind is a gesture over
+the state history, not a mechanism of its own.
+
+The two that remain are BizHawk-lineage designs, written when a savestate was
+kilobytes and a big one was a few megabytes. Chimera's cores are whole sandboxed
 machines. Measured on the user's own Prince of Persia run under xemu, a state
 is 75 MB at frame 150, 102 MB at 600 and 210 MB at 1200: it grows as the game
 touches memory, and it is the whole machine every time.
@@ -34,8 +43,11 @@ Everything downstream of that number is now wrong:
   The write throws, a `catch` swallows it, and the project is saved with no
   states at all and nothing said. Reopening then replays from frame 0, which
   is what the user reported and what started this.
-- **Rewind barely exists on those cores.** A ring buffer of 200 MB states holds
-  a handful of frames.
+- **Stepping back costs a seek.** Holding rewind asks for the nearest state and
+  replays forward to the frame before the one you were on. On a core that
+  emulates at 52 ms a frame that is as expensive as jumping anywhere else in
+  the run, which is why going back one frame does not feel like the inverse of
+  going forward one frame.
 - **The right implementation is the unused one.** The engine's greenzone is in
   the right place - linkable by jaffarPlus, testable without Mono or a display
   - and the application never calls it.
@@ -57,7 +69,8 @@ All five taken by the user, 2026-09-08:
    settings chooser and the type-dispatching converter all go. Settings naming
    a deleted type fall back to defaults, which is safe precisely because the
    cache is regenerable.
-3. **Rewind is not a separate thing.** It is the dense end of the same history.
+3. **Rewind is not a separate thing**, and already is not one. It stays a
+   gesture over the history, and the history is what has to make it cheap.
 4. **The policy is a time budget, not a frame count.** A seek should cost about
    a second at worst. The same frame count means a fifth of a second on one
    machine and twenty seconds on another, so the engine derives spacing from
@@ -98,9 +111,10 @@ The consequences are what make this worth doing:
   nearest anchor, apply deltas forward", and the latency budget sets how far
   apart anchors sit, measured in delta applications rather than in emulated
   frames.
-- **Rewind is a reverse delta.** One frame back costs the churn of that frame.
-  That is the whole feature, and it is why rewind folds in rather than keeping
-  a buffer of its own.
+- **Rewind stops being a seek.** One frame back is one reverse delta, costing
+  that frame's churn, instead of restoring the nearest state and replaying
+  forward to get there. Going back a frame finally costs about what going
+  forward a frame costs, which is what the gesture always implied.
 
 Content-addressed storage still earns its place underneath, because deltas
 repeat: a page written with the same bytes every frame is one chunk. Dedup
@@ -175,8 +189,9 @@ Each phase is separately gated and separately landable.
    budgets and the measured time-budget policy; the greenzone entry points
    reimplemented over it. Gated by the existing witness staying byte-identical,
    plus the new legs on a big-RAM synth.
-3. **The frontend: one history.** TAStudio and rewind onto the session's
-   history; `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer`, the
+3. **The frontend: one history.** TAStudio onto the session's history, with the
+   rewind gesture rebound to a reverse delta rather than a backwards seek;
+   `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer`, the
    settings chooser and the sidecar deleted; the cache moves to the per-user
    directory.
 
