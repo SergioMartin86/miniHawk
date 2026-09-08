@@ -3,8 +3,9 @@
 How Chimera remembers where a machine has been: rewind, the greenzone, branch
 states, and what survives closing a project.
 
-Status: DESIGN, decided with the user 2026-09-08. Nothing below is built yet.
-It replaces three implementations with one, and it is the remaining half of
+Status: phase 1 BUILT (miniBox 0c972de, with its measurements below); the rest
+is design, decided with the user 2026-09-08.
+It replaces the surviving implementations with one, and it is the remaining half of
 step 5 of the engine migration (docs/engine-migration.md), which always said
 TAStudio's state history would move onto the session's.
 
@@ -178,11 +179,45 @@ The legs that have to exist:
 - **Eviction keeps every frame reachable.** Under budget pressure the history
   coarsens; no frame may become unreachable, and the anchor never goes.
 
+## What the first phase measured
+
+Phase 1 is built (miniBox `0c972de`), and it turned the design's two open
+questions into numbers. Measured on a real xemu boot into Prince of Persia,
+1300 frames, null renderer:
+
+| | |
+|---|---|
+| churn | mean 506 pages a frame (2.0 MB), max 7143 (28.6 MB) |
+| a delta against a full state | 2.0 MB against 75 MB at frame 150, 210 MB by frame 1200 |
+| cost of an epoch per frame | 49.2s -> 66.8s over the run, +14 ms a frame, 37% |
+
+The saving is about a hundredfold, which is the number this design was betting
+on, and it holds. The cost is not free and does not go away: an epoch per frame
+means a fault per page written, so it scales with churn - the right shape, and
+still 37% on this core. Two consequences for the phases below:
+
+- **The epoch cadence is a policy knob, not a constant.** Per-frame epochs buy
+  a complete history and a rewind that costs one frame; every few frames buys
+  most of the saving for a fraction of the overhead. The engine picks it the
+  same way it picks anchor spacing - from what it measures - and the dense
+  cadence belongs near the playhead where somebody is working, not across a
+  long unattended seek.
+- **A complete per-frame history is still gigabytes.** 2 MB a frame is 2.6 GB
+  for 1300 frames. Deltas make density affordable where it was impossible, but
+  they do not remove the need to coarsen with distance, so the tiered policy
+  stays exactly as important as it was.
+
+One negative result worth keeping: restricting the post-mark protection refresh
+to the runs that actually change, instead of walking the arena, was worth about
+1% here. The fault path dominates, not the walk. It is kept because a big arena
+with little churn - a 2 GB DOS machine writing fifty pages a frame - is the
+case it exists for, but it is not where the time goes on a console.
+
 ## Phasing
 
 Each phase is separately gated and separately landable.
 
-1. **miniBox: epochs and deltas.** Epoch marking, forward and reverse deltas,
+1. **miniBox: epochs and deltas. DONE** (miniBox `0c972de`.) Epoch marking, forward and reverse deltas,
    and the page introspection they need. Gated in miniBox's own suite, plus a
    differential check that a delta chain equals the full state.
 2. **The engine: store and history.** The chunk store, anchors, deltas, pins,
