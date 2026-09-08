@@ -27,6 +27,7 @@
 #define CHIMERA_STATE_HISTORY_HPP
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,14 @@ public:
 	 * restore walks the links of one anchor's stretch and no further. */
 	void bands(int64_t nearFrames, int64_t midFrames, int64_t midStride,
 	           int64_t farStride, int64_t anchorSpacing);
+
+	/* Where the far band goes once the budget is full, or nullptr for nowhere.
+	 *
+	 * The oldest stretches are the right thing to put on disk: large, rarely
+	 * touched, and - if the file is lost - regenerable like everything else
+	 * here. Without a directory the budget can only DROP them, which costs the
+	 * frames themselves rather than the time to read them back. */
+	void spillTo(const char *dir);
 
 	bool enabled() const { return m_budget != 0; }
 	uint64_t bytes() const { return m_bytes; }
@@ -127,9 +136,17 @@ private:
 	struct Segment
 	{
 		int64_t anchorFrame = 0;
-		std::vector<uint8_t> anchor;   /* a whole machine */
+		std::vector<uint8_t> anchor;   /* a whole machine, unless spilled */
 		std::vector<Link> links;
 		uint64_t bytes = 0;
+
+		/* Spilled: the bytes are in the spill file at spillAt, and `anchor` and
+		 * the links' bytes are empty. What frames it holds stays in memory -
+		 * that is metadata, it is small, and answering "can you reach frame N"
+		 * must not touch a disk. */
+		bool spilled = false;
+		uint64_t spillAt = 0;
+		uint64_t spillLength = 0;
 
 		int64_t lastFrame() const { return links.empty() ? anchorFrame : links.back().endFrame; }
 
@@ -146,6 +163,17 @@ private:
 	bool deltasAvailable() const;
 	bool composeAvailable() const;
 	void evict();
+
+	/* Moves one segment out to the spill file, freeing what it held in memory.
+	 * False when there is nowhere to put it or the write failed, which is not
+	 * an error - the budget then falls back to dropping frames. */
+	bool spill(Segment &seg);
+	void dropSpillFile();
+
+	/* Restores from a segment that is on disk, reading only as far along it as
+	 * the target frame needs. Nothing about the segment is assembled in memory:
+	 * the anchor and each link go straight from the file into the sandbox. */
+	bool restoreSpilled(const Segment &seg, int64_t steps, std::string &error);
 
 	/* Thins the bands the newest frame has just pushed a landing out of. Runs
 	 * after every capture and does at most one merge per boundary, because the
@@ -178,6 +206,16 @@ private:
 	                                    * being wider than a segment, collapses
 	                                    * an old segment to its anchor */
 	int64_t m_anchorSpacing = 600;     /* a new anchor every 10 s */
+
+	std::string m_spillDir;
+	std::FILE *m_spill = nullptr;      /* one file, appended to, holes and all */
+	uint64_t m_spillBytes = 0;
+
+public:
+	~StateHistory();
+	StateHistory() = default;
+	StateHistory(const StateHistory &) = delete;
+	StateHistory &operator=(const StateHistory &) = delete;
 };
 
 } // namespace chimera

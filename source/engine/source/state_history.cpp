@@ -5,7 +5,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
-#include <ctime>
+#include <chrono>
 
 namespace chimera
 {
@@ -35,15 +35,75 @@ intptr_t sourceRead(uintptr_t ud, void *out, uintptr_t len)
 	return static_cast<intptr_t>(n);
 }
 
+/* fseek and ftell take a long, which is 32 bits on Windows - and the spill file
+ * is the one thing here designed to pass two gigabytes. */
+#ifdef _WIN32
+bool seekTo(std::FILE *f, uint64_t at) { return _fseeki64(f, static_cast<__int64>(at), SEEK_SET) == 0; }
+bool seekBy(std::FILE *f, uint64_t by) { return _fseeki64(f, static_cast<__int64>(by), SEEK_CUR) == 0; }
+bool seekEnd(std::FILE *f) { return _fseeki64(f, 0, SEEK_END) == 0; }
+bool tellAt(std::FILE *f, uint64_t &at)
+{
+	const __int64 n = _ftelli64(f);
+	if (n < 0) return false;
+	at = static_cast<uint64_t>(n);
+	return true;
+}
+#else
+bool seekTo(std::FILE *f, uint64_t at) { return fseeko(f, static_cast<off_t>(at), SEEK_SET) == 0; }
+bool seekBy(std::FILE *f, uint64_t by) { return fseeko(f, static_cast<off_t>(by), SEEK_CUR) == 0; }
+bool seekEnd(std::FILE *f) { return fseeko(f, 0, SEEK_END) == 0; }
+bool tellAt(std::FILE *f, uint64_t &at)
+{
+	const off_t n = ftello(f);
+	if (n < 0) return false;
+	at = static_cast<uint64_t>(n);
+	return true;
+}
+#endif
+
+bool writeAll(std::FILE *f, const void *data, size_t n)
+{
+	return n == 0 || std::fwrite(data, 1, n, f) == n;
+}
+
+bool readAll(std::FILE *f, void *data, size_t n)
+{
+	return n == 0 || std::fread(data, 1, n, f) == n;
+}
+
+bool writeU64(std::FILE *f, uint64_t v) { return writeAll(f, &v, sizeof v); }
+bool readU64(std::FILE *f, uint64_t &v) { return readAll(f, &v, sizeof v); }
+
+/* Reads at most `left` bytes from a file, for handing a spilled anchor or link
+ * straight to the sandbox without a copy of it in between. */
+struct FileSource
+{
+	std::FILE *f;
+	uint64_t left;
+};
+
+intptr_t fileRead(uintptr_t ud, void *out, uintptr_t len)
+{
+	FileSource *s = reinterpret_cast<FileSource *>(ud);
+	if (len > s->left) len = static_cast<uintptr_t>(s->left);
+	if (len == 0) return -1;
+	const size_t got = std::fread(out, 1, len, s->f);
+	if (got == 0) return -1;
+	s->left -= got;
+	return static_cast<intptr_t>(got);
+}
+
 /* CHIMERA_HISTORY_TRACE=1 says what the history stored and what it cost. A
  * delta silently falling back to a whole state is the failure mode with no
  * symptom - everything still works, it just costs a hundred times more - so
  * there has to be a way to look. */
 double nowSeconds()
 {
-	struct timespec t;
-	clock_gettime(CLOCK_MONOTONIC, &t);
-	return static_cast<double>(t.tv_sec) + static_cast<double>(t.tv_nsec) / 1e9;
+	/* steady_clock rather than clock_gettime, which mingw does not have - this
+	 * is only ever read under CHIMERA_HISTORY_TRACE, but a diagnostic that
+	 * fails to link on the platform people run is worse than no diagnostic. */
+	const auto t = std::chrono::steady_clock::now().time_since_epoch();
+	return std::chrono::duration<double>(t).count();
 }
 
 bool historyTrace()
@@ -72,6 +132,7 @@ void StateHistory::clear()
 	m_segments.clear();
 	m_bytes = 0;
 	m_epochOpen = false;
+	dropSpillFile();
 }
 
 /* CHIMERA_NO_DELTAS=1 keeps whole states, as the greenzone did before epochs.
@@ -86,6 +147,37 @@ static bool deltasRefused()
 		return e != nullptr && e[0] != '\0' && e[0] != '0' ? 1 : 0;
 	}();
 	return off != 0;
+}
+
+StateHistory::~StateHistory()
+{
+	dropSpillFile();
+}
+
+void StateHistory::spillTo(const char *dir)
+{
+	const std::string next = dir != nullptr ? dir : "";
+	if (next == m_spillDir) return;
+	/* Whatever is out there belongs to the old directory, and the segments
+	 * pointing at it are now unreadable - so they go, which costs replaying. */
+	dropSpillFile();
+	m_segments.erase(
+		std::remove_if(m_segments.begin(), m_segments.end(),
+			[](const Segment &seg) { return seg.spilled; }),
+		m_segments.end());
+	m_spillDir = next;
+}
+
+void StateHistory::dropSpillFile()
+{
+	if (m_spill != nullptr)
+	{
+		std::fclose(m_spill);
+		m_spill = nullptr;
+		const std::string path = m_spillDir + "/history-spill.bin";
+		std::remove(path.c_str());
+	}
+	m_spillBytes = 0;
 }
 
 void StateHistory::bands(int64_t nearFrames, int64_t midFrames, int64_t midStride,
@@ -270,6 +362,7 @@ void StateHistory::tidy(int64_t frame, int64_t stride)
 
 	for (Segment &seg : m_segments)
 	{
+		if (seg.spilled) continue;   /* its bytes are on disk and its band is settled */
 		if (seg.lastFrame() < frame) continue;
 		if (seg.anchorFrame >= frame) break;         /* ordered: nothing later holds it */
 		const int64_t steps = seg.stepsTo(frame);
@@ -313,6 +406,115 @@ void StateHistory::tidy(int64_t frame, int64_t stride)
 	}
 }
 
+/* ---- spilling ----
+ *
+ * One file, appended to. A segment that is dropped or re-recorded over leaves
+ * its space behind unreclaimed, which is the right trade for a cache: the file
+ * is thrown away wholesale when the history is, and the alternative is
+ * bookkeeping that buys nothing a user would notice.
+ */
+bool StateHistory::spill(Segment &seg)
+{
+	if (seg.spilled || m_spillDir.empty()) return false;
+
+	if (m_spill == nullptr)
+	{
+		const std::string path = m_spillDir + "/history-spill.bin";
+		m_spill = std::fopen(path.c_str(), "w+b");
+		if (m_spill == nullptr) return false;
+		m_spillBytes = 0;
+	}
+	if (!seekEnd(m_spill)) return false;
+
+	const uint64_t at = m_spillBytes;
+	bool ok = writeU64(m_spill, seg.anchor.size())
+		&& writeAll(m_spill, seg.anchor.data(), seg.anchor.size())
+		&& writeU64(m_spill, seg.links.size());
+	for (const Link &l : seg.links)
+	{
+		if (!ok) break;
+		ok = writeU64(m_spill, static_cast<uint64_t>(l.endFrame))
+			&& writeU64(m_spill, l.bytes.size())
+			&& writeAll(m_spill, l.bytes.data(), l.bytes.size());
+	}
+	if (!ok || std::fflush(m_spill) != 0)
+	{
+		/* a half written segment is unreadable, so the file goes back to where
+		 * it was and the caller falls back to dropping */
+		m_spillBytes = at;
+		return false;
+	}
+
+	if (!tellAt(m_spill, m_spillBytes)) return false;
+	seg.spilled = true;
+	seg.spillAt = at;
+	seg.spillLength = m_spillBytes - at;
+	m_bytes -= seg.bytes;
+
+	/* what it held is now the file's; give the memory back for real */
+	std::vector<uint8_t>().swap(seg.anchor);
+	for (Link &l : seg.links) std::vector<uint8_t>().swap(l.bytes);
+
+	if (historyTrace())
+	{
+		fprintf(stderr, "[history] spilled frames %lld-%lld: %llu bytes to disk (%llu in memory)\n",
+			(long long)seg.anchorFrame, (long long)seg.lastFrame(),
+			(unsigned long long)seg.bytes, (unsigned long long)m_bytes);
+		fflush(stderr);
+	}
+	return true;
+}
+
+bool StateHistory::restoreSpilled(const Segment &seg, int64_t steps, std::string &error)
+{
+	if (m_spill == nullptr || !seekTo(m_spill, seg.spillAt))
+	{
+		error = "the spilled state history could not be read";
+		return false;
+	}
+	uint64_t anchorLen = 0, linkCount = 0;
+	if (!readU64(m_spill, anchorLen))
+	{
+		error = "the spilled state history could not be read";
+		return false;
+	}
+
+	WbxReturn r{};
+	FileSource anchor{ m_spill, anchorLen };
+	m_host->wbx_load_state(m_obj, fileRead, reinterpret_cast<uintptr_t>(&anchor), &r);
+	if (!r.ok()) { error = r.errorMessage; return false; }
+	/* the sandbox may stop reading before the end - skip whatever it left */
+	if (!seekBy(m_spill, anchor.left))
+	{
+		error = "the spilled state history could not be read";
+		return false;
+	}
+
+	if (!readU64(m_spill, linkCount))
+	{
+		error = "the spilled state history could not be read";
+		return false;
+	}
+	for (int64_t i = 0; i < steps; i++)
+	{
+		uint64_t endFrame = 0, len = 0;
+		if (!readU64(m_spill, endFrame) || !readU64(m_spill, len))
+		{
+			error = "the spilled state history could not be read";
+			return false;
+		}
+		FileSource link{ m_spill, len };
+		m_host->wbx_load_delta(m_obj, fileRead, reinterpret_cast<uintptr_t>(&link), &r);
+		if (!r.ok()) { error = r.errorMessage; return false; }
+		if (!seekBy(m_spill, link.left))
+		{
+			error = "the spilled state history could not be read";
+			return false;
+		}
+	}
+	return true;
+}
+
 /* Under budget pressure the history thins from the FAR end of the oldest
  * segment: dropping a trailing delta costs precision back there and orphans
  * nothing, because nothing chains through the end of a chain. The first
@@ -322,10 +524,23 @@ void StateHistory::evict()
 {
 	while (m_bytes > m_budget)
 	{
+		/* First choice: put the oldest stretch on disk, oldest to newest. It
+		 * costs reading it back rather than replaying to it, and the far end of
+		 * the history is where that trade is obviously right. The newest is
+		 * never spilled - it is where the work is. */
+		bool moved = false;
+		for (size_t i = 0; i + 1 < m_segments.size(); i++)
+		{
+			if (m_segments[i].spilled) continue;
+			if (spill(m_segments[i])) { moved = true; break; }
+			break;   /* nowhere to spill: everything after this fails the same way */
+		}
+		if (moved) continue;
+
 		Segment *victim = nullptr;
 		for (Segment &s : m_segments)
 		{
-			if (!s.links.empty()) { victim = &s; break; }
+			if (!s.links.empty() && !s.spilled) { victim = &s; break; }
 		}
 		if (victim != nullptr)
 		{
@@ -335,11 +550,17 @@ void StateHistory::evict()
 			victim->links.pop_back();
 			continue;
 		}
-		/* nothing but anchors left: drop the oldest that is neither the first
-		 * nor the newest, and give up when only those remain */
-		if (m_segments.size() <= 2) return;
-		m_bytes -= m_segments[1].bytes;
-		m_segments.erase(m_segments.begin() + 1);
+		/* nothing left to thin: drop the oldest that is neither the first nor
+		 * the newest, and give up when only those remain. A spilled segment
+		 * costs nothing in memory, so dropping one would not help. */
+		size_t drop = 0;
+		for (size_t i = 1; i + 1 < m_segments.size(); i++)
+		{
+			if (!m_segments[i].spilled) { drop = i; break; }
+		}
+		if (drop == 0) return;
+		m_bytes -= m_segments[drop].bytes;
+		m_segments.erase(m_segments.begin() + static_cast<std::ptrdiff_t>(drop));
 	}
 }
 
@@ -359,6 +580,19 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 	}
 
 	const double t0 = historyTrace() ? nowSeconds() : 0.0;
+	if (seg->spilled)
+	{
+		if (!restoreSpilled(*seg, steps, error)) return false;
+		if (historyTrace())
+		{
+			fprintf(stderr, "[history] restore %lld: from disk, anchor %lld + %lld deltas, %.0f ms\n",
+				(long long)frame, (long long)seg->anchorFrame, (long long)steps,
+				(nowSeconds() - t0) * 1000);
+		}
+		m_epochOpen = false;
+		return true;
+	}
+
 	WbxReturn r{};
 	ByteSource anchor{ seg->anchor.data(), seg->anchor.size(), 0 };
 	m_host->wbx_load_state(m_obj, sourceRead, reinterpret_cast<uintptr_t>(&anchor), &r);
@@ -412,19 +646,6 @@ const char kMagic[] = "ChimeraHistory2";
  * before links could span more than a frame. */
 const char *const kSuperseded[] = { "ChimeraHistory1" };
 
-bool writeAll(std::FILE *f, const void *data, size_t n)
-{
-	return n == 0 || std::fwrite(data, 1, n, f) == n;
-}
-
-bool readAll(std::FILE *f, void *data, size_t n)
-{
-	return n == 0 || std::fread(data, 1, n, f) == n;
-}
-
-bool writeU64(std::FILE *f, uint64_t v) { return writeAll(f, &v, sizeof v); }
-bool readU64(std::FILE *f, uint64_t &v) { return readAll(f, &v, sizeof v); }
-
 } // namespace
 
 bool StateHistory::saveTo(const char *path, const char *machineId, std::string &error)
@@ -443,8 +664,25 @@ bool StateHistory::saveTo(const char *path, const char *machineId, std::string &
 	for (const Segment &seg : m_segments)
 	{
 		if (!ok) break;
-		ok = writeU64(f, static_cast<uint64_t>(seg.anchorFrame))
-			&& writeU64(f, seg.anchor.size())
+		ok = writeU64(f, static_cast<uint64_t>(seg.anchorFrame));
+		if (!ok) break;
+		if (seg.spilled)
+		{
+			/* A spilled segment is already in exactly this shape, minus the
+			 * frame just written, so it is copied rather than rebuilt - which
+			 * keeps the promise that nothing here is assembled in memory. */
+			ok = m_spill != nullptr && seekTo(m_spill, seg.spillAt);
+			uint64_t left = seg.spillLength;
+			std::vector<uint8_t> chunk(64 * 1024);
+			while (ok && left != 0)
+			{
+				const size_t n = static_cast<size_t>(left < chunk.size() ? left : chunk.size());
+				ok = readAll(m_spill, chunk.data(), n) && writeAll(f, chunk.data(), n);
+				left -= n;
+			}
+			continue;
+		}
+		ok = writeU64(f, seg.anchor.size())
 			&& writeAll(f, seg.anchor.data(), seg.anchor.size())
 			&& writeU64(f, seg.links.size());
 		for (const Link &l : seg.links)
@@ -532,9 +770,12 @@ bool StateHistory::loadFrom(const char *path, const char *machineId, std::string
 		}
 		m_bytes += seg.bytes;
 		m_segments.push_back(std::move(seg));
+		/* Per segment, not at the end: a history can be larger than the budget
+		 * - that is what spilling is for - and holding all of it at once while
+		 * deciding what to keep would be the very thing this design removed. */
+		if (enabled()) evict();
 	}
 	std::fclose(f);
-	/* what was read may be more than this session's budget allows to be kept */
 	if (enabled()) evict();
 	return true;
 }

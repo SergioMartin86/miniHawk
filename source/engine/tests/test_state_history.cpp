@@ -14,6 +14,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -348,6 +349,72 @@ int main(void)
 			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
 		}
 	}
+
+	{ // A budget too small to hold the run: the far end goes to disk, and the
+	  // frames out there are still frames the history can produce.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		std::filesystem::create_directories("work-history-spill");
+		chimera::StateHistory h;
+		/* small enough that it must spill within a few segments, and anchors
+		 * often enough that there are segments to spill */
+		h.configure(&api, nullptr, 512);
+		h.bands(2, 6, 3, 12, 8);
+		h.spillTo("work-history-spill");
+		h.capture(0);
+
+		const int64_t kFrames = 120;
+		std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+		for (int64_t f = 1; f <= kFrames; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+
+		/* it really did spill, or this proves only that nothing broke */
+		assert(std::filesystem::exists("work-history-spill/history-spill.bin"));
+		assert(h.bytes() <= 512);
+		assert(std::filesystem::file_size("work-history-spill/history-spill.bin") > 512);
+
+		/* an early frame, which can only be out on disk by now */
+		const int64_t old = h.nearest(12);
+		assert(old >= 0 && old <= 12);
+		assert(h.restore(old, error));
+		assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(old)].data(), Machine::kCells) == 0);
+
+		/* and every frame it offers, wherever it is being kept */
+		int64_t checked = 0;
+		for (int64_t f = 0; f <= kFrames; f++)
+		{
+			if (h.nearest(f) != f) continue;
+			assert(h.restore(f, error));
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+			checked++;
+		}
+		assert(checked > 4);
+
+		/* a saved history carries the spilled stretches through, and what comes
+		 * back produces the same frames */
+		assert(h.saveTo(kPath, "fake", error));
+		chimera::StateHistory back;
+		back.configure(&api, nullptr, 64ull << 20);
+		assert(back.loadFrom(kPath, "fake", error));
+		for (int64_t f = 0; f <= kFrames; f++)
+		{
+			if (h.nearest(f) != f) continue;
+			assert(back.nearest(f) == f);
+			assert(back.restore(f, error));
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+		}
+	}
+	/* the spill file belongs to the history and goes with it */
+	assert(!std::filesystem::exists("work-history-spill/history-spill.bin"));
+	std::filesystem::remove_all("work-history-spill");
 
 	std::remove(kPath);
 	std::printf("test_state_history: ok\n");

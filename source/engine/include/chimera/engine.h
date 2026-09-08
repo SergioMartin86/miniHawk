@@ -1060,6 +1060,16 @@ CE_API int64_t ce_session_greenzone_count(const ce_session *s);
  * cost on a heavy one, and how to pick better, is docs/state-manager.md. */
 CE_API void ce_session_greenzone_bands(ce_session *s, int64_t near_frames, int64_t mid_frames,
 	int64_t mid_stride, int64_t far_stride, int64_t anchor_spacing);
+
+/* Where the far band goes once the budget is full; NULL or "" for nowhere.
+ *
+ * The oldest stretches are the right thing to put on disk - large, rarely
+ * touched, and regenerable if the file is lost - so with a directory the budget
+ * costs reading them back, and without one it costs replaying to them. The
+ * caller owns the directory and the file in it is the engine's, named and
+ * removed by it; changing the directory throws away what was already out there.
+ * A project's cache directory is what this is for. */
+CE_API void ce_session_greenzone_spill(ce_session *s, const char *dir);
 /* The nearest stored frame at or before frame; -1 when none is. */
 CE_API int64_t ce_session_greenzone_nearest(const ce_session *s, int64_t frame);
 /* Drops stored states AFTER frame - an input edit at frame N makes every

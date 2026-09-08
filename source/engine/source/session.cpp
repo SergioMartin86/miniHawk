@@ -1948,6 +1948,12 @@ void ce_session_greenzone_bands(ce_session *s, int64_t near_frames, int64_t mid_
 	s->history.bands(near_frames, mid_frames, mid_stride, far_stride, anchor_spacing);
 }
 
+void ce_session_greenzone_spill(ce_session *s, const char *dir)
+{
+	if (s == nullptr) return;
+	s->history.spillTo(dir);
+}
+
 int64_t ce_session_greenzone_count(const ce_session *s)
 {
 	return s->history.count();
