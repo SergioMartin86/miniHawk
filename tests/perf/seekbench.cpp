@@ -21,13 +21,14 @@ static double now() { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); ret
 static bool slurp(const char *p, std::vector<uint8_t> &o) { FILE *f = fopen(p, "rb"); if (!f) return false; uint8_t b[65536]; size_t n; while ((n = fread(b, 1, sizeof b, f))) o.insert(o.end(), b, b + n); fclose(f); return true; }
 
 int main(int argc, char **argv) {
-	if (argc < 8) { fprintf(stderr, "usage: seekbench <pkg> <iso> <mcpx> <bios> <hdd> <frames> <budgetMB>\n"); return 2; }
+	if (argc < 8) { fprintf(stderr, "usage: seekbench <pkg> <iso> <mcpx> <bios> <hdd> <frames> <budgetMB> [spillDir]\n"); return 2; }
 	const char *pkg = argv[1], *iso = argv[2];
 	std::vector<uint8_t> fw[3]; const char *ids[3] = { "mcpx", "bios", "hdd" };
 	for (int i = 0; i < 3; i++) if (!slurp(argv[3 + i], fw[i])) { fprintf(stderr, "no %s\n", argv[3 + i]); return 2; }
 	const uint8_t *fwd[3] = { fw[0].data(), fw[1].data(), fw[2].data() }; uint64_t fwl[3] = { fw[0].size(), fw[1].size(), fw[2].size() };
 	long frames = atol(argv[6]);
 	uint64_t budget = (uint64_t)atol(argv[7]) * 1024ull * 1024ull;
+	const char *spillDir = argc > 8 ? argv[8] : nullptr;
 	const char *mode = getenv("CHIMERA_NO_DELTAS") ? "whole states" : "deltas";
 
 	ce_gl_request(0);
@@ -48,6 +49,7 @@ int main(int argc, char **argv) {
 	for (long i = 0; i < 100; i++) ce_session_movie_advance(s, 0, nullptr, 0);
 	double bare = (now() - bare0) / 100.0;
 
+	if (spillDir != nullptr) ce_session_greenzone_spill(s, spillDir);
 	ce_session_greenzone_enable(s, budget);
 	double cap0 = now();
 	for (long i = 0; i < frames; i++) {
@@ -62,7 +64,8 @@ int main(int argc, char **argv) {
 	uint64_t hbytes = 0;
 	if (ce_session_history_save(s, hp, "seekbench") == 0) { struct stat st; if (stat(hp, &st) == 0) hbytes = st.st_size; }
 
-	printf("\n=== %s: %ld frames, %ld MB budget ===\n", mode, frames, atol(argv[7]));
+	printf("\n=== %s: %ld frames, %ld MB budget, spill %s ===\n", mode, frames, atol(argv[7]),
+		spillDir != nullptr ? spillDir : "(nowhere)");
 	printf("frames stored     %lld of %lld\n", (long long)stored, (long long)at);
 	printf("history on disk   %.1f MB (%.2f MB per frame)\n", hbytes / 1048576.0, hbytes / 1048576.0 / (stored ? stored : 1));
 	printf("frame, bare       %.1f ms\n", bare * 1000);

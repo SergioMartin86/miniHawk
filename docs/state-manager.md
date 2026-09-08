@@ -352,6 +352,37 @@ that far, about 4 s. Neither is a second. That is the honest cost of giving up
 the promise, and it is why the defaults have to come from measurement even
 though the guarantee does not.
 
+## What the bands measured
+
+The same xemu run as above, 1200 captured frames, with the defaults the engine
+ships (every frame for 2 s, one in three for 30 s, an anchor every 10 s):
+
+| | chain of 200, no bands | the bands | the bands, 512 MB budget, spilling |
+|---|---|---|---|
+| budget | 4 GB | 4 GB | 512 MB |
+| frames it holds | 301 of 300 | 482 of 1300 | 778 of 1300 |
+| what it cost | 499 MB | 1557 MB | 2446 MB, mostly on disk |
+| a captured frame | 40.8 ms | 47.6 ms | 47.8 ms |
+| worst seek | 1.19 s | 0.99 s | 1.38 s |
+| mean seek | 0.61 s | 0.54 s | 0.54 s |
+
+Three things worth reading off it.
+
+**The worst seek came in under a second without being promised one.** It
+follows from the anchor spacing - a restore walks one stretch and no further -
+which is a knob that trades memory for latency directly, rather than a target
+the code has to keep hitting as churn moves around.
+
+**Spilling holds MORE of the run on an eighth of the memory.** 778 frames
+against 482, because the budget no longer has to destroy an old stretch to make
+room; it moves it. Seeking into one of those costs about what seeking into
+memory costs - the anchor load was always the small half - so the far band being
+on disk is close to free until the disk is slow.
+
+**Capture got slightly dearer, not cheaper.** 40.8 ms to 47.6, because
+coarsening is real work done every frame. That is the trade the design makes on
+purpose: a little per frame, always, instead of a stall when the budget fills.
+
 ## Phasing
 
 Each phase is separately gated and separately landable.
@@ -375,20 +406,21 @@ Each phase is separately gated and separately landable.
    made, and lands on the goldens. The engine carries a machine id rather than
    deciding what makes two machines the same, since the caller already knows
    about cores, settings and files.
-   STILL TO COME in this phase, in this order, each separately gated:
-   - **Composition in miniBox.** `mb_delta_compose`, merging two adjacent
-     forward deltas into one, with the differential gate that says a composed
-     delta lands on the same machine as applying both.
-   - **Variable spans in the engine.** A link carries the frame it lands on
-     instead of an implied stride of one, and `nearest`, `covers`, `restore`
-     and persistence walk spans. No policy change yet - every span stays 1 -
-     so the gates prove the plumbing alone.
-   - **The band policy.** Distance-driven coarsening with the knobs above,
-     replacing `evict`.
-   - **Spill.** The far band to the project's cache directory, oldest first,
-     once the budget is reached.
-   Then pointing the frontend's saves at the per-user cache directory that now
-   exists.
+   The band policy followed, in four gated steps, all DONE:
+   - **Composition in miniBox** (`40fcdb1`). `mb_delta_compose` merges two
+     adjacent forward deltas into one that spans both, taking no host and no
+     block, so a history can thin states it is merely storing.
+   - **Variable spans in the engine** (`83bd31e`). A link carries the frame it
+     lands on instead of an implied stride of one; the file format became
+     ChimeraHistory2 and names its predecessor as superseded rather than
+     refusing it.
+   - **The band policy** (`03e9799`). Distance-driven coarsening on a per-band
+     grid, and the anchor spacing in place of the chain limit.
+   - **Spill** (`7c9502c`). The oldest stretches to the caller's directory once
+     the budget is full, restored by reading only as far along one as the target
+     needs.
+   STILL TO COME: pointing the frontend's saves at the per-user cache directory
+   that now exists, and giving it somewhere to spill.
 3. **The frontend: one history.** TAStudio onto the session's history, with the
    rewind gesture rebound to a reverse delta rather than a backwards seek;
    `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer`, the
