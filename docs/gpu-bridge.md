@@ -241,16 +241,35 @@ as doing it, so `tests/gpu/run-reopen.sh` asks: open, play, save, close, open
 again IN THE SAME PROCESS, load the state, keep playing. A fresh process per run
 never asks the question, which is why this went unnoticed for so long.
 
-Measured 2026-09-08, llvmpipe, one game each:
+What "keep playing" has to mean is the whole of it. Not crashing is not the
+check: a renderer holding a dead context's objects comes back garbled, or
+silent, or stuck on one frame, and every one of those passes "it did not crash
+and something was lit". So the reopened run is compared against a run that never
+stopped. Where a core exposes memory domains, RAM is the assertion - a hardware
+renderer's picture may legitimately wobble, but a TAS is only a TAS because the
+same inputs from the same state produce the same MACHINE - and the picture is
+measured beside it. Where a core exposes none, as ruffle does, the picture and
+the sound are all anyone outside can see, and they become the assertion instead.
+
+Measured 2026-09-08, one game each, on llvmpipe AND on a GTX 1060 (NVIDIA
+581.42) - both, because a renderer that mishandles a context change can easily
+do it on one driver and not the other:
 
 | core | reopens onto its own states |
 |---|---|
-| xemu | yes |
-| flycast | yes |
-| pcsx2 | yes |
-| ruffle | yes |
+| xemu | yes - RAM, audio and picture all identical |
+| flycast | yes - identical |
+| pcsx2 | yes - identical, once booted far enough to be drawing a game |
+| ruffle | NO - the machine is unverifiable and the picture comes back 11.6% different |
 | dolphin | NO - crashes on the first frame after the load |
 | rpcs3 | not known: it will not boot on this machine, failing in its own audio overlay setup |
+
+Both failures reproduce identically on the two drivers, so neither is a driver
+quirk. Ruffle's picture is pixel-identical when the state is reloaded into the
+session that MADE it and 11.6% different across a reopen, which is the same
+isolation dolphin's crash has: whatever the renderer is holding does not survive
+the new context. Ruffle exposing no memory domains is its own problem - it means
+nobody can check whether its machine desynced, only whether its picture did.
 
 Dolphin declares that its states survive and has the patch that ought to make
 them (`0020-chimera-the-renderer-rebuilds-its-gl-objects-when-the-context-is-gone`),

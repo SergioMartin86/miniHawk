@@ -10,6 +10,13 @@
  * and this is what that claim means in practice: open, play, save, close, open
  * again IN THE SAME PROCESS, load the state, and keep playing. A fresh process
  * per run - which chimera-run is - never asks the question.
+ *
+ * What "keep playing" has to mean is the whole of it. Not crashing is not the
+ * check: a renderer holding a dead context's objects comes back garbled, or
+ * silent, or stuck on one frame, and every one of those survives "it did not
+ * crash and something was lit". So the reopened run is compared against a run
+ * that never stopped, frame for frame, pixel for pixel and sample for sample.
+ * They have to be identical.
  */
 #include "chimera/engine.h"
 #include <cstdio>
@@ -29,8 +36,8 @@ static bool slurp(const char *p, std::vector<uint8_t> &o)
 	return true;
 }
 
-/* how much of the frame is not black - a renderer that quietly stopped drawing
- * is the failure this would otherwise miss */
+/* how much of the frame is not black - context for a person reading the output,
+ * and nothing more: a machine can draw the wrong thing brightly */
 static long lit(ce_session *s)
 {
 	const uint32_t *v = ce_session_video(s);
@@ -41,17 +48,116 @@ static long lit(ce_session *s)
 	return n;
 }
 
+/* What the machine actually produced, frame by frame - every pixel and every
+ * sample, folded together.
+ *
+ * This is the check that matters and the one this harness first went without.
+ * "It did not crash and something was lit" passes a machine whose picture came
+ * back garbled, whose sound came back as noise, or which came back stuck on one
+ * frame - which is precisely what a renderer holding a dead context's objects
+ * looks like from the outside. A run that stopped and came back has to produce
+ * the SAME frames as one that never stopped, and nothing weaker is worth
+ * asserting. */
+struct Fold
+{
+	uint64_t audio = 1469598103934665603ull;   /* FNV-1a */
+	std::vector<uint32_t> lastFrame;
+	int32_t w = 0, h = 0;
+
+	static void mix(uint64_t &acc, const void *p, size_t n)
+	{
+		const auto *b = static_cast<const uint8_t *>(p);
+		for (size_t i = 0; i < n; i++) { acc ^= b[i]; acc *= 1099511628211ull; }
+	}
+
+	void frame(ce_session *s)
+	{
+		int32_t n = 0;
+		if (const int16_t *a = ce_session_audio(s, &n))
+		{
+			mix(audio, &n, sizeof n);
+			mix(audio, a, (size_t)n * 2 * sizeof(int16_t));
+		}
+		w = ce_session_video_width(s);
+		h = ce_session_video_height(s);
+		if (const uint32_t *v = ce_session_video(s)) lastFrame.assign(v, v + (size_t)w * h);
+	}
+};
+
+/* The machine's own memory, which is the thing that must not differ.
+ *
+ * A hardware renderer's picture can wobble - the same commands on the same
+ * driver need not put back the same bytes, and Chimera says so on screen - so
+ * comparing frames alone would call ordinary jitter a bug. The MACHINE has no
+ * such licence: a TAS is only a TAS because the same inputs from the same state
+ * produce the same machine. So RAM is the assertion, and the picture is
+ * measured rather than asserted - a wobble is a fraction of a percent, and a
+ * renderer drawing through a dead context's objects is not. */
+static uint64_t ramHash(ce_session *s, int64_t *bytesOut = nullptr, int *countOut = nullptr)
+{
+	uint64_t h = 1469598103934665603ull;
+	int64_t total = 0;
+	int used = 0;
+	std::vector<uint8_t> buf;
+	for (int32_t i = 0; i < ce_session_domain_count(s); i++)
+	{
+		const int64_t size = ce_session_domain_size(s, i);
+		/* the machine's own memory, not its disks or its saved data */
+		if (size <= 0 || size > (256 << 20) || ce_session_domain_writable(s, i) == 0) continue;
+		buf.resize((size_t)size);
+		if (ce_session_domain_read(s, i, 0, buf.data(), size) != size) continue;
+		Fold::mix(h, buf.data(), buf.size());
+		total += size;
+		used++;
+	}
+	if (bytesOut != nullptr) *bytesOut = total;
+	if (countOut != nullptr) *countOut = used;
+	return h;
+}
+
+/* The frame as a file somebody can look at. "The video was compromised" is a
+ * claim about what a person sees, and no statistic settles it. */
+static void writePpm(const std::string &path, const Fold &f)
+{
+	if (f.lastFrame.empty()) return;
+	FILE *out = fopen(path.c_str(), "wb");
+	if (out == nullptr) return;
+	fprintf(out, "P6\n%d %d\n255\n", f.w, f.h);
+	for (uint32_t px : f.lastFrame)
+	{
+		const uint8_t rgb[3] = { uint8_t(px >> 16), uint8_t(px >> 8), uint8_t(px) };
+		fwrite(rgb, 1, 3, out);
+	}
+	fclose(out);
+}
+
+/* How much of the picture is not the same picture, in percent. */
+static double framesDiffer(const Fold &a, const Fold &b)
+{
+	if (a.w != b.w || a.h != b.h) return 100.0;
+	if (a.lastFrame.size() != b.lastFrame.size() || a.lastFrame.empty()) return 100.0;
+	size_t bad = 0;
+	for (size_t i = 0; i < a.lastFrame.size(); i++)
+	{
+		if ((a.lastFrame[i] & 0xFFFFFF) != (b.lastFrame[i] & 0xFFFFFF)) bad++;
+	}
+	return 100.0 * bad / a.lastFrame.size();
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 3)
 	{
 		fprintf(stderr, "usage: reopen <package> <rom> [--settings <json>]"
-			" [--firmware <id>=<path>]... [--frames N] [--save-at K] [--after M]\n");
+			" [--firmware <id>=<path>]... [--frames N] [--after M]\n"
+			"  --frames N   boot this many frames, then save\n"
+			"  --after M    then compare M frames, straight run against reopened\n");
 		return 2;
 	}
 	const char *pkg = argv[1], *rom = argv[2];
 	std::string settings = "{}";
-	long frames = 120, saveAt = 60, after = 60;
+	std::string shot;
+	long frames = 120, after = 60;
 	bool inSession = false, noState = false, wantGl = true, trace = false;
 	std::vector<std::string> fwIds, fwPaths;
 	for (int i = 3; i < argc; i++)
@@ -59,7 +165,7 @@ int main(int argc, char **argv)
 		std::string a = argv[i];
 		if (a == "--settings" && i + 1 < argc) settings = argv[++i];
 		else if (a == "--frames" && i + 1 < argc) frames = atol(argv[++i]);
-		else if (a == "--save-at" && i + 1 < argc) saveAt = atol(argv[++i]);
+		else if (a == "--save-at" && i + 1 < argc) frames = atol(argv[++i]);   /* an older spelling of --frames */
 		else if (a == "--after" && i + 1 < argc) after = atol(argv[++i]);
 		/* Which half is broken, when something is. --in-session never opens a
 		 * second session, so it asks about savestates alone; --no-state opens a
@@ -71,6 +177,8 @@ int main(int argc, char **argv)
 		/* which frame it died on, which is the difference between "the load
 		 * broke it" and "it limped and then fell over" */
 		else if (a == "--trace") trace = true;
+		/* <prefix>-straight.ppm and <prefix>-reopened.ppm, to be looked at */
+		else if (a == "--shot" && i + 1 < argc) shot = argv[++i];
 		else if (a == "--firmware" && i + 1 < argc)
 		{
 			std::string spec = argv[++i];
@@ -107,18 +215,27 @@ int main(int argc, char **argv)
 	ce_session *a = open();
 	if (a == nullptr) { printf("FAIL  could not open: %s\n", err ? err : "?"); return 1; }
 	const int drewA = ce_session_gpu_drew(a);
+	/* Boot far enough in to be somewhere worth saving. */
+	for (long i = 0; i < frames; i++) ce_session_frame_advance(a, 0, 1);
+
 	std::vector<uint8_t> state;
-	for (long i = 0; i < frames; i++)
-	{
-		ce_session_frame_advance(a, 0, 1);
-		if (i == saveAt)
-		{
-			uint64_t len = 0;
-			const uint8_t *p = ce_session_save_state(a, &len);
-			if (p == nullptr) { printf("FAIL  could not save a state: %s\n", ce_session_last_error(a)); return 1; }
-			state.assign(p, p + len);
-		}
-	}
+	uint64_t len = 0;
+	const uint8_t *saved = ce_session_save_state(a, &len);
+	if (saved == nullptr) { printf("FAIL  could not save a state: %s\n", ce_session_last_error(a)); return 1; }
+	state.assign(saved, saved + len);
+
+	/* Then EXACTLY the frames the reopened run will be asked for, so the two
+	 * are the same question. Getting this wrong - folding a different stretch
+	 * on each side - makes every core on earth look broken, which is how the
+	 * first version of this file read. */
+	Fold straight;
+	for (long i = 0; i < after; i++) { ce_session_frame_advance(a, 0, 1); straight.frame(a); }
+	int64_t ramBytes = 0;
+	int ramDomains = 0;
+	const uint64_t straightRam = ramHash(a, &ramBytes, &ramDomains);
+	/* A comparison over nothing passes every time, so say what was compared. */
+	if (ramBytes == 0) printf("hmm   this core exposes no writable memory - RAM proves nothing here\n");
+	else printf("      comparing %d memory domain(s), %.1f MB\n", ramDomains, ramBytes / 1048576.0);
 	const long litA = lit(a);
 	if (state.empty() && !noState) { printf("FAIL  no state was saved\n"); return 1; }
 	/* A machine that never drew tells us nothing about whether drawing survives
@@ -126,23 +243,33 @@ int main(int argc, char **argv)
 	 * be reporting the harness's own impatience as the core's bug. */
 	if (litA <= 0)
 	{
-		printf("hmm   the first session drew nothing in %ld frames - give it more before believing anything\n", frames);
+		if (!shot.empty()) writePpm(shot + "-straight.ppm", straight);
+		printf("hmm   the first session drew nothing in %ld frames - give it more before believing anything\n", frames + after);
 		return 2;
 	}
 
 	if (inSession)
 	{
+		/* back to the save point, then the same stretch again */
 		if (ce_session_load_state(a, state.data(), state.size()) != 0)
 		{
 			printf("FAIL  the state would not load into the session that made it: %s\n", ce_session_last_error(a));
 			return 1;
 		}
-		for (long i = 0; i < after; i++) ce_session_frame_advance(a, 0, 1);
+		Fold again;
+		for (long i = 0; i < after; i++) { ce_session_frame_advance(a, 0, 1); again.frame(a); }
+		const uint64_t ram = ramHash(a);
 		const long back = lit(a);
 		const int drew = ce_session_gpu_drew(a);
+		const double px = framesDiffer(straight, again);
+		const bool sound = again.audio == straight.audio;
 		ce_session_free(a);
-		printf("%s  gpu %d, in-session reload, lit %ld -> %ld\n", back > 0 ? "ok  " : "FAIL", drew, litA, back);
-		return back > 0 ? 0 : 1;
+		const bool ramOk = ramBytes == 0 || ram == straightRam;
+		const bool ok = ramBytes != 0 ? ramOk : (px <= 1.0 && sound);
+		printf("%s  gpu %d, in-session reload, lit %ld -> %ld | RAM %s, audio %s, picture %.2f%% different\n",
+			ok ? "ok  " : "FAIL", drew, litA, back,
+			ramBytes == 0 ? "n/a" : (ramOk ? "same" : "DIFFERS"), sound ? "same" : "differs", px);
+		return ok ? 0 : 1;
 	}
 	ce_session_free(a);
 
@@ -155,18 +282,58 @@ int main(int argc, char **argv)
 		printf("FAIL  the state would not load into the second session: %s\n", ce_session_last_error(b));
 		return 1;
 	}
+	Fold reopened;
 	for (long i = 0; i < after; i++)
 	{
 		if (trace) { fprintf(stderr, "[reopen] second session, frame %ld\n", i); fflush(stderr); }
 		ce_session_frame_advance(b, 0, 1);
+		reopened.frame(b);
 	}
+	const uint64_t reopenedRam = ramHash(b);
+	if (!shot.empty()) { writePpm(shot + "-straight.ppm", straight); writePpm(shot + "-reopened.ppm", reopened); }
 	const long litB = lit(b);
 	const int drewB = ce_session_gpu_drew(b);
+	const double px = framesDiffer(straight, reopened);
+	const bool sound = reopened.audio == straight.audio;
 	ce_session_free(b);
 
-	printf("%s  gpu %d/%d, %ld frames then %ld more %s, lit %ld -> %ld\n",
-		litB > 0 ? "ok  " : "FAIL", drewA, drewB, frames, after,
-		noState ? "in a second session" : "after a reload", litA, litB);
-	if (litB <= 0) { printf("      the second session drew nothing - a renderer that stopped drawing\n"); return 1; }
+	/* With no state loaded the second session started from power-on and has no
+	 * business matching anything; there is only the crash to report. */
+	if (noState)
+	{
+		printf("%s  gpu %d/%d, %ld frames then %ld more in a second session, lit %ld -> %ld\n",
+			litB > 0 ? "ok  " : "FAIL", drewA, drewB, frames, after, litA, litB);
+		return litB > 0 ? 0 : 1;
+	}
+
+	/* What may be asserted depends on what the core lets us see. With memory
+	 * domains, RAM is the machine and the picture is a symptom. Without them -
+	 * ruffle exposes none - the picture and the sound ARE the machine as far as
+	 * anyone outside can tell, and a difference there is the whole finding. */
+	const bool ramOk = ramBytes == 0 || reopenedRam == straightRam;
+	const bool lookOk = px <= 1.0 && sound;
+	const bool same = ramBytes != 0 ? ramOk : lookOk;
+
+	printf("%s  gpu %d/%d, booted %ld then %ld compared after a reload, lit %ld -> %ld"
+	       " | RAM %s, audio %s, picture %.2f%% different\n",
+		same ? "ok  " : "FAIL", drewA, drewB, frames, after, litA, litB,
+		ramBytes == 0 ? "n/a" : (ramOk ? "same" : "DIFFERS"), sound ? "same" : "differs", px);
+
+	if (!ramOk)
+	{
+		printf("      The machine came back DIFFERENT. Not a crash, and not the\n"
+		       "      renderer wobbling: the same inputs from the same state did not\n"
+		       "      produce the same machine, which is the one thing a TAS cannot\n"
+		       "      survive. A run reopened onto this state desyncs.\n");
+		return 1;
+	}
+	if (!lookOk)
+	{
+		printf("      %s the picture and sound are all this core shows, and they\n"
+		       "      came back different. Something the renderer holds did not\n"
+		       "      survive the new context.\n",
+			ramBytes == 0 ? "With no memory domains to check," : "The machine is right, but");
+		return ramBytes == 0 ? 1 : 0;
+	}
 	return 0;
 }
