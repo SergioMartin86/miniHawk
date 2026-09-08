@@ -76,10 +76,15 @@ All five taken by the user, 2026-09-08:
    cache is regenerable.
 3. **Rewind is not a separate thing**, and already is not one. It stays a
    gesture over the history, and the history is what has to make it cheap.
-4. **The policy is a time budget, not a frame count.** A seek should cost about
-   a second at worst. The same frame count means a fifth of a second on one
-   machine and twenty seconds on another, so the engine derives spacing from
-   the cost it measures rather than from a number somebody typed.
+4. **The policy is locality, not a time budget.** SUPERSEDED and retaken,
+   2026-09-08. It was "a seek should cost about a second at worst", and that
+   promise cannot be kept: churn is not stationary, so a chain sized to hit a
+   second on the mean frame overshoots on a busy one - which is exactly the
+   scene somebody is scrubbing through when they notice. The history is instead
+   dense where the work is and coarse where it is not, and the time a seek takes
+   follows from that shape rather than being promised in advance. See "The
+   policy: dense near the work" below. Measurement does not go away; it sets the
+   defaults per core instead of enforcing a guarantee.
 5. **miniBox grows delta states**, and the design goes straight for them rather
    than shipping content-addressed dedup first.
 
@@ -274,6 +279,79 @@ What is still unmeasured, and should not be guessed at: the cost with the GPU
 renderer running rather than the null one, and the same numbers on rpcs3, whose
 state and churn are both larger.
 
+## The policy: dense near the work
+
+Editing a movie is local. The frames somebody steps through, rewinds over and
+re-records are the ones around the playhead; the frames from ten minutes ago are
+visited to jump to, not to scrub through. So the history keeps three bands,
+measured as distance from the newest captured frame:
+
+| band | spacing | what it is for |
+|---|---|---|
+| near | every frame | stepping, rewinding, re-recording - the work |
+| mid | one in a few | scrubbing back over the recent past |
+| far | one in a great many | jumping to somewhere else in the run |
+
+A frame does not stay in a band. It is captured into the near band, and as the
+playhead moves on it falls through the mid band into the far one, being made
+coarser as it goes. Coarsening is driven by distance and not by the budget, so
+it is incremental and bounded: each captured frame pushes a couple of points
+across a boundary and pays for those, rather than a stall when the budget fills.
+
+The budget then decides only what happens to the far band, and what happens is
+that it goes to disk, oldest first, into the project's cache directory. That is
+the right thing to spill precisely because it is far: large, rarely touched, and
+- if the disk copy is lost - regenerable like everything else here.
+
+Every boundary in that table is a knob with a per-core default, in frames rather
+than seconds, because the engine does not know a core's frame rate and the
+frontend does.
+
+### Coarsening is composition, never deletion
+
+This is the part that constrains the implementation, and it is easy to get
+wrong. `deltas[i]` walks frame `anchor+i` to `anchor+i+1`. Dropping a link in
+the middle of a chain does not thin it - it orphans every frame after it, since
+there is then nothing to walk through. That is why the eviction this replaces
+could only ever truncate a chain from its end.
+
+Thinning is therefore COMPOSITION: two adjacent deltas are merged into one
+delta that spans two frames. On miniBox's format that is an exact byte-level
+merge - take the later program break and thread set, union the two page lists
+with the later page winning - which is precisely what applying both in order
+does, and it needs no sandbox and no running machine. Composed sizes grow
+sublinearly, because a frame's churn lands mostly on the pages the frame before
+it touched.
+
+Two consequences fall out. A segment's links stop being one frame each, so a
+link carries the frame it lands on and the invariant becomes "the spans tile the
+segment without gaps" - the same contiguity, stated in the units it actually
+holds in. And over a long enough span a composed delta approaches the machine's
+whole working set, at which point the far band stops being deltas at all and is
+simply anchors; that is a simplification rather than a special case.
+
+### What the bands cost on a heavy core
+
+Cheap cores make any policy look good. xemu, at 2 MB a frame and a 200 MB
+anchor, is where the defaults have to be honest. Ten minutes of it:
+
+| band | if it held | cost |
+|---|---|---|
+| near | 2 s, every frame | 240 MB |
+| mid | everything else, one in two | ~54 GB |
+| far | anchors every 20 s | 6 GB |
+
+So the mid band's EXTENT, not its spacing, is what the budget actually buys, and
+a mid band defined as "everything that is not near or far" is not affordable on
+this core. It needs an extent of its own.
+
+The far band's spacing has a latency of its own, too. Landing between two
+preserved points 20 s apart on xemu costs either a 1200 frame replay, about 35 s
+at 29 ms a frame, or a walk across the mid band's composed deltas if it reaches
+that far, about 4 s. Neither is a second. That is the honest cost of giving up
+the promise, and it is why the defaults have to come from measurement even
+though the guarantee does not.
+
 ## Phasing
 
 Each phase is separately gated and separately landable.
@@ -297,10 +375,20 @@ Each phase is separately gated and separately landable.
    made, and lands on the goldens. The engine carries a machine id rather than
    deciding what makes two machines the same, since the caller already knows
    about cores, settings and files.
-   STILL TO COME in this phase: the measured policy that sets anchor spacing
-   and epoch cadence from what the engine observes rather than from the
-   provisional constant in the code, and pointing the frontend's saves at the
-   per-user cache directory that now exists.
+   STILL TO COME in this phase, in this order, each separately gated:
+   - **Composition in miniBox.** `mb_delta_compose`, merging two adjacent
+     forward deltas into one, with the differential gate that says a composed
+     delta lands on the same machine as applying both.
+   - **Variable spans in the engine.** A link carries the frame it lands on
+     instead of an implied stride of one, and `nearest`, `covers`, `restore`
+     and persistence walk spans. No policy change yet - every span stays 1 -
+     so the gates prove the plumbing alone.
+   - **The band policy.** Distance-driven coarsening with the knobs above,
+     replacing `evict`.
+   - **Spill.** The far band to the project's cache directory, oldest first,
+     once the budget is reached.
+   Then pointing the frontend's saves at the per-user cache directory that now
+   exists.
 3. **The frontend: one history.** TAStudio onto the session's history, with the
    rewind gesture rebound to a reverse delta rather than a backwards seek;
    `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer`, the
