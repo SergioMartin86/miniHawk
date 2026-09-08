@@ -61,7 +61,11 @@ does not work, and a state costing what the machine IS rather than what it DID.
 All five taken by the user, 2026-09-08:
 
 1. **The cache lives in a per-user directory**, keyed by project identity, not
-   beside the project. Projects live in synced folders - the user's are in
+   beside the project. BUILT (`fbff1a4`): the project gained an id, minted at
+   creation and carried in the file, and `ProjectCache` resolves a directory
+   from it. The remembered file locations moved there first - a `.chimeraLocal`
+   beside an older project is read once, moved, and taken out of the folder -
+   so a project's folder now holds only the project. Projects live in synced folders - the user's are in
    Google Drive - and a multi-gigabyte sidecar there is uploaded on every save,
    with the sync client holding files open mid-write. It follows the core store
    (docs/core-manager.md): `%LOCALAPPDATA%\Chimera` on Windows, the XDG data
@@ -229,9 +233,17 @@ Each phase is separately gated and separately landable.
    with 200 MB states: a 200-frame run seeking back to 100 through the chain
    dumps System RAM byte-identical to a run that never stopped; the witness is
    40/40 and CHIMERA_HISTORY_TRACE shows its seek legs really do walk deltas.
-   STILL TO COME in this phase: persistence to the per-user cache, and the
-   measured policy that sets anchor spacing and epoch cadence from what the
-   engine observes rather than from the provisional constant in the code.
+   Persistence followed (`64a4e16`): the history writes to a file and reads one
+   back, streamed a segment at a time so that nothing is ever assembled in
+   memory, and the witness gained the leg that could not exist before - one
+   process keeps a history, a second starts from it, seeks into states it never
+   made, and lands on the goldens. The engine carries a machine id rather than
+   deciding what makes two machines the same, since the caller already knows
+   about cores, settings and files.
+   STILL TO COME in this phase: the measured policy that sets anchor spacing
+   and epoch cadence from what the engine observes rather than from the
+   provisional constant in the code, and pointing the frontend's saves at the
+   per-user cache directory that now exists.
 3. **The frontend: one history.** TAStudio onto the session's history, with the
    rewind gesture rebound to a reverse delta rather than a backwards seek;
    `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer`, the
