@@ -199,9 +199,9 @@ namespace Chimera.Client.GUI
 
 			public MovieClientSettings MovieSettings;
 
-			public IStateManagerSettings CurrentStateManagerSettings;
 
-			public IStateManagerSettings DefaultStateManagerSettings;
+
+
 		}
 
 		private MovieClientSettings _movieSettings = new();
@@ -1161,19 +1161,35 @@ namespace Chimera.Client.GUI
 		}
 
 		/// <summary>
-		/// Get a savestate prior to the previous frame so code following the call can frame advance and have a framebuffer.
-		/// If frame is 0, return the initial state.
+		/// The frame the history would put us on to reach <paramref name="frame"/>:
+		/// the one BEFORE it, so whatever follows can advance once and have a
+		/// framebuffer. Asking does not move the machine.
 		/// </summary>
-		private KeyValuePair<int,Stream> GetPriorStateForFramebuffer(int frame)
+		private int PriorStateForFramebuffer(int frame)
+			=> CurrentTasMovie.States.Nearest(frame > 0 ? frame - 1 : 0);
+
+		/// <summary>Puts the machine on a frame the history holds.</summary>
+		public void LoadStateAt(int frame)
 		{
-			return CurrentTasMovie.TasStateManager.GetStateClosestToFrame(frame > 0 ? frame - 1 : 0);
+			if (!CurrentTasMovie.States.RestoreTo(frame)) return;
+			AfterStateLoaded(frame, null);
 		}
 
-		public void LoadState(KeyValuePair<int, Stream> state, int? branchIndex = null)
+		/// <summary>
+		/// Puts the machine on a branch's OWN state. A branch does not go through
+		/// the history: it keeps a whole state of its own, so that reaching one
+		/// never depends on a history that coarsens and evicts around it
+		/// (docs/state-manager.md).
+		/// </summary>
+		public void LoadBranchState(TasBranch branch, int branchIndex)
 		{
-			StatableEmulator.LoadStateBinary(new BinaryReader(state.Value));
+			StatableEmulator.LoadStateBinary(new BinaryReader(new MemoryStream(branch.CoreData, false)));
+			AfterStateLoaded(branch.Frame, branchIndex);
+		}
 
-			if (state.Key == 0 && CurrentTasMovie.StartsFromSavestate)
+		private void AfterStateLoaded(int frame, int? branchIndex)
+		{
+			if (frame == 0 && CurrentTasMovie.StartsFromSavestate)
 			{
 				Emulator.ResetCounters();
 			}
@@ -1231,7 +1247,7 @@ namespace Chimera.Client.GUI
 		{
 			// TODO: columns selected?
 			var selectedRowCount = GetSelection().Count();
-			var temp = $"Selected: {selectedRowCount} {(selectedRowCount == 1 ? "frame" : "frames")}, States: {CurrentTasMovie.TasStateManager.Count}";
+			var temp = $"Selected: {selectedRowCount} {(selectedRowCount == 1 ? "frame" : "frames")}, States: {CurrentTasMovie.States.Count}";
 			var clipboardCount = _tasClipboard.Count;
 			if (clipboardCount is not 0) temp += $", Clipboard: {clipboardCount} {(clipboardCount is 1 ? "frame" : "frames")}";
 			SplicerStatusLabel.Text = temp;
@@ -1533,9 +1549,9 @@ namespace Chimera.Client.GUI
 			_suspendEditLogic = true;
 			CurrentTasMovie.LoadBranch(branch);
 			_suspendEditLogic = false;
-			LoadState(new(branch.Frame, new MemoryStream(branch.CoreData, false)), CurrentTasMovie.Branches.IndexOf(branch));
+			LoadBranchState(branch, CurrentTasMovie.Branches.IndexOf(branch));
 
-			CurrentTasMovie.TasStateManager.Capture(Emulator.Frame, Emulator.AsStatable());
+			CurrentTasMovie.States.Capture(Emulator.Frame);
 			QuickBmpFile.Copy(new BitmapBufferVideoProvider(branch.CoreFrameBuffer), VideoProvider);
 
 			if (Settings.OldControlSchemeForBranches && TasPlaybackBox.RecordingMode)

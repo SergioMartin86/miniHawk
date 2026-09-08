@@ -26,12 +26,13 @@ namespace Chimera.Client.GUI
 			TastudioPlayMode();
 			SeekingTo = frame; // must be before LoadState, since it calls UpdateAfter (potentially doing end-of-seek logic if prior seek was to before this frame) instead of SavestateLoaded for ??? reason.
 
-			var closestState = GetPriorStateForFramebuffer(frame);
-			if (frame < Emulator.Frame || (closestState.Key > Emulator.Frame && !skipLoadState))
+			// Asking where the history would land is free and does not move the
+			// machine, so the decision to load happens before anything is loaded.
+			var closestState = PriorStateForFramebuffer(frame);
+			if (closestState >= 0 && (frame < Emulator.Frame || (closestState > Emulator.Frame && !skipLoadState)))
 			{
-				LoadState(closestState);
+				LoadStateAt(closestState);
 			}
-			closestState.Value.Dispose();
 
 			if (Emulator.Frame != frame)
 			{

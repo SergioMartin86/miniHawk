@@ -1141,13 +1141,13 @@ namespace Chimera.Client.GUI
 				else if (Emulator.Frame == frame - 1)
 				{
 					// In this case our regular capture logic won't get the chance
-					// to do a force capture for this edited frame. So do it here.
-					CurrentTasMovie.TasStateManager.Capture(Emulator.Frame, Emulator.AsStatable(), true);
+					// to capture this edited frame. So do it here.
+					CurrentTasMovie.States.Capture(Emulator.Frame);
 				}
-				else if (!CurrentTasMovie.TasStateManager.HasState(frame - 1) && Emulator.Frame == frame)
+				else if (!CurrentTasMovie.States.Has(frame - 1) && Emulator.Frame == frame)
 				{
 					// A less-than-ideal frame to be captured, but still useful for autorestore.
-					CurrentTasMovie.TasStateManager.Capture(Emulator.Frame, Emulator.AsStatable(), true);
+					CurrentTasMovie.States.Capture(Emulator.Frame);
 				}
 				_batchEditMinFrame = -1;
 			}

@@ -53,6 +53,15 @@ namespace Chimera.Client.Common
 			=> Path.Combine(ProjectCache.DirectoryFor(Project.Id), "greenzone.chimeraGreenZone");
 
 		/// <summary>
+		/// The engine's state history, beside the greenzone in the same cache.
+		/// Its own file because the engine streams it a stretch at a time and
+		/// nothing about it is ever assembled in memory - which is the bug this
+		/// whole design removed, and a zip lump would put straight back.
+		/// </summary>
+		public string StateHistoryFilename
+			=> Path.Combine(ProjectCache.DirectoryFor(Project.Id), "history.bin");
+
+		/// <summary>
 		/// Where a project written before the cache existed left its greenzone:
 		/// beside the project file. Only ever read, and only to move it here.
 		/// </summary>
@@ -285,6 +294,12 @@ namespace Chimera.Client.Common
 				EngineProgress.Report("writing the greenzone");
 				ProjectCache.Ensure(p.Id);
 				WriteCacheFile(GreenZoneFilename);
+				// A machine a GPU drew makes states good only in the session that
+				// made them (docs/gpu-bridge.md), so it writes none - and removes
+				// any an earlier session left, which would otherwise be loaded
+				// into a machine that cannot draw.
+				if (States is not null && !DrawnByGpu) States.Save(StateHistoryFilename, MachineIdentityOf(p));
+				else TryDelete(StateHistoryFilename);
 				// and where this machine keeps the project's files, in a sibling of
 				// its own: the project itself stays distributable, carrying names and
 				// hashes and no paths at all (docs/project.md). Merged over whatever
@@ -396,6 +411,18 @@ namespace Chimera.Client.Common
 		/// machine that cannot draw, and for a PlayStation 3 each one is the
 		/// better part of a gigabyte.
 		/// </summary>
+		private static void TryDelete(string path)
+		{
+			try
+			{
+				if (File.Exists(path)) File.Delete(path);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// it stays; it is a cache, and the machine check refuses it anyway
+			}
+		}
+
 		private void WriteCacheFile(string path)
 		{
 			var createResult = ZipStateSaver.Create(path, Session.Settings.MovieCompressionLevel);
@@ -403,19 +430,6 @@ namespace Chimera.Client.Common
 			var bs = createResult.Value;
 			try
 			{
-				IStateManagerSettings settingsToSave;
-				try
-				{
-					settingsToSave = TasStateManager?.Settings ?? Session.Settings.DefaultTasStateManagerSettings;
-				}
-				catch
-				{
-					settingsToSave = Session.Settings.DefaultTasStateManagerSettings;
-				}
-				var settings = JsonConvert.SerializeObject(
-					settingsToSave,
-					new JsonSerializerSettings() { TypeNameHandling = TypeNameHandling.Objects });
-				bs.PutLump(BinaryStateLump.StateHistorySettings, tw => tw.WriteLine(settings));
 				// which machine these states belong to - checked before any is loaded
 				bs.PutLump(BinaryStateLump.Machine, tw => tw.WriteLine(MachineIdentityOf(Project)));
 				bs.PutLump(BinaryStateLump.LagLog, tw => LagLog.Save(tw), zstdCompress: true);
@@ -429,30 +443,6 @@ namespace Chimera.Client.Common
 					bs.PutLump(BinaryStateLump.VerificationLog, tw => tw.WriteLine(VerificationLog.ToInputLog()));
 				}
 				bs.PutLump(BinaryStateLump.Session, tw => tw.WriteLine(JsonConvert.SerializeObject(TasSession)));
-				// ZipStateSaver surfaces a failing lump only at close, which would
-				// poison the whole cache - so the state history is serialized into
-				// memory FIRST, and a manager that cannot serialize costs a cold
-				// greenzone on the next load, nothing more
-				byte[] history = null;
-				if (TasStateManager is not null && !DrawnByGpu)
-				{
-					try
-					{
-						using var ms = new MemoryStream();
-						using var bw = new BinaryWriter(ms);
-						TasStateManager.SaveStateHistory(bw);
-						bw.Flush();
-						history = ms.ToArray();
-					}
-					catch
-					{
-						history = null;
-					}
-				}
-				if (history is not null)
-				{
-					bs.PutLump(BinaryStateLump.StateHistory, (Stream s) => s.Write(history, 0, history.Length));
-				}
 
 				var ncore = new IndexedStateLump(BinaryStateLump.BranchCoreData);
 				var nframebuffer = new IndexedStateLump(BinaryStateLump.BranchFrameBuffer);
@@ -656,12 +646,10 @@ namespace Chimera.Client.Common
 				}
 			}
 
-			if (bl is null)
-			{
-				TasStateManager?.Dispose();
-				TasStateManager = Session.Settings.DefaultTasStateManagerSettings.CreateManager(IsReserved);
-				return;
-			}
+			// No cache, or one of another machine: the lag log and the session
+			// position stay as they were, which for a fresh load is empty. The
+			// states are the engine's and are not read here at all.
+			if (bl is null) return;
 
 			using (bl)
 			{
@@ -723,34 +711,12 @@ namespace Chimera.Client.Common
 					ncoreframebuffer.Increment();
 				}
 
-				var settings = Session.Settings.DefaultTasStateManagerSettings;
-				bl.GetLump(BinaryStateLump.StateHistorySettings, abort: false, tr =>
-				{
-					try
-					{
-						settings = JsonConvert.DeserializeObject<IStateManagerSettings>(tr.ReadToEnd()) ?? settings;
-					}
-					catch
-					{
-						// defaults instead
-					}
-				});
-
-				TasStateManager?.Dispose();
-				TasStateManager = null;
-				var hasHistory = !StatesMadeByGpu && bl.GetLump(BinaryStateLump.StateHistory, abort: false, br =>
-				{
-					try
-					{
-						TasStateManager = settings.CreateManager(IsReserved);
-						TasStateManager.LoadStateHistory(br);
-					}
-					catch
-					{
-						TasStateManager?.Dispose();
-						TasStateManager = null;
-					}
-				});
+				// The states themselves are not in here any more: the engine keeps
+				// the history and writes its own file beside this one, streamed
+				// rather than assembled (docs/state-manager.md). It is read when
+				// the emulator arrives, since there is nowhere to put it until
+				// then - see Attach.
+				//
 				// Said when there is work to say it about: a project with frames in
 				// it opens with an empty greenzone on a machine a GPU draws, and a
 				// person who is not told simply sees their cached states gone.
@@ -760,17 +726,6 @@ namespace Chimera.Client.Common
 						"This machine is drawn by a GPU, and what it draws lives outside the machine: a state"
 						+ " it made is good only in the session that made it. The greenzone therefore starts"
 						+ " empty and fills again as the movie plays.";
-				}
-				if (!hasHistory || TasStateManager is null)
-				{
-					try
-					{
-						TasStateManager = settings.CreateManager(IsReserved);
-					}
-					catch
-					{
-						TasStateManager = Session.Settings.DefaultTasStateManagerSettings.CreateManager(IsReserved);
-					}
 				}
 			}
 		}

@@ -482,7 +482,17 @@ namespace Chimera.Emulation.Common.Waterbox
 
 		public bool Save(string path, string machineId) => _session.HistorySave(path, machineId);
 
-		public bool Load(string path, string machineId) => _session.HistoryLoad(path, machineId);
+		public bool Load(string path, string machineId)
+		{
+			CheckDisposed();
+			var ok = _session.HistoryLoad(path, machineId);
+			// A history with no anchor can produce no frame at all, and loading
+			// one that was absent, damaged or of another machine leaves exactly
+			// that. The machine as it stands becomes the anchor again, which is
+			// what a cold greenzone has always meant.
+			if (_session.GreenzoneCount is 0) Capture(Frame);
+			return ok;
+		}
 
 		public void Pin(int frame, bool pinned) => _session.GreenzonePin(frame, pinned);
 

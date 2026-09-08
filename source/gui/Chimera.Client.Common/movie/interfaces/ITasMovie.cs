@@ -8,7 +8,13 @@ namespace Chimera.Client.Common
 		bool BindMarkersToInput { get; set; }
 
 		IMovieChangeLog ChangeLog { get; }
-		IStateManager TasStateManager { get; set; }
+		IStateHistory States { get; }
+
+		/// <summary>Before the machine moves, every frame.</summary>
+		void GreenzoneBeforeFrame();
+
+		/// <summary>Re-tells the history which frames must survive its thinning.</summary>
+		void RefreshPins();
 
 		/// <summary>
 		/// Why the cache beside the project was set aside on load, or null when it

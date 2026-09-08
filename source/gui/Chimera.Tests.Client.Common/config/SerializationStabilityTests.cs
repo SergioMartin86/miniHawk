@@ -16,11 +16,7 @@ namespace Chimera.Tests.Client.Common.config
 
 		private const string RECENT_SER = @"{""recentlist"":[],""MAX_RECENT_FILES"":8,""AutoLoad"":false,""Frozen"":false}";
 
-		private const string ZWINDER_SER = @"{""AutoSize"":true,""CurrentUseCompression"":false,""CurrentBufferSize"":256,""CurrentTargetFrameLength"":500,""CurrentStoreType"":0,""RecentUseCompression"":false,""RecentBufferSize"":128,""RecentTargetFrameLength"":2000,""RecentStoreType"":0,""GapsUseCompression"":false,""GapsBufferSize"":64,""GapsTargetFrameLength"":125,""GapsStoreType"":0,""AncientStateInterval"":5000,""AncientStoreType"":0}";
 
-		private const string PAGED_SER_BASE = @"""AutoMemoryLimit"":true,""OldStatesOnDisk"":true,""OldStatesDiskLimitMB"":8192,""TotalMemoryLimitMB"":1024,""FramesBetweenNewStates"":4,""FramesBetweenMidStates"":20,""FramesBetweenOldStates"":400,""NewToMidRatio"":2.0,""FramesBetweenSavedStates"":100,""ForceSaveMarkerStates"":false}";
-		private const string PAGED_SER_WITH_TYPE = @"{""$type"":""Chimera.Client.Common.PagedStateManager+PagedSettings, Chimera.Client.Common""," + PAGED_SER_BASE;
-		private const string PAGED_SER = "{" + PAGED_SER_BASE;
 
 #if NET5_0_OR_GREATER
 		private static readonly IReadOnlySet<Type> KnownGoodFromStdlib = new HashSet<Type>
@@ -48,7 +44,7 @@ namespace Chimera.Tests.Client.Common.config
 			[typeof(AnalogBind)] = @"{""Value"":""X1 LeftThumbX Axis"",""Mult"":0.8,""Deadzone"":0.1,""ButtonBindPositive"":""Right"",""ButtonBindNegative"":""Left""}",
 			[typeof(FeedbackBind)] = @"{""Channels"":""Left+Right"",""GamepadPrefix"":""X1 "",""Prescale"":1.0}",
 			[typeof(MessagePosition)] = @"{""X"":0,""Y"":0,""Anchor"":0}",
-			[typeof(MovieConfig)] = $@"{{""MovieEndAction"":3,""EnableBackupMovies"":true,""MovieCompressionLevel"":2,""VBAStyleMovieLoadState"":false,""DefaultTasStateManagerSettings"":{PAGED_SER_WITH_TYPE}}}",
+			[typeof(MovieConfig)] = @"{""MovieEndAction"":3,""EnableBackupMovies"":true,""MovieCompressionLevel"":2,""VBAStyleMovieLoadState"":false,""GreenzoneBudgetMb"":2048}",
 			[typeof(PathEntry)] = PATHENTRY_SER,
 			[typeof(PathEntryCollection)] = $@"{{""Paths"":[{PATHENTRY_SER}],""UseRecentForRoms"":false,""LastRomPath"":"".""}}",
 			[typeof(RecentFiles)] = RECENT_SER,
@@ -57,8 +53,6 @@ namespace Chimera.Tests.Client.Common.config
 			[typeof(RosterCore)] = @"{""id"":""aardvark"",""name"":""Aardvark"",""systems"":[""ARC""],""repo"":""someone/chimera-core-aardvark"",""tested"":""""}",
 			[typeof(RewindConfig)] = @"{""UseCompression"":false,""UseDelta"":false,""Enabled"":true,""AllowSlowStates"":false,""BufferSize"":512,""UseFixedRewindInterval"":false,""TargetFrameLength"":600,""TargetRewindInterval"":5,""AllowOutOfOrderStates"":true,""BackingStore"":0}",
 			[typeof(ToolDialogSettings)] = @"{""_wndx"":52,""_wndy"":44,""Width"":796,""Height"":455,""SaveWindowPosition"":true,""TopMost"":false,""FloatingWindow"":false}",
-			[typeof(ZwinderStateManagerSettings)] = ZWINDER_SER,
-			[typeof(PagedStateManager.PagedSettings)] = PAGED_SER,
 		};
 
 		[TestMethod]

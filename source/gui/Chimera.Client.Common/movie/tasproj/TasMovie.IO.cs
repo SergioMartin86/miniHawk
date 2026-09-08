@@ -16,7 +16,7 @@ namespace Chimera.Client.Common
 		private void ClearTasprojExtras()
 		{
 			LagLog.Clear();
-			TasStateManager?.Clear();
+			States?.InvalidateAfter(0);   // everything but the anchor
 			Markers.Clear();
 			ChangeLog.Clear();
 		}

@@ -160,9 +160,12 @@ namespace Chimera.Client.GUI
 			// needs to reboot the core - the worst case is replaying from the start.
 			try
 			{
-				var state = movie.TasStateManager.GetStateClosestToFrame(request.StartFrame);
-				Emulator.AsStatable().LoadStateBinary(new BinaryReader(state.Value));
-				if (state.Key is 0 && movie.StartsFromSavestate) Emulator.ResetCounters();
+				var landed = movie.States.Nearest(request.StartFrame);
+				if (landed < 0 || !movie.States.RestoreTo(landed))
+				{
+					throw new InvalidOperationException("the state history has no frame at or before it");
+				}
+				if (landed is 0 && movie.StartsFromSavestate) Emulator.ResetCounters();
 			}
 			catch (Exception e)
 			{

@@ -368,7 +368,7 @@ namespace Chimera.Client.Common
 				return;
 			}
 
-			_movie.TasStateManager.Unreserve(item.Frame - 1);
+			_movie.States?.Pin(item.Frame - 1, false);
 			_movie.ChangeLog.AddMarkerChange(null, item.Frame, item.Message);
 
 			base.Remove(item);
@@ -383,7 +383,7 @@ namespace Chimera.Client.Common
 				if (!m.IsPermanent && match.Invoke(m))
 				{
 					_movie.ChangeLog.AddMarkerChange(null, m.Frame, m.Message);
-					_movie.TasStateManager.Unreserve(m.Frame - 1);
+					_movie.States?.Pin(m.Frame - 1, false);
 				}
 			}
 

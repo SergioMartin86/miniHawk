@@ -40,15 +40,18 @@ namespace Chimera.Client.Common
 
 			_inputPollable = emulator.AsInputPollable();
 
-			TasStateManager ??= Session.Settings.DefaultTasStateManagerSettings.CreateManager(IsReserved);
-			if (StartsFromSavestate)
-			{
-				TasStateManager.Engage(BinarySavestate);
-			}
-			else
-			{
-				TasStateManager.Engage(emulator.AsStatable().CloneSavestate());
-			}
+			// The history is the engine's (docs/state-manager.md). Attaching turns
+			// it on, which captures the machine as it stands - frame zero, here -
+			// as the anchor everything else is reached from.
+			States = emulator.AsStateHistory();
+			States.SpillTo(ProjectCache.Ensure(Project.Id));
+			States.Enable((long)Session.Settings.GreenzoneBudgetMb * 1024 * 1024);
+			// Read here and not with the rest of the cache, because until the
+			// emulator arrives there is nowhere to put it. A machine a GPU drew
+			// makes states good only in the session that made them, so it starts
+			// cold (docs/gpu-bridge.md).
+			if (!StatesMadeByGpu) States.Load(StateHistoryFilename, MachineIdentityOf(Project));
+			RefreshPins();
 
 			base.Attach(emulator);
 		}
@@ -72,7 +75,12 @@ namespace Chimera.Client.Common
 		public TasLagLog LagLog { get; } = new TasLagLog();
 
 		public override string PreferredExtension => Extension;
-		public IStateManager TasStateManager { get; set; }
+		/// <summary>
+		/// Where the machine has been. Held by the engine, and this is the remote
+		/// control - there is deliberately no copy up here of which frames exist,
+		/// because a second copy is a second thing to keep true.
+		/// </summary>
+		public IStateHistory States { get; private set; }
 
 		public Action<int> GreenzoneInvalidated { get; set; }
 
@@ -92,7 +100,7 @@ namespace Chimera.Client.Common
 
 				return new TasMovieRecord
 				{
-					HasState = TasStateManager.HasState(index),
+					HasState = States is not null && States.Has(index),
 					LogEntry = GetInputLogEntry(index),
 					Lagged = lagged,
 					WasLagged = LagLog.History(lagIndex),
@@ -167,7 +175,9 @@ namespace Chimera.Client.Common
 			}
 
 			LagLog.RemoveFrom(frame);
-			var anyStateInvalidated = TasStateManager.InvalidateAfter(frame);
+			// asked before the drop, because afterwards there is nothing to see
+			var anyStateInvalidated = States.Nearest(int.MaxValue) > frame;
+			States.InvalidateAfter(frame);
 
 			Changes = true;
 			LastEditedFrame = frame;
@@ -236,8 +246,36 @@ namespace Chimera.Client.Common
 		{
 			LagLog[Emulator.Frame] = _inputPollable.IsLagFrame;
 
-			// We will forcibly capture a state for the last edited frame (requested by https://github.com/TASEmulators/BizHawk/issues/916 for case of "platforms with analog stick")
-			TasStateManager.Capture(Emulator.Frame, Emulator.AsStatable(), Emulator.Frame == LastEditedFrame - 1);
+			// Every frame, unconditionally: the engine decides what a frame near
+			// the playhead costs to keep and what it costs once the playhead has
+			// moved on, which is what "force this one" used to be for.
+			States.Capture(Emulator.Frame);
+		}
+
+		/// <summary>
+		/// Before the machine moves, every frame. A delta is what changed since a
+		/// marked moment, and the moment has to be marked first.
+		/// </summary>
+		public void GreenzoneBeforeFrame() => States?.BeforeAdvance();
+
+		/// <summary>
+		/// Tells the history which frames it must keep whatever its thinning would
+		/// otherwise do with them. Markers want instant navigation, and a branch
+		/// is somebody's alternative route; both are cheap to name and impossible
+		/// for the engine to guess. Rebuilt wholesale because the sets are small
+		/// and a missed removal would pin a frame forever.
+		/// </summary>
+		public void RefreshPins()
+		{
+			if (States is null) return;
+			States.UnpinAll();
+			// the frame BEFORE, because navigating to a marker emulates one frame
+			// from there so the screen has a framebuffer
+			foreach (var m in Markers)
+			{
+				if (m.WantsState && m.Frame > 0) States.Pin(m.Frame - 1, true);
+			}
+			foreach (var b in Branches) States.Pin(b.Frame, true);
 		}
 
 
@@ -335,7 +373,7 @@ namespace Chimera.Client.Common
 			if (timelineBranchFrame.HasValue)
 			{
 				LagLog.RemoveFrom(timelineBranchFrame.Value);
-				TasStateManager.InvalidateAfter(timelineBranchFrame.Value);
+				States.InvalidateAfter(timelineBranchFrame.Value);
 				GreenzoneInvalidated?.Invoke(timelineBranchFrame.Value);
 			}
 
@@ -379,8 +417,9 @@ namespace Chimera.Client.Common
 		public override void Dispose()
 		{
 			base.Dispose();
-			TasStateManager?.Dispose();
-			TasStateManager = null;
+			// not disposed: the history belongs to the emulator, which outlives
+			// the movie and is disposed by whoever made it
+			States = null;
 		}
 	}
 }

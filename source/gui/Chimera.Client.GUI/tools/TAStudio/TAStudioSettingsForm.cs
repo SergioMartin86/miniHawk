@@ -17,8 +17,7 @@ namespace Chimera.Client.GUI
 
 		private Action<TAStudio.AllSettings> _saveCallback;
 
-		private bool _changedStateManagerSettings = false;
-		private IStateManagerSettings _stateManagerSettings;
+
 
 		private bool _changedByUser = true;
 
@@ -37,7 +36,6 @@ namespace Chimera.Client.GUI
 			_controllerDef = controllerDefinition;
 			_saveCallback = saveCallback;
 
-			_stateManagerSettings = _settings.CurrentStateManagerSettings.Clone();
 
 			_font = _settings.GeneralClientSettings.TasViewFont;
 			_palette = _settings.GeneralClientSettings.Palette;
@@ -130,19 +128,12 @@ namespace Chimera.Client.GUI
 			};
 			patternSelectionRadio.Checked = true;
 
-			// state history
-			ManagerSettingsPropertyGrid.SelectedObject = _stateManagerSettings;
-			ManagerSettingsPropertyGrid.PropertyValueChanged += (s, e) =>
-			{
-				_changedStateManagerSettings = true;
-				DefaultManagerSettingsAppliedLabel.Visible = false;
-			};
-			_changedByUser = false;
-			if (_stateManagerSettings is ZwinderStateManagerSettings)
-				StrategyBox.SelectedIndex = 0;
-			else
-				StrategyBox.SelectedIndex = 1;
-			_changedByUser = true;
+			// The state history page is gone with the state managers it configured
+			// (docs/state-manager.md): there is one history now, it is the
+			// engine's, and what it used to ask - which strategy, how many frames
+			// between states - has no answer any more. The page goes rather than
+			// standing there configuring nothing.
+			tabControl1.TabPages.Remove(tabPage4);
 		}
 
 		private readonly List<int> _patternCounts = new List<int>();
@@ -425,28 +416,17 @@ namespace Chimera.Client.GUI
 		{
 			if (!_changedByUser) return;
 
-			if (StrategyBox.SelectedIndex == 0)
-			{
-				_stateManagerSettings = new ZwinderStateManagerSettings();
-			}
-			else
-			{
-				_stateManagerSettings = new PagedStateManager.PagedSettings();
-			}
-			ManagerSettingsPropertyGrid.SelectedObject = _stateManagerSettings;
-			_changedStateManagerSettings = true;
+			// nothing to choose between any more
 		}
 
 		private void DefaultStateSettingsButton_Click(object sender, EventArgs e)
 		{
-			_stateManagerSettings = _settings.DefaultStateManagerSettings.Clone();
-			ManagerSettingsPropertyGrid.SelectedObject = _stateManagerSettings;
-			_changedStateManagerSettings = true;
+			// the page this belonged to is gone; the handler stays because the
+			// designer still wires it
 		}
 
 		private void SetDefaultStateSettingsButton_Click(object sender, EventArgs e)
 		{
-			_settings.DefaultStateManagerSettings = _stateManagerSettings.Clone();
 			DefaultManagerSettingsAppliedLabel.Visible = true;
 		}
 
@@ -472,8 +452,6 @@ namespace Chimera.Client.GUI
 			_settings.GeneralClientSettings.TasViewFont = _font;
 			_settings.MovieSettings.BoolPatterns = _boolPatterns;
 			_settings.MovieSettings.AxisPatterns = _axisPatterns;
-			if (_changedStateManagerSettings)
-				_settings.CurrentStateManagerSettings = _stateManagerSettings;
 
 			// all the controls
 			_settings.GeneralClientSettings.DenoteMarkersWithBGColor = MarkerColorCheckbox.Checked;

@@ -443,19 +443,25 @@ Each phase is separately gated and separately landable.
      needs.
    The frontend's greenzone moved to the per-user cache (`c595db6`), so a
    project's folder holds the project and nothing else. Phase 2 is closed.
-3. **The frontend: one history.** TAStudio onto the session's history, with the
-   rewind gesture rebound to a reverse delta rather than a backwards seek;
-   `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer` and the settings
-   chooser deleted.
+3. **The frontend: one history. DONE.** `PagedStateManager`,
+   `ZwinderStateManager`, `ZwinderBuffer`, `IStateManager`, the settings chooser
+   and the settings page are deleted, and TasMovie drives the engine's history
+   through `IStateHistory`: 867 lines added against 4773 removed.
 
-   Note what this phase, and only this phase, unlocks. The frontend binds 135
-   `ce_session_*` entry points and not one of the greenzone ones: it saves and
-   loads whole states through the ABI and does every piece of history
-   bookkeeping itself, in C#. So none of what phase 2 built - the bands, the
-   composition, the spilling - is reaching a user yet, and
-   `ce_session_greenzone_spill` has nothing to be pointed at until TAStudio is
-   the thing asking. Wiring a spill directory before then would be a call
-   nothing makes.
+   What was load-bearing C# is now a remote control. The history holds no copy
+   of itself up here - not which frames exist, not the lag flags, which ride
+   along as the note - because a second copy is a second thing to keep true, and
+   it would go wrong quietly on the long runs where nobody could reproduce it.
+
+   Two things this settled. A branch does not go through the history at all: it
+   keeps a whole state of its own (decision 5), so reaching one never depends on
+   a history that coarsens and evicts around it. And a marker that wants instant
+   navigation pins its frame instead, which is cheap to name, impossible for the
+   engine to guess, and far cheaper than a whole state each.
+
+   STILL TO COME: the rewind gesture as a reverse delta rather than a backwards
+   seek - it works today, it is simply paying for a restore where it could pay
+   for one link.
 
 ## Sharp edges to expect
 

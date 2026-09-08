@@ -87,6 +87,10 @@ namespace Chimera.Client.Common
 
 		public void HandleFrameBefore()
 		{
+			// the epoch has to be marked before the machine moves, or the frame
+			// about to be captured costs a whole state instead of a delta
+			if (Movie is ITasMovie beforeFrame && !SuppressStateCapture) beforeFrame.GreenzoneBeforeFrame();
+
 			if (Movie.NotActive())
 			{
 				LatchInputToUser();

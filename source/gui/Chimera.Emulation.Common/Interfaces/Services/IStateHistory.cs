@@ -15,7 +15,7 @@ namespace Chimera.Emulation.Common
 	/// The frame numbers are the CALLER'S. The engine counts frames only for a
 	/// movie it owns itself, and the frontend owns its own.
 	/// </summary>
-	public interface IStateHistory
+	public interface IStateHistory : IEmulatorService
 	{
 		/// <summary>Bytes to keep in memory; 0 turns it off and drops everything.</summary>
 		void Enable(long budgetBytes);

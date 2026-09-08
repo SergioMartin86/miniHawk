@@ -52,10 +52,7 @@ namespace Chimera.Tests.Client.Common.Movie
 
 		public FakeMovieSession(IEmulator emulator)
 		{
-			Settings = new MovieConfig()
-			{
-				DefaultTasStateManagerSettings = new FakeStateManagerSettings(),
-			};
+			Settings = new MovieConfig();
 			StickySource = new MovieController(emulator.ControllerDefinition);
 			MovieController = new MovieController(emulator.ControllerDefinition);
 		}

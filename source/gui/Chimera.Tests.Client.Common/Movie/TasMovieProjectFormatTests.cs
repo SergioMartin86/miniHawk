@@ -14,6 +14,8 @@ namespace Chimera.Tests.Client.Common.Movie
 	[TestClass]
 	public class TasMovieProjectFormatTests
 	{
+		private const string PalSettings = "{\"region\":\"pal\"}";
+
 		private static string _dir = "";
 		private static string _dataHomeWas = "";
 
@@ -253,7 +255,9 @@ namespace Chimera.Tests.Client.Common.Movie
 			Assert.AreEqual(1, loaded.Branches.Count);
 			Assert.AreEqual("risky route", loaded.Branches[0].UserText, "and so is what a branch IS");
 			Assert.IsNull(loaded.Branches[0].CoreData, "the branch keeps its input and loses its state");
-			Assert.IsNotNull(loaded.TasStateManager, "there is an empty greenzone to start filling");
+			// a cold greenzone is not an empty one: the machine as it stands is
+			// always the anchor, or no frame could be reached at all
+			Assert.AreEqual(1, loaded.States?.Count ?? 0, "nothing came back but the anchor");
 			Assert.IsNotNull(loaded.DroppedCacheNote, "and the person is told why it is empty");
 			StringAssert.Contains(loaded.DroppedCacheNote, "GPU");
 
@@ -317,7 +321,6 @@ namespace Chimera.Tests.Client.Common.Movie
 			Assert.AreEqual(6, other.InputLogLength, "the work is untouched");
 			Assert.AreEqual(1, other.Branches.Count);
 			Assert.IsNull(other.Branches[0].CoreData, "the branch keeps its input and loses its state");
-			Assert.IsNotNull(other.TasStateManager, "and there is a greenzone to start filling");
 
 			// saving from the new machine writes a cache that is its own
 			other.InsertEmptyFrame(0, 1);
@@ -387,6 +390,43 @@ namespace Chimera.Tests.Client.Common.Movie
 			Assert.IsTrue(File.Exists(loaded.GreenZoneFilename), "and is in the cache instead");
 			Assert.IsNull(loaded.DroppedCacheNote, "it was used, not discarded");
 			CollectionAssert.AreEqual(new[] { "legacy.chimeraProject" }, SiblingsOf(path));
+		}
+
+		/// <summary>
+		/// The states survive closing and reopening, which is the entire point of
+		/// keeping them. The engine owns the history and proves its own file
+		/// round trips; what is checked here is the wiring above it - that the
+		/// movie writes one where it says it does, and reads it back when the
+		/// emulator arrives rather than when the project is parsed, since until
+		/// then there is nowhere to put it.
+		/// </summary>
+		[TestMethod]
+		public void TheStatesComeBackWhenTheProjectIsReopened()
+		{
+			var path = Path.Combine(_dir, "states.chimeraProject");
+			var movie = MakeWorkedMovie(path);
+			foreach (var f in new[] { 1, 2, 3, 4 }) movie.States.Capture(f);
+			Assert.IsFalse(movie.Save().IsError);
+			Assert.IsTrue(File.Exists(movie.StateHistoryFilename), "the history is a file of its own");
+			CollectionAssert.AreEqual(new[] { "states.chimeraProject" }, SiblingsOf(path),
+				"and it is not beside the project either");
+
+			var loaded = LoadFresh(path);
+			foreach (var f in new[] { 1, 2, 3, 4 })
+			{
+				Assert.IsTrue(loaded.States.Has(f), $"frame {f} came back");
+			}
+
+			// and the states go when the machine under them changes - the project's
+			// settings edited on disk, so the history file is left as it was
+			using (var p = Chimera.Emulation.Common.Engine.EngineProject.Open(path))
+			{
+				p.SetSettingsJson(PalSettings);
+				p.Save(path);
+			}
+			var other = LoadFresh(path);
+			Assert.IsFalse(other.States.Has(3), "another machine's states are not loaded");
+			Assert.AreEqual(1, other.States.Count, "and it starts from the anchor alone");
 		}
 
 		[TestMethod]

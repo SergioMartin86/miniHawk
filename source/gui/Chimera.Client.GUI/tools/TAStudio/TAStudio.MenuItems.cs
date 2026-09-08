@@ -177,7 +177,7 @@ namespace Chimera.Client.GUI
 					&& Clipboard.ContainsText();
 
 			ClearGreenzoneMenuItem.Enabled =
-				CurrentTasMovie != null && CurrentTasMovie.TasStateManager.Count > 1;
+				CurrentTasMovie?.States is { Count: > 1 };
 
 			GreenzoneICheckSeparator.Visible =
 				StateHistoryIntegrityCheckMenuItem.Visible =
@@ -514,7 +514,7 @@ namespace Chimera.Client.GUI
 		/// </summary>
 		private void ClearGreenzoneMenuItem_Click(object sender, EventArgs e)
 		{
-			CurrentTasMovie.TasStateManager.Clear();
+			CurrentTasMovie.States.InvalidateAfter(0);   // everything but the anchor
 			GoToFrame(0);
 			RefreshDialog();
 		}
@@ -531,17 +531,21 @@ namespace Chimera.Client.GUI
 
 			GoToFrame(0);
 			int lastState = 0;
-			int goToFrame = CurrentTasMovie.TasStateManager.Last;
+			int goToFrame = CurrentTasMovie.States.Nearest(int.MaxValue);
 			do
 			{
 				MainForm.FrameAdvance();
 
-				if (CurrentTasMovie.TasStateManager.HasState(Emulator.Frame))
+				if (CurrentTasMovie.States.Has(Emulator.Frame))
 				{
-					Stream greenStream = CurrentTasMovie.TasStateManager.GetStateClosestToFrame(Emulator.Frame).Value;
-					byte[] greenZone = new byte[greenStream.Length];
-					greenStream.Read(greenZone);
+					// The history no longer holds a frame as bytes - most frames
+					// are reached by walking deltas from an anchor - so the check
+					// is "does it put me back where I am": save the machine, ask
+					// the history for this frame, save again, compare. It lands on
+					// the frame it started on either way, so the walk goes on.
 					byte[] state = StatableEmulator.CloneSavestate();
+					CurrentTasMovie.States.RestoreTo(Emulator.Frame);
+					byte[] greenZone = StatableEmulator.CloneSavestate();
 
 					if (!state.SequenceEqual(greenZone))
 					{
@@ -958,8 +962,6 @@ namespace Chimera.Client.GUI
 				{
 					GeneralClientSettings = Settings,
 					MovieSettings = _movieSettings,
-					CurrentStateManagerSettings = CurrentTasMovie.TasStateManager.Settings,
-					DefaultStateManagerSettings = Config.Movies.DefaultTasStateManagerSettings,
 				},
 				MovieSession.MovieController.Definition,
 				(s) =>
@@ -981,13 +983,6 @@ namespace Chimera.Client.GUI
 					foreach (InputRoll roll in _inputRolls) roll.ResumeDrawing();
 
 					UpdateAutoFire();
-
-					if (CurrentTasMovie.TasStateManager.Settings != s.CurrentStateManagerSettings)
-					{
-						bool keep = DialogController.ShowMessageBox2("Attempt to keep old states?", "Keep old states?");
-						CurrentTasMovie.TasStateManager = CurrentTasMovie.TasStateManager.UpdateSettings(s.CurrentStateManagerSettings, keep);
-					}
-					Config.Movies.DefaultTasStateManagerSettings = s.DefaultStateManagerSettings;
 
 					UpdateChangeLogMaxSteps(Settings.MaxUndoSteps);
 					CurrentTasMovie.BindMarkersToInput = Settings.BindMarkersToInput;

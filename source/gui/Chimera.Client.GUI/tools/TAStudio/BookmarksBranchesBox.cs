@@ -173,7 +173,11 @@ namespace Chimera.Client.GUI
 			BranchView.RowCount = Branches.Count;
 			Branches.Current = Branches.Count - 1;
 			Movie.TasSession.UpdateValues(Tastudio.Emulator.Frame, Branches.Current);
-			Movie.TasStateManager.Capture(Tastudio.Emulator.Frame, new BufferedStatable(branch.CoreData));
+			// the branch was made from the machine as it stands, so this frame is
+			// worth having in the history too - and pinning it, which RefreshPins
+			// does, keeps it there
+			Movie.States.Capture(Tastudio.Emulator.Frame);
+			Movie.RefreshPins();
 			BranchView.ScrollToIndex(Branches.Current);
 			BranchView.DeselectAll();
 			Select(Branches.Current, true);
@@ -281,7 +285,8 @@ namespace Chimera.Client.GUI
 			BranchView.ScrollToIndex(Branches.Current);
 			var branch = CreateBranch();
 			Branches.Replace(SelectedBranch, branch);
-			Movie.TasStateManager.Capture(Tastudio.Emulator.Frame, new BufferedStatable(branch.CoreData));
+			Movie.States.Capture(Tastudio.Emulator.Frame);
+			Movie.RefreshPins();
 			Tastudio.BranchSavedCallback?.Invoke(Branches.Current);
 		}
 

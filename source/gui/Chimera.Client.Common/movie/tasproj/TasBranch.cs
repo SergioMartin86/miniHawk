@@ -88,7 +88,7 @@ namespace Chimera.Client.Common
 			if (newBranch.UserText.Length is 0) newBranch.UserText = old.UserText;
 			this[index] = newBranch;
 			if (!_movie.IsReserved(old.Frame))
-				_movie.TasStateManager.Unreserve(old.Frame);
+				_movie.States?.Pin(old.Frame, false);
 
 			_movie.FlagChanges();
 		}
@@ -122,7 +122,7 @@ namespace Chimera.Client.Common
 			if (result)
 			{
 				if (!_movie.IsReserved(item!.Frame))
-					_movie.TasStateManager.Unreserve(item.Frame);
+					_movie.States?.Pin(item.Frame, false);
 
 				_movie.FlagChanges();
 			}
