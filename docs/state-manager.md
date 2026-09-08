@@ -220,10 +220,18 @@ Each phase is separately gated and separately landable.
 1. **miniBox: epochs and deltas. DONE** (miniBox `0c972de`.) Epoch marking, forward and reverse deltas,
    and the page introspection they need. Gated in miniBox's own suite, plus a
    differential check that a delta chain equals the full state.
-2. **The engine: store and history.** The chunk store, anchors, deltas, pins,
-   budgets and the measured time-budget policy; the greenzone entry points
-   reimplemented over it. Gated by the existing witness staying byte-identical,
-   plus the new legs on a big-RAM synth.
+2. **The engine: store and history. IN MEMORY, DONE** (`7252029`.) Segments -
+   an anchor and the contiguous deltas that walk forward from it - with a byte
+   budget and eviction, and the `ce_session_greenzone_*` entry points
+   reimplemented over them, so chimera-run and every gate drive it without
+   knowing it changed. A host without epochs falls back to anchors, since an
+   older libminiboxhost beside a newer libchimera is ordinary. Proven on xemu
+   with 200 MB states: a 200-frame run seeking back to 100 through the chain
+   dumps System RAM byte-identical to a run that never stopped; the witness is
+   40/40 and CHIMERA_HISTORY_TRACE shows its seek legs really do walk deltas.
+   STILL TO COME in this phase: persistence to the per-user cache, and the
+   measured policy that sets anchor spacing and epoch cadence from what the
+   engine observes rather than from the provisional constant in the code.
 3. **The frontend: one history.** TAStudio onto the session's history, with the
    rewind gesture rebound to a reverse delta rather than a backwards seek;
    `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer`, the
