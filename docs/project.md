@@ -267,22 +267,34 @@ SHA1 is checked and divergence is warned about immediately, in the dialog.
 A differing file NAME on disk is fine - the project's recorded name is the
 canonical label and mount name, the hash is the identity.
 
-### The local sidecar: `<project>.chimeraLocal`
+### Where this machine last found the files
 
 The project carries names and hashes and never a path, because it is meant
 to be handed to someone else and a path is true of one machine only. But
 the machine that made it knows where those files are, and asking it again
 every time you open your own work is friction for nothing.
 
-So the paths live in a sibling with the same name and a different
-extension, written whenever the project is saved and whenever one is
-opened: `{"files": {"<name>": "<path>"}, "firmware": {"<id>": "<path>"}}`.
-It is never distributed, and never authority - a HINT. Every path it
-offers is checked: the file must still be there and still hash to what the
-project records, and a path that now holds something else is put back to
-unresolved so the dialog asks rather than mounting the wrong bytes
-quietly. Deleting it costs nothing but the asking. A machine that has no
-sidecar behaves exactly as before.
+So the paths are remembered: `{"files": {"<name>": "<path>"}, "firmware":
+{"<id>": "<path>"}}`, written whenever the project is saved and whenever
+one is opened. They are never distributed, and never authority - HINTS.
+Every path is checked: the file must still be there and still hash to what
+the project records, and a path that now holds something else is put back
+to unresolved so the dialog asks rather than mounting the wrong bytes
+quietly. Losing them costs nothing but the asking, and a machine that has
+never seen the project behaves exactly as before.
+
+They live in the PER-USER CACHE, keyed by the project's id
+(docs/state-manager.md), not in a file beside the project. A
+`.chimeraProject` is the one file that exists as far as anyone else is
+concerned: it is what gets handed over, and what a cloud folder syncs, so
+nothing that can be recomputed belongs in the folder with it. The key is
+the id rather than the path because a path stops being true the moment the
+file is renamed, moved, or opened on another machine through a synced
+folder - and because two attempts at the same game must not share a cache,
+which anything derived from the contents would have got wrong. A project
+written before ids existed is given one when it opens and keeps it from
+its next save; a `<project>.chimeraLocal` left beside an older project is
+read once, moved into the cache, and taken out of the folder.
 
 The engine keeps each file's source path in memory (`ce_project_file_source_path`)
 so a frontend can write one, and never serializes it: the distributable

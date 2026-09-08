@@ -270,7 +270,7 @@ namespace Chimera.Client.Common
 				// its own: the project itself stays distributable, carrying names and
 				// hashes and no paths at all (docs/project.md). Merged over whatever
 				// is already there, so firmware locations recorded at load survive.
-				ProjectLocalPaths.Read(fn).Save(fn, p);
+				ProjectLocalPaths.Read(p, fn).Save(p);
 				Changes = false;
 			}
 			return new FileWriteResult();

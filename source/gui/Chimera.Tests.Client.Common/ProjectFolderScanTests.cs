@@ -42,7 +42,10 @@ namespace Chimera.Tests.Client.Common
 			p.Save(path);
 			// the scan must do the finding: the originals go away
 			Directory.Delete(srcDir, recursive: true);
-			File.Delete(ProjectLocalPaths.PathFor(path));
+			// and so does the record of where they were, or the scan is answered
+			// before it starts
+			var remembered = ProjectLocalPaths.PathFor(p);
+			if (File.Exists(remembered)) File.Delete(remembered);
 			return path;
 		}
 

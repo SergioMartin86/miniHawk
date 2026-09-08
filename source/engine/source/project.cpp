@@ -20,7 +20,9 @@
 
 #include "../../extern/cjson/cJSON.h"
 
+#include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <set>
 #include <string>
 #include <vector>
@@ -106,6 +108,15 @@ std::string lowerExt(const std::string &name)
 
 struct ce_project
 {
+	/* This project, and no other. The frontend keeps everything regenerable -
+	 * the state history, and where this machine last found the project's files
+	 * - in a per-user cache keyed by it, so the .chimeraProject stays the one
+	 * file that travels (docs/state-manager.md). It has to survive the file
+	 * being renamed, moved, or synced to another machine, which rules out the
+	 * path; and two attempts at the same game must not share a cache, which
+	 * rules out anything derived from the contents. So it is minted once and
+	 * carried. */
+	std::string id;
 	std::string title;
 	std::string description;
 	std::string coreName, coreVersion, coreSha1;
@@ -141,7 +152,29 @@ struct ce_project
 
 extern "C" {
 
-ce_project *ce_project_new(void) { return new ce_project(); }
+/* An identity for one project. It need only be unique - nothing reads meaning
+ * from it - so it is taken from where this process sits in memory (which the
+ * loader decides anew every run), the clock, and a count, the same recipe the
+ * GL bridge uses for a context. It is metadata and touches no machine state,
+ * so there is nothing here for determinism to mind. */
+static std::string mintProjectId()
+{
+	static uint64_t made;
+	uint64_t bits = (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&made)) << 16)
+		^ (static_cast<uint64_t>(std::time(nullptr)) << 8)
+		^ (++made);
+	if (bits == 0) bits = 1;
+	char buf[17];
+	std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(bits));
+	return std::string(buf);
+}
+
+ce_project *ce_project_new(void)
+{
+	auto *p = new ce_project();
+	p->id = mintProjectId();
+	return p;
+}
 
 void ce_project_free(ce_project *p) { delete p; }
 
@@ -177,7 +210,7 @@ ce_project *ce_project_open(const char *path, const char **error_out)
 
 	/* the format is strict: a key this build does not know is an error, not
 	 * something to drop silently on the next save */
-	static const char *known[] = { "title", "description", "core", "rerecords",
+	static const char *known[] = { "id", "title", "description", "core", "rerecords",
 		"files", "settings", "firmware", "coreCache", "input", "markers", "branches", "subtitles",
 		"headers" };
 	for (cJSON *item = root->child; item != nullptr; item = item->next)
@@ -198,6 +231,12 @@ ce_project *ce_project_open(const char *path, const char **error_out)
 	};
 
 	cJSON *j;
+	if ((j = cJSON_GetObjectItemCaseSensitive(root, "id")) != nullptr)
+	{
+		if (!cJSON_IsString(j)) return rejectP("\"id\" must be a string");
+		p->id = j->valuestring;
+	}
+	if (p->id.empty()) p->id = mintProjectId();  /* a project written before ids had one */
 	if ((j = cJSON_GetObjectItemCaseSensitive(root, "title")) != nullptr)
 	{
 		if (!cJSON_IsString(j)) return rejectP("\"title\" is not a string");
@@ -407,6 +446,7 @@ int32_t ce_project_save(ce_project *p, const char *path, const char **error_out)
 	}
 
 	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "id", p->id.c_str());
 	cJSON_AddStringToObject(root, "title", p->title.c_str());
 	cJSON_AddStringToObject(root, "description", p->description.c_str());
 	cJSON *core = cJSON_AddObjectToObject(root, "core");
@@ -495,6 +535,7 @@ int32_t ce_project_save(ce_project *p, const char *path, const char **error_out)
 
 /* ---- identity ---- */
 
+const char *ce_project_id(const ce_project *p) { return p->id.c_str(); }
 const char *ce_project_title(const ce_project *p) { return p->title.c_str(); }
 void ce_project_set_title(ce_project *p, const char *title) { p->title = title != nullptr ? title : ""; }
 const char *ce_project_description(const ce_project *p) { return p->description.c_str(); }

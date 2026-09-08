@@ -266,7 +266,7 @@ namespace Chimera.Client.GUI
 				// resolves nothing whose bytes do not match), then the user's say per file
 				progress.Step("finding the project's files");
 				project.ResolveDir(Path.GetDirectoryName(Path.GetFullPath(path)));
-				local = ProjectLocalPaths.Read(path);
+				local = ProjectLocalPaths.Read(project, path);
 				local.ApplyTo(project);
 			}
 			if (!project.FilesOk)
@@ -294,7 +294,7 @@ namespace Chimera.Client.GUI
 				// still refuse for its own reasons). The sidecar is a hint the
 				// next load verifies by hash, so recording it early risks
 				// nothing, and losing it meant answering every row again.
-				local.Save(path, project);
+				local.Save(project);
 			}
 
 			// the firmware the project pins is looked for where this machine last
@@ -469,7 +469,7 @@ namespace Chimera.Client.GUI
 			if (saved)
 			{
 				Config.RecentProjects.Add(path);
-				local.Save(path, project);
+				local.Save(project);
 			}
 			// a project IS a TAStudio session; from the commandline the window is
 			// not up yet, so the landing waits for it. Headless runs have nobody

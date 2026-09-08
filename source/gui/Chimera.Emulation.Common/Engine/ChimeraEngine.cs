@@ -262,6 +262,9 @@ namespace Chimera.Emulation.Common.Engine
 		public abstract void ce_project_free(IntPtr project);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract IntPtr ce_project_id(IntPtr project);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract IntPtr ce_project_title(IntPtr project);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
@@ -1149,6 +1152,17 @@ namespace Chimera.Emulation.Common.Engine
 					ChimeraEngine.PtrToStringUtf8(error) ?? "the project could not be saved");
 			}
 		}
+
+		/// <summary>
+		/// This project and no other, minted when it was created and carried in the
+		/// file. Everything regenerable that belongs to a project - the state
+		/// history, and where this machine last found its files - is kept in a
+		/// per-user cache keyed by this, so the .chimeraProject stays the one file
+		/// that has to travel. Stable across the file being renamed, moved, or
+		/// synced to another machine.
+		/// </summary>
+		public string Id
+			=> ChimeraEngine.PtrToStringUtf8(ChimeraEngine.Instance.ce_project_id(_project)) ?? "";
 
 		public string Title
 		{

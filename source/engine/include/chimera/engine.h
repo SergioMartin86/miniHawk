@@ -450,6 +450,15 @@ CE_API ce_project *ce_project_open(const char *path, const char **error_out);
 CE_API int32_t ce_project_save(ce_project *p, const char *path, const char **error_out);
 CE_API void ce_project_free(ce_project *p);
 
+/* This project's identity, and no other's: minted when it is created, carried
+ * in the file, and stable across the file being renamed, moved or synced to
+ * another machine. The frontend keeps everything REGENERABLE that belongs to a
+ * project - the state history, and where this machine last found the project's
+ * files - in a per-user cache keyed by this, so the .chimeraProject stays the
+ * one file that has to travel (docs/state-manager.md). A project written
+ * before ids existed is given one when it is opened, and keeps it from its
+ * next save. Borrowed; valid until the project is freed. */
+CE_API const char *ce_project_id(const ce_project *p);
 CE_API const char *ce_project_title(const ce_project *p);
 CE_API void ce_project_set_title(ce_project *p, const char *title);
 CE_API const char *ce_project_description(const ce_project *p);
