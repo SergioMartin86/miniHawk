@@ -285,7 +285,23 @@ draws through `BPFunctions::SetScissorAndViewport` as soon as it runs, which
 dereferences it. Binding the EFB afterwards fixes that, and dolphin now survives
 a reopen and draws.
 
-The machine it comes back with is still not the one that was saved. Isolated by
+The picture it comes back with is still not the one that was saved, and it does
+not recover: 62% of it differs 40 frames after the load, 99.7% after 240.
+
+What differs is worth stating exactly, because it is less bad than "the machine
+desynced" and more bad than "a wobble". Of the three memory domains only System
+RAM ever differs - ARAM and the L1 cache stay identical throughout. Within it
+the difference sits in a few megabyte-sized regions, in tens of thousands of
+runs two to eight bytes apart with none longer than about 940: pixel scatter
+between two renderings, not a structure diverging. It shrinks rather than
+compounds, 807 KB at the first frame down to 318 KB by the 120th, and the one
+word outside those regions - a pointer at `0x800000d8` - matches again later.
+The GameCube's framebuffer lives in MEM1, which is why RAM sees a rendering
+difference at all. So the game's own simulation looks intact and the PICTURE is
+what comes back wrong: the same kind of fault ruffle had, an order of magnitude
+larger.
+
+Isolated by
 building the core without each part of the rebuild in turn: it is
 `g_texture_cache->Invalidate()`, and within it the single line
 `m_textures_by_address.clear()`. With that one clear left out and everything
@@ -295,12 +311,13 @@ way - `FlushEFBCopies`, `TMEM::InvalidateAll`, the bounding box, the perf query,
 
 The clear cannot simply go: those entries' textures name a context that is gone
 once the process is, and EFB copies read back THROUGH them into RAM, so keeping
-dead ones trades a visible desync for a quieter one. What is wanted is a texture
-cache that survives a context change with its contents - re-uploading what came
-from RAM, preserving what came from rendering - and that is real work in
-dolphin's texture cache. Until it exists dolphin declares
-`gpuStatesSurviveTheContext: false`: a discarded greenzone costs recomputation,
-and a kept one that desyncs costs the run.
+dead ones would trade a wrong picture for a quieter fault. What is wanted is a
+texture cache that survives a context change with its contents - re-uploading
+what came from RAM, preserving what came from rendering - and that is real work
+in dolphin's texture cache. Until it exists dolphin declares
+`gpuStatesSurviveTheContext: false`: a discarded greenzone costs replaying, and
+a kept one means a resumed run renders differently, which is a run that encodes
+differently.
 
 Worth keeping in mind for whoever picks this up: the GL context is made once per
 PROCESS, so an in-process reopen still has the first session's objects alive -

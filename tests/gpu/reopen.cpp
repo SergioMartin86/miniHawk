@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <set>
 #include <vector>
 
 static bool slurp(const char *p, std::vector<uint8_t> &o)
@@ -213,6 +214,7 @@ int main(int argc, char **argv)
 	const char *pkg = argv[1], *rom = argv[2];
 	std::string settings = "{}";
 	std::string shot;
+	std::string dumpRam;
 	long frames = 120, after = 60;
 	bool inSession = false, noState = false, wantGl = true, trace = false, perFrame = false;
 	std::vector<std::string> fwIds, fwPaths;
@@ -237,6 +239,8 @@ int main(int argc, char **argv)
 		else if (a == "--shot" && i + 1 < argc) shot = argv[++i];
 		/* which memory went first, and on which frame */
 		else if (a == "--where") perFrame = true;
+		/* both copies of the first domain at the first diverging frame */
+		else if (a == "--dump-ram" && i + 1 < argc) { dumpRam = argv[++i]; perFrame = true; }
 		else if (a == "--firmware" && i + 1 < argc)
 		{
 			std::string spec = argv[++i];
@@ -302,6 +306,15 @@ int main(int argc, char **argv)
 	int64_t ramBytes = 0;
 	int ramDomains = 0;
 	const uint64_t straightRam = ramHash(a, &ramBytes, &ramDomains);
+	if (!dumpRam.empty())
+	{
+		if (FILE *f = fopen((dumpRam + "-straight-final.bin").c_str(), "wb"))
+		{
+			const auto v = domainBytes(a, 0);
+			fwrite(v.data(), 1, v.size(), f);
+			fclose(f);
+		}
+	}
 	/* A comparison over nothing passes every time, so say what was compared. */
 	if (ramBytes == 0) printf("hmm   this core exposes no writable memory - RAM proves nothing here\n");
 	else printf("      comparing %d memory domain(s), %.1f MB\n", ramDomains, ramBytes / 1048576.0);
@@ -351,6 +364,7 @@ int main(int argc, char **argv)
 		printf("FAIL  the state would not load into the second session: %s\n", ce_session_last_error(b));
 		return 1;
 	}
+	std::set<size_t> reported;
 	Fold reopened;
 	for (long i = 0; i < after; i++)
 	{
@@ -363,18 +377,36 @@ int main(int argc, char **argv)
 			for (size_t d = 0; d < here.size() && d < straightPerFrame[i].size(); d++)
 			{
 				if (here[d] == straightPerFrame[i][d]) continue;
-				printf("      first divergence: frame %ld after the load, domain %d (%s)\n",
+				if (reported.count(d) != 0) break;   /* said already */
+				reported.insert(d);
+				printf("      divergence: frame %ld after the load, domain %d (%s)\n",
 					i + 1, (int)d, ce_session_domain_name(b, (int32_t)d));
 				if (i == 0 && d == 0 && !straightFirstFrame.empty())
 				{
-					reportDiff(straightFirstFrame, domainBytes(b, 0));
+					const auto mine = domainBytes(b, 0);
+					reportDiff(straightFirstFrame, mine);
+					if (!dumpRam.empty())
+					{
+						auto put = [](const std::string &path, const std::vector<uint8_t> &v) {
+							if (FILE *f = fopen(path.c_str(), "wb")) { fwrite(v.data(), 1, v.size(), f); fclose(f); }
+						};
+						put(dumpRam + "-straight.bin", straightFirstFrame);
+						put(dumpRam + "-reopened.bin", mine);
+						printf("      wrote %s-{straight,reopened}.bin\n", dumpRam.c_str());
+					}
 				}
-				perFrame = false;   /* the first one is the whole story */
-				break;
+				break;   /* one line per frame is enough */
 			}
 		}
 	}
 	const uint64_t reopenedRam = ramHash(b);
+	if (!dumpRam.empty())
+	{
+		auto put = [](const std::string &path, const std::vector<uint8_t> &v) {
+			if (FILE *f = fopen(path.c_str(), "wb")) { fwrite(v.data(), 1, v.size(), f); fclose(f); }
+		};
+		put(dumpRam + "-reopened-final.bin", domainBytes(b, 0));
+	}
 	if (!shot.empty()) { writePpm(shot + "-straight.ppm", straight); writePpm(shot + "-reopened.ppm", reopened); }
 	const long litB = lit(b);
 	const int drewB = ce_session_gpu_drew(b);
