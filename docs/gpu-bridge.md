@@ -236,6 +236,38 @@ opens. Rewind and branches within a session are untouched either
 way - the objects are still there - and a project that loses its cache replays,
 which is what an empty greenzone has always meant.
 
-RPCS3 and xemu say yes. PCSX2, Flycast, Dolphin and Ruffle do not yet: the same
-split would work for the ones that have an `on_exit`/`on_init` pair of this
-shape, and Ruffle needs it a layer lower, inside wgpu.
+Every core that draws on the host's GPU now says yes. Saying it is not the same
+as doing it, so `tests/gpu/run-reopen.sh` asks: open, play, save, close, open
+again IN THE SAME PROCESS, load the state, keep playing. A fresh process per run
+never asks the question, which is why this went unnoticed for so long.
+
+Measured 2026-09-08, llvmpipe, one game each:
+
+| core | reopens onto its own states |
+|---|---|
+| xemu | yes |
+| flycast | yes |
+| pcsx2 | yes |
+| ruffle | yes |
+| dolphin | NO - crashes on the first frame after the load |
+| rpcs3 | not known: it will not boot on this machine, failing in its own audio overlay setup |
+
+Dolphin declares that its states survive and has the patch that ought to make
+them (`0020-chimera-the-renderer-rebuilds-its-gl-objects-when-the-context-is-gone`),
+but the rebuild itself falls over. What was established:
+
+- It is the GPU bridge. With no host context the same reopen works.
+- It is not savestates. Reloading into the session that MADE the state works,
+  with the bridge live and the OGL backend running.
+- It is the rebuild path, which only runs when the context id has changed - the
+  one thing that differs between those two cases.
+- It dies on the very first frame after the load, at the first instruction of
+  `AbstractGfx::ConvertFramebufferRectangle(const Rectangle&, const AbstractFramebuffer*)`,
+  which immediately dereferences that pointer for `GetWidth()`. The fault reads
+  address 0x3c, so the framebuffer is null.
+
+`ChimeraRebuildGLObjects` ends by setting `m_current_framebuffer = nullptr`, and
+something draws before anything binds one again. That is the thing to look at
+first in `chimera-core-dolphin`; the fix belongs there and not here, since the
+engine's side of the contract - mint an id per session, answer `GL_OP_CONTEXT_ID`
+with it - is doing exactly what the other four cores rebuild on.
