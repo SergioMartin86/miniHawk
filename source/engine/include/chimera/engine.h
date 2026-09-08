@@ -1061,6 +1061,24 @@ CE_API int64_t ce_session_greenzone_count(const ce_session *s);
 CE_API void ce_session_greenzone_bands(ce_session *s, int64_t near_frames, int64_t mid_frames,
 	int64_t mid_stride, int64_t far_stride, int64_t anchor_spacing);
 
+/* Driving the history yourself, for a caller that owns its own movie and its
+ * own frame advance - which the frontend does, and which the hooks inside
+ * ce_session_movie_advance therefore never see.
+ *
+ * _before_advance marks the epoch and MUST be called before the machine moves,
+ * since a delta is what changed since a moment and the moment has to be marked
+ * first; a capture with no epoch open is simply a whole state, which is correct
+ * and merely dearer. _capture stores the frame just reached - the caller says
+ * which, because it is the caller counting. _restore puts the machine on a
+ * stored frame, one ce_session_greenzone_nearest offered, and replaying from
+ * there is then the caller's business.
+ *
+ * ce_session_movie_advance and ce_session_seek are these same three, for a
+ * caller that lets the engine hold the movie. 0 on success. */
+CE_API void ce_session_greenzone_before_advance(ce_session *s);
+CE_API int32_t ce_session_greenzone_capture(ce_session *s, int64_t frame);
+CE_API int32_t ce_session_greenzone_restore(ce_session *s, int64_t frame);
+
 /* Where the far band goes once the budget is full; NULL or "" for nowhere.
  *
  * The oldest stretches are the right thing to put on disk - large, rarely

@@ -462,6 +462,7 @@ struct ce_session
 	const uint8_t *computeEffective(uint64_t mask);
 	uint64_t sendButtons(const uint8_t *states);
 	void greenzoneCapture();
+	bool greenzoneRestore(int64_t to);
 	/* the half that must run BEFORE the advance: an epoch has to be marked
 	 * while the machine is still where the delta will be measured from */
 	void greenzoneBeforeAdvance() { history.beforeAdvance(); }
@@ -853,6 +854,25 @@ int32_t ce_session::advanceCore(const uint8_t *buttons, int32_t render)
 void ce_session::greenzoneCapture()
 {
 	history.capture(frame);
+}
+
+/* Puts the machine on a stored frame and re-establishes what a state load
+ * always breaks. Shared by ce_session_seek, which then replays the rest, and by
+ * ce_session_greenzone_restore, whose caller replays it itself. */
+bool ce_session::greenzoneRestore(int64_t to)
+{
+	if (!history.restore(to, error)) return false;
+	if (traceSetEnabled != nullptr)
+	{
+		traceSetEnabled(traceDesired ? 1 : 0);
+		if (traceClear != nullptr) traceClear();
+	}
+	/* same as ce_session_load_state: the restore rewrote the guest's wide-input
+	 * latches, so resend every button on the next advance */
+	std::fill(btnSent.begin(), btnSent.end(), uint8_t{ 0xFF });
+	renderingSent = -1; // see ce_session_load_state
+	frame = to;
+	return true;
 }
 
 extern "C" {
@@ -1948,6 +1968,25 @@ void ce_session_greenzone_bands(ce_session *s, int64_t near_frames, int64_t mid_
 	s->history.bands(near_frames, mid_frames, mid_stride, far_stride, anchor_spacing);
 }
 
+void ce_session_greenzone_before_advance(ce_session *s)
+{
+	if (s == nullptr) return;
+	s->greenzoneBeforeAdvance();
+}
+
+int32_t ce_session_greenzone_capture(ce_session *s, int64_t frame)
+{
+	if (s == nullptr) return 1;
+	s->history.capture(frame);
+	return 0;
+}
+
+int32_t ce_session_greenzone_restore(ce_session *s, int64_t frame)
+{
+	if (s == nullptr) return 1;
+	return s->greenzoneRestore(frame) ? 0 : 1;
+}
+
 void ce_session_greenzone_spill(ce_session *s, const char *dir)
 {
 	if (s == nullptr) return;
@@ -1998,17 +2037,7 @@ int32_t ce_session_seek(ce_session *s, int64_t frame)
 	int64_t base = ce_session_greenzone_nearest(s, frame);
 	if (base >= 0 && (base > s->frame || s->frame > frame))
 	{
-		if (!s->history.restore(base, s->error)) return 1;
-		if (s->traceSetEnabled != nullptr)
-		{
-			s->traceSetEnabled(s->traceDesired ? 1 : 0);
-			if (s->traceClear != nullptr) s->traceClear();
-		}
-		/* same as ce_session_load_state: the restore rewrote the guest's
-		 * wide-input latches, so resend every button on the next advance */
-		std::fill(s->btnSent.begin(), s->btnSent.end(), uint8_t{ 0xFF });
-		s->renderingSent = -1; // see ce_session_load_state
-		s->frame = base;
+		if (!s->greenzoneRestore(base)) return 1;
 	}
 	else if (s->frame > frame)
 	{

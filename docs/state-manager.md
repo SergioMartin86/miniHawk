@@ -58,7 +58,7 @@ does not work, and a state costing what the machine IS rather than what it DID.
 
 ## The decisions
 
-All five taken by the user, 2026-09-08:
+Taken by the user, 2026-09-08:
 
 1. **The cache lives in a per-user directory**, keyed by project identity, not
    beside the project. BUILT (`fbff1a4`): the project gained an id, minted at
@@ -85,7 +85,22 @@ All five taken by the user, 2026-09-08:
    follows from that shape rather than being promised in advance. See "The
    policy: dense near the work" below. Measurement does not go away; it sets the
    defaults per core instead of enforcing a guarantee.
-5. **miniBox grows delta states**, and the design goes straight for them rather
+5. **A branch keeps a whole state of its own.** Taken 2026-09-08, settling the
+   one question phase 3 could not start without. A branch is somebody's
+   alternative route, and restoring one must never walk a delta chain or depend
+   on the history it was made in: the history is a cache that coarsens and
+   evicts around it, and a branch that became unreachable because of that would
+   have lost work. So a branch stores a whole state, as it already does
+   (`TasBranch.CoreData`, a `CloneSavestate`), and phase 3 keeps it that way
+   rather than making a branch an anchor in the session's history.
+
+   Jumping to a branch may still hand its state to the history to hold as an
+   anchor, which is what happens today - but that copy is the history's, and
+   losing it changes nothing about the branch. What stays true either way is
+   the split the rest of this rests on: a branch's frame, name, input log and
+   markers are WORK and live in the project; its state is cache, and losing it
+   costs replaying to that frame.
+6. **miniBox grows delta states**, and the design goes straight for them rather
    than shipping content-addressed dedup first.
 
 ## What a state costs, and the idea that changes it
