@@ -2055,16 +2055,50 @@ void ce_session_greenzone_invalidate(ce_session *s, int64_t after_frame)
 	s->history.invalidateAfter(after_frame);
 }
 
+/* The id a persisted history is kept under.
+ *
+ * The caller's half says which core, settings and files this is - everything a
+ * person would call "the same machine". That is not enough. Two boots of one
+ * core with one configuration can still seal DIFFERENTLY, because the sealed
+ * baseline's identity is which pages the machine touched on its way there, and
+ * a state cannot be loaded into a machine with another baseline: a savestate
+ * carries only the pages dirtied since the seal and reads every clean one back
+ * from it.
+ *
+ * Reusing states across that line does not fail where the mistake is. Measured
+ * on a PS2 project whose cache outlived its session: the greenzone loaded, one
+ * seek back walked to an anchor from the other baseline, miniBox said the state
+ * was foreign and carried on, and the guest died sixty frames later inside
+ * std::_Rb_tree_rebalance_for_erase with nothing to connect the two.
+ *
+ * So the engine appends the machine's own hash rather than asking the frontend
+ * to remember to. A history whose id does not match is dropped as a cold cache,
+ * which is what it is - the states are recomputable, and that is the whole
+ * promise of the greenzone. */
+static std::string historyId(ce_session *s, const char *machine_id)
+{
+	std::string id = machine_id != nullptr ? machine_id : "";
+	if (s->host->wbx_machine_hash == nullptr) return id;   /* an older host: caller's half alone */
+	uint8_t hash[32] = { 0 };
+	chimera::WbxReturn r{};
+	s->host->wbx_machine_hash(s->obj, hash, &r);
+	if (!r.ok()) return id;
+	static const char hex[] = "0123456789abcdef";
+	id += '@';
+	for (uint8_t b : hash) { id += hex[b >> 4]; id += hex[b & 15]; }
+	return id;
+}
+
 int32_t ce_session_history_save(ce_session *s, const char *path, const char *machine_id)
 {
 	s->error.clear();
-	return s->history.saveTo(path, machine_id, s->error) ? 0 : 1;
+	return s->history.saveTo(path, historyId(s, machine_id).c_str(), s->error) ? 0 : 1;
 }
 
 int32_t ce_session_history_load(ce_session *s, const char *path, const char *machine_id)
 {
 	s->error.clear();
-	return s->history.loadFrom(path, machine_id, s->error) ? 0 : 1;
+	return s->history.loadFrom(path, historyId(s, machine_id).c_str(), s->error) ? 0 : 1;
 }
 
 int32_t ce_session_seek(ce_session *s, int64_t frame)

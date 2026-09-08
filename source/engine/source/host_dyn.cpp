@@ -93,6 +93,9 @@ void loadOnce()
 		&& bind(g_api.wbx_get_proc_addr, "wbx_get_proc_addr")
 		&& bind(g_api.wbx_get_callback_addr, "wbx_get_callback_addr")
 		&& bind(g_api.wbx_seal, "wbx_seal")
+		/* not in the && chain: a host without it still works, it just cannot
+		 * tell a cached greenzone that its machine changed underneath it */
+		&& (bind(g_api.wbx_machine_hash, "wbx_machine_hash") || true)
 		&& bind(g_api.wbx_mount_file, "wbx_mount_file")
 		&& bind(g_api.wbx_mount_file_path, "wbx_mount_file_path")
 		&& bind(g_api.wbx_save_state, "wbx_save_state")

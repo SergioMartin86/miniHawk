@@ -47,6 +47,8 @@ struct HostApi
 	 * calls that MB_GUEST_ABI); the GPU bridge is the only user. */
 	void (*wbx_get_callback_addr)(void *obj, void *callback, uintptr_t slot, WbxReturn *ret);
 	void (*wbx_seal)(void *obj, WbxReturn *ret);
+	/* the sealed machine's 32-byte identity; optional (older hosts lack it) */
+	void (*wbx_machine_hash)(void *obj, uint8_t *out, WbxReturn *ret);
 	void (*wbx_mount_file)(void *obj, const char *name, WbxReadCb cb, uintptr_t userdata, uint8_t writable, WbxReturn *ret);
 	/* read-only, read from the host's disk as the guest asks - no copy */
 	void (*wbx_mount_file_path)(void *obj, const char *name, const char *host_path, WbxReturn *ret);
