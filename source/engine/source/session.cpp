@@ -1941,6 +1941,13 @@ void ce_session_greenzone_enable(ce_session *s, uint64_t budget_bytes)
 	if (budget_bytes != 0) s->greenzoneCapture(); // the anchor: the frame we stand on now
 }
 
+void ce_session_greenzone_bands(ce_session *s, int64_t near_frames, int64_t mid_frames,
+	int64_t mid_stride, int64_t far_stride, int64_t anchor_spacing)
+{
+	if (s == nullptr) return;
+	s->history.bands(near_frames, mid_frames, mid_stride, far_stride, anchor_spacing);
+}
+
 int64_t ce_session_greenzone_count(const ce_session *s)
 {
 	return s->history.count();

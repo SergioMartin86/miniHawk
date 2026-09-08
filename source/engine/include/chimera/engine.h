@@ -1039,6 +1039,27 @@ CE_API int32_t ce_session_movie_advance(ce_session *s, uint64_t buttons, const i
  * anchor), or disables and drops everything with budget 0. */
 CE_API void ce_session_greenzone_enable(ce_session *s, uint64_t budget_bytes);
 CE_API int64_t ce_session_greenzone_count(const ce_session *s);
+
+/* How dense the history is at each distance from the newest frame it holds,
+ * all in FRAMES because the engine does not know a core's frame rate and the
+ * caller does. Any argument left at 0 keeps the current value.
+ *
+ * Editing a movie is local, so the history is dense where the work is: every
+ * frame within near_frames of the playhead, one in mid_stride across the
+ * mid_frames behind that, and one in far_stride beyond. A frame is captured
+ * into the near band and coarsened as the playhead leaves it behind - two
+ * adjacent deltas merging into one that spans both - which costs a little work
+ * every frame rather than a stall when the budget fills.
+ *
+ * anchor_spacing is the one that decides what a seek costs: a restore walks the
+ * links of one anchor's stretch and no further, so it trades memory for
+ * latency directly. A far_stride wider than it collapses old stretches to their
+ * anchors, which is usually what is wanted.
+ *
+ * The defaults suit 60 frames a second on a core nobody has measured. What they
+ * cost on a heavy one, and how to pick better, is docs/state-manager.md. */
+CE_API void ce_session_greenzone_bands(ce_session *s, int64_t near_frames, int64_t mid_frames,
+	int64_t mid_stride, int64_t far_stride, int64_t anchor_spacing);
 /* The nearest stored frame at or before frame; -1 when none is. */
 CE_API int64_t ce_session_greenzone_nearest(const ce_session *s, int64_t frame);
 /* Drops stored states AFTER frame - an input edit at frame N makes every

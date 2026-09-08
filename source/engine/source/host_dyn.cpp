@@ -113,6 +113,9 @@ void loadOnce()
 		g_api.wbx_load_delta = nullptr;
 		g_api.wbx_get_epoch_page_count = nullptr;
 	}
+	/* Composition on its own: epochs without it means a history that keeps
+	 * every link it captured, which is dense and expensive but not wrong. */
+	if (!g_ok || !bind(g_api.wbx_compose_delta, "wbx_compose_delta")) g_api.wbx_compose_delta = nullptr;
 }
 
 } // namespace

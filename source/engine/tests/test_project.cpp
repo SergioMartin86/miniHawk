@@ -12,6 +12,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -55,7 +56,13 @@ static const char *SLOTS_DECL =
 
 int main(int argc, char **argv)
 {
-	g_dir = argc > 1 ? argv[1] : ".";
+	/* A directory of its own. These tests scribble files with ordinary
+	 * names - save.hdd, disc2.iso - and two of them scribble the SAME
+	 * names, so sharing the build directory made them race: one removed
+	 * save.hdd to prove a missing file is reported missing while the
+	 * other was writing it back. */
+	g_dir = argc > 1 ? argv[1] : "work-project";
+	std::filesystem::create_directories(g_dir);
 	const char *err = nullptr;
 	const std::string path = g_dir + "/work.chimeraProject";
 

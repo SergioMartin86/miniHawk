@@ -7,7 +7,8 @@
  * the managed frontend produces.
  *
  *   chimera-run <package> <rom> <movie.txt>
- *       [--rerecord] [--seek <frame>] [--record <out.txt>] [--settings <json>]
+ *       [--rerecord] [--seek <frame>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>]
+ *       [--settings <json>]
  *       [--dump <domain>=<path>]... [--export-savedata <dir>] [--meta <path>]
  *   chimera-run --project <p.chimeraProject> <package>
  *       [--files <dir>]... [--allow-core-mismatch] [the same run flags]
@@ -24,6 +25,15 @@
  *
  * --rerecord round-trips the whole machine through save/load state around
  * every frame, which must not change anything - that is the point.
+ * --bands sets the history's density at each distance from the playhead
+ * (near frames, mid frames, mid stride, far stride, anchor spacing; 0 keeps a
+ * default). Its use in a test is to make the bands narrow enough that the
+ * history is constantly coarsening, which is what the defaults spend minutes
+ * of real play reaching.
+ *
+ * --stop-at-seek ends the run where the seek landed, so the dumps describe
+ * frame N itself rather than the end of a replay from it.
+ *
  * --seek plays the movie to its end, seeks BACK to the given frame through
  * the greenzone, and plays to the end again - and that must not change
  * anything either.
@@ -156,6 +166,8 @@ int main(int argc, char **argv)
 	int64_t frameLimit = -1;
 	bool rerecord = false;
 	int64_t seekFrame = -1;
+	bool stopAtSeek = false;
+	std::string bands;
 	std::string recordPath;
 	std::string savedataDir;
 	std::string projectPath;
@@ -169,6 +181,8 @@ int main(int argc, char **argv)
 		std::string arg = argv[i];
 		if (arg == "--rerecord") rerecord = true;
 		else if (arg == "--seek" && i + 1 < argc) seekFrame = std::atoll(argv[++i]);
+		else if (arg == "--bands" && i + 1 < argc) bands = argv[++i];
+		else if (arg == "--stop-at-seek") stopAtSeek = true;
 		else if (arg == "--record" && i + 1 < argc) recordPath = argv[++i];
 		else if (arg == "--settings" && i + 1 < argc) settings = argv[++i];
 		else if (arg == "--export-savedata" && i + 1 < argc) savedataDir = argv[++i];
@@ -217,7 +231,7 @@ int main(int argc, char **argv)
 	bool projectMode = !projectPath.empty();
 	if (projectMode ? packagePath == nullptr : moviePath == nullptr)
 	{
-		std::fprintf(stderr, "usage: chimera-run <package> <rom> <movie.txt> [--rerecord] [--seek <frame>] [--record <out.txt>] [--settings <json>] [--dump <domain>=<path>]... [--firmware <id>=<path>]... [--state <path>] [--frames <n>] [--save-state <frame>=<path>]... [--screenshot <frame>=<path>]... [--export-savedata <dir>] [--meta <path>] [--gpu]\n"
+		std::fprintf(stderr, "usage: chimera-run <package> <rom> <movie.txt> [--rerecord] [--seek <frame>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>] [--settings <json>] [--dump <domain>=<path>]... [--firmware <id>=<path>]... [--state <path>] [--frames <n>] [--save-state <frame>=<path>]... [--screenshot <frame>=<path>]... [--export-savedata <dir>] [--meta <path>] [--gpu]\n"
 			"       chimera-run --project <p.chimeraProject> <package> [--files <dir>]... [--allow-core-mismatch] [the same run flags]\n");
 		return 1;
 	}
@@ -469,6 +483,22 @@ int main(int argc, char **argv)
 	if (frameLimit >= 0 && (frameLimit < frames || !recordPath.empty())) frames = frameLimit;
 	if (seekFrame >= 0 || !historyIn.empty() || !historyOut.empty())
 	{
+		/* Bands before enabling: enabling captures the anchor, and the anchor
+		 * spacing decides whether it is the only one. */
+		if (!bands.empty())
+		{
+			int64_t v[5] = { 0, 0, 0, 0, 0 };
+			size_t at = 0;
+			for (int64_t &slot : v)
+			{
+				if (at > bands.size()) break;
+				const size_t comma = bands.find(',', at);
+				slot = std::atoll(bands.substr(at, comma == std::string::npos ? comma : comma - at).c_str());
+				if (comma == std::string::npos) break;
+				at = comma + 1;
+			}
+			ce_session_greenzone_bands(session, v[0], v[1], v[2], v[3], v[4]);
+		}
 		ce_session_greenzone_enable(session, 256ull << 20);
 	}
 	/* A history kept from a previous run, which is the thing a reopened project
@@ -592,9 +622,18 @@ int main(int argc, char **argv)
 		 * it would just restore the cached end state and prove nothing. */
 		if (ce_session_seek(session, seekFrame) != 0) return fail(metaPath, ce_session_last_error(session));
 		if (ce_session_frame(session) != seekFrame) return fail(metaPath, "seek landed on the wrong frame");
+		/* --stop-at-seek dumps the machine the seek ARRIVED AT, rather than the
+		 * machine at the end of a replay from it. It is the difference between
+		 * asking whether the run still finishes correctly and asking whether
+		 * the history actually holds frame N - and a core whose ending is
+		 * decided by its inputs answers the first question yes either way. */
+		if (stopAtSeek) frames = seekFrame;
 		ce_session_greenzone_invalidate(session, seekFrame);
-		if (ce_session_seek(session, frames) != 0) return fail(metaPath, ce_session_last_error(session));
-		if (ce_session_frame(session) != frames) return fail(metaPath, "replay landed on the wrong frame");
+		if (!stopAtSeek)
+		{
+			if (ce_session_seek(session, frames) != 0) return fail(metaPath, ce_session_last_error(session));
+			if (ce_session_frame(session) != frames) return fail(metaPath, "replay landed on the wrong frame");
+		}
 	}
 
 	if (!recordPath.empty())

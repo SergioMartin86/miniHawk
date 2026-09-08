@@ -9,6 +9,8 @@
 
 #include "../source/state_history.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -60,6 +62,132 @@ std::vector<uint8_t> historyFile(const char *magic, const char *machineId,
 		out.insert(out.end(), { 9, 9 });
 	}
 	return out;
+}
+
+} // namespace
+
+/* ---- a machine small enough to check by hand ----
+ *
+ * The history's own logic - which landings a band keeps, what a merge does to
+ * the tiling, which links a restore walks - can be wrong in ways no core will
+ * show you. The synthetic witness cannot: its core rewrites its whole writable
+ * set every frame, so every delta fully determines the machine and any
+ * subsequence of them lands in the right place. That makes it blind to exactly
+ * the mistakes this file is for.
+ *
+ * So: a machine of numbered cells, where a frame writes only SOME of them. Now
+ * a chain that skips a link, or merges the wrong pair, or mislabels where a
+ * link lands, produces a machine that differs - and says so.
+ *
+ * The merge here is the obvious one (union, later value wins) rather than
+ * miniBox's. What miniBox's does is its own to prove, and its unit tests do;
+ * what is under test here is everything the engine decides around it.
+ */
+namespace
+{
+
+struct Machine
+{
+	static constexpr size_t kCells = 64;
+	uint8_t cell[kCells] = { 0 };
+	std::vector<uint8_t> epochBase;      /* the machine as the open epoch found it */
+};
+
+Machine g_machine;
+
+using Cells = std::vector<std::pair<uint8_t, uint8_t>>;   /* index -> value, ascending */
+
+Cells readCells(chimera::WbxReadCb cb, uintptr_t ud)
+{
+	uint32_t n = 0;
+	cb(ud, &n, sizeof n);
+	Cells out(n);
+	for (auto &c : out) { cb(ud, &c.first, 1); cb(ud, &c.second, 1); }
+	return out;
+}
+
+void writeCells(chimera::WbxWriteCb cb, uintptr_t ud, const Cells &c)
+{
+	const uint32_t n = static_cast<uint32_t>(c.size());
+	cb(ud, &n, sizeof n);
+	for (const auto &e : c) { cb(ud, &e.first, 1); cb(ud, &e.second, 1); }
+}
+
+void fakeSaveState(void *, chimera::WbxWriteCb cb, uintptr_t ud, chimera::WbxReturn *r)
+{
+	*r = {};
+	cb(ud, g_machine.cell, Machine::kCells);
+}
+
+void fakeLoadState(void *, chimera::WbxReadCb cb, uintptr_t ud, chimera::WbxReturn *r)
+{
+	*r = {};
+	cb(ud, g_machine.cell, Machine::kCells);
+}
+
+void fakeEpochBegin(void *, chimera::WbxReturn *r)
+{
+	*r = {};
+	g_machine.epochBase.assign(g_machine.cell, g_machine.cell + Machine::kCells);
+}
+
+void fakeSaveDelta(void *, bool, chimera::WbxWriteCb cb, uintptr_t ud, chimera::WbxReturn *r)
+{
+	*r = {};
+	if (g_machine.epochBase.empty()) { std::snprintf(r->errorMessage, sizeof r->errorMessage, "no epoch"); return; }
+	Cells changed;
+	for (size_t i = 0; i < Machine::kCells; i++)
+	{
+		if (g_machine.cell[i] != g_machine.epochBase[i])
+		{
+			changed.emplace_back(static_cast<uint8_t>(i), g_machine.cell[i]);
+		}
+	}
+	writeCells(cb, ud, changed);
+}
+
+void fakeLoadDelta(void *, chimera::WbxReadCb cb, uintptr_t ud, chimera::WbxReturn *r)
+{
+	*r = {};
+	for (const auto &c : readCells(cb, ud)) g_machine.cell[c.first] = c.second;
+	g_machine.epochBase.clear();
+}
+
+void fakeComposeDelta(chimera::WbxReadCb a, uintptr_t aud, chimera::WbxReadCb b, uintptr_t bud,
+	chimera::WbxWriteCb out, uintptr_t oud, chimera::WbxReturn *r)
+{
+	*r = {};
+	Cells merged = readCells(a, aud);
+	for (const auto &c : readCells(b, bud))
+	{
+		auto it = std::lower_bound(merged.begin(), merged.end(), c.first,
+			[](const std::pair<uint8_t, uint8_t> &e, uint8_t v) { return e.first < v; });
+		if (it != merged.end() && it->first == c.first) it->second = c.second;   /* the later wins */
+		else merged.insert(it, c);
+	}
+	writeCells(out, oud, merged);
+}
+
+chimera::HostApi fakeHost()
+{
+	chimera::HostApi api{};
+	api.wbx_save_state = fakeSaveState;
+	api.wbx_load_state = fakeLoadState;
+	api.wbx_epoch_begin = fakeEpochBegin;
+	api.wbx_save_delta = fakeSaveDelta;
+	api.wbx_load_delta = fakeLoadDelta;
+	api.wbx_compose_delta = fakeComposeDelta;
+	return api;
+}
+
+/* Frame n writes three cells, which cells depending on n - so a delta is a
+ * PART of the machine and the order they are applied in matters. */
+void advance(int64_t frame)
+{
+	for (int k = 0; k < 3; k++)
+	{
+		g_machine.cell[(frame * 7 + k * 11) % Machine::kCells] = static_cast<uint8_t>(frame);
+	}
 }
 
 } // namespace
@@ -142,6 +270,83 @@ int main(void)
 		chimera::StateHistory h;
 		assert(!h.loadFrom(kPath, "machine", error));
 		assert(h.count() == 0);
+	}
+
+	{ // Every frame the history offers must be a frame it can actually produce,
+	  // after the bands have merged most of them away.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 64ull << 20);
+		/* narrow enough that coarsening runs almost every frame */
+		h.bands(2, 6, 3, 12, 1000);
+
+		std::vector<std::array<uint8_t, Machine::kCells>> truth;
+		truth.resize(1);
+		std::memcpy(truth[0].data(), g_machine.cell, Machine::kCells);
+		h.capture(0);
+
+		const int64_t kFrames = 120;
+		for (int64_t f = 1; f <= kFrames; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+
+		/* the bands really did thin it, or the rest of this proves nothing */
+		assert(h.count() < kFrames / 2);
+
+		/* but not where the work is: the near band's promise is every frame,
+		 * and it is the one somebody actually feels */
+		for (int64_t f = kFrames - 1; f <= kFrames; f++) assert(h.nearest(f) == f);
+
+		int64_t checked = 0;
+		for (int64_t f = 0; f <= kFrames; f++)
+		{
+			if (h.nearest(f) != f) continue;   /* not a frame it claims to hold */
+			assert(h.restore(f, error));
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+			checked++;
+		}
+		assert(checked > 4);   /* including some the bands merged their way to */
+	}
+
+	{ // A history whose links have been merged still survives a round trip to
+	  // disk, landings and all.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 64ull << 20);
+		h.bands(2, 6, 3, 12, 1000);
+		h.capture(0);
+		std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+		for (int64_t f = 1; f <= 60; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+		assert(h.saveTo(kPath, "fake", error));
+
+		chimera::StateHistory back;
+		back.configure(&api, nullptr, 64ull << 20);
+		assert(back.loadFrom(kPath, "fake", error));
+		assert(back.count() == h.count());
+		for (int64_t f = 0; f <= 60; f++)
+		{
+			if (back.nearest(f) != f) continue;
+			assert(back.restore(f, error));
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+		}
 	}
 
 	std::remove(kPath);

@@ -189,6 +189,42 @@ if [ "$level" = "both" ] || [ "$level" = "e" ]; then
 			fi
 		done
 
+		# THINNED: bands narrow enough that the history is composing links away
+		# almost every frame - what minutes of real play reach with the defaults.
+		# Seeking then lands on a MERGED link, and the machine it lands on has to
+		# be the machine a straight run reaches at that frame.
+		#
+		# The comparison is against a run stopped at frame 10, not against the
+		# goldens at the end of the movie, and that distinction is the whole leg:
+		# this core's ending is decided by its inputs, so a replay from a WRONG
+		# frame 8 still finishes on the goldens and proves nothing.
+		#
+		# The target is on the coarsest band's grid on purpose. A frame the bands
+		# have merged away is reached by restoring the anchor and replaying, which
+		# is correct however broken the merging is - so seeking to one would prove
+		# nothing either. The trace is checked as well, since without it the leg
+		# would pass on a build that never merged anything at all.
+		for movie in "$here"/movies/*.txt; do
+			tname="$(basename "$movie" .txt)"
+			trom="$here/roms/${tname%%.*}.testrom"
+			ttag="$tname.engine.thinned"
+			rm -f "$work/$ttag.ram.bin" "$work/$ttag.at8.ram.bin"
+			"$chimera_run" "$epkg" "$trom" "$movie" --frames 8 \
+				--dump "RAM=$work/$ttag.at8.ram.bin" > "$work/$ttag.ref.log" 2>&1
+			CHIMERA_HISTORY_TRACE=1 "$chimera_run" "$epkg" "$trom" "$movie" --seek 8 --stop-at-seek \
+				--bands 2,4,2,4,1000 --dump "RAM=$work/$ttag.ram.bin" \
+				> "$work/$ttag.log" 2>&1
+			if [ ! -s "$work/$ttag.at8.ram.bin" ]; then
+				report "E:$tname:thinned" FAIL "the reference run wrote nothing (see work/$ttag.ref.log)"
+			elif ! grep -q "merged the landing" "$work/$ttag.log"; then
+				report "E:$tname:thinned" FAIL "nothing was ever merged (see work/$ttag.log)"
+			elif cmp -s "$work/$ttag.ram.bin" "$work/$ttag.at8.ram.bin"; then
+				report "E:$tname:thinned" PASS "seeking a thinned history lands on the real frame 8"
+			else
+				report "E:$tname:thinned" FAIL "RAM at the seek differs from a straight run (see work/$ttag.log)"
+			fi
+		done
+
 		# RECORD mode: playback never generates an entry, so the paths that turn
 		# machine input back into movie text have no other witness. Each movie is
 		# replayed as an INPUT SOURCE into a recording session, which writes its

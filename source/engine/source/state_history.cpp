@@ -88,6 +88,25 @@ static bool deltasRefused()
 	return off != 0;
 }
 
+void StateHistory::bands(int64_t nearFrames, int64_t midFrames, int64_t midStride,
+	int64_t farStride, int64_t anchorSpacing)
+{
+	if (nearFrames > 0) m_nearFrames = nearFrames;
+	if (midFrames > 0) m_midFrames = midFrames;
+	if (midStride > 0) m_midStride = midStride;
+	if (farStride > 0) m_farStride = farStride;
+	if (anchorSpacing > 0) m_anchorSpacing = anchorSpacing;
+	/* A band cannot be denser than the one nearer the playhead: the landings
+	 * are a grid per band, and a coarser grid inside a finer one would keep
+	 * asking for landings the band before it has already merged away. */
+	if (m_farStride < m_midStride) m_farStride = m_midStride;
+}
+
+bool StateHistory::composeAvailable() const
+{
+	return m_host != nullptr && m_host->wbx_compose_delta != nullptr;
+}
+
 bool StateHistory::deltasAvailable() const
 {
 	return !deltasRefused() && m_host != nullptr && m_host->wbx_epoch_begin != nullptr
@@ -140,7 +159,9 @@ void StateHistory::beforeAdvance()
 	if (!enabled() || !deltasAvailable()) return;
 	/* A delta continues the newest segment, and only while there is one with
 	 * room. Otherwise the coming capture is an anchor and needs no epoch. */
-	if (m_segments.empty() || m_segments.back().links.size() >= kMaxChain) return;
+	if (m_segments.empty()) return;
+	const Segment &seg = m_segments.back();
+	if (seg.lastFrame() - seg.anchorFrame >= m_anchorSpacing) return;
 	WbxReturn r{};
 	m_host->wbx_epoch_begin(m_obj, &r);
 	m_epochOpen = r.ok();
@@ -162,7 +183,7 @@ void StateHistory::capture(int64_t frame)
 	const bool wantDelta = m_epochOpen
 		&& !m_segments.empty()
 		&& m_segments.back().lastFrame() == frame - 1
-		&& m_segments.back().links.size() < kMaxChain;
+		&& m_segments.back().lastFrame() - m_segments.back().anchorFrame < m_anchorSpacing;
 	m_epochOpen = false;
 
 	if (wantDelta)
@@ -180,6 +201,7 @@ void StateHistory::capture(int64_t frame)
 				fflush(stderr);
 			}
 			m_segments.back().links.push_back(Link{ std::move(bytes), frame });
+			coarsen(frame);
 			evict();
 			return;
 		}
@@ -201,6 +223,7 @@ void StateHistory::capture(int64_t frame)
 		fflush(stderr);
 	}
 	m_segments.push_back(std::move(seg));
+	coarsen(frame);
 	evict();
 }
 
@@ -219,6 +242,74 @@ void StateHistory::invalidateAfter(int64_t frame)
 		s.bytes -= n;
 		m_bytes -= n;
 		s.links.pop_back();
+	}
+}
+
+/* ---- the bands ----
+ *
+ * A landing survives in a band if it sits on that band's grid - the multiples
+ * of its stride. Everything else is composed into the landing after it, which
+ * is a merge of two stored deltas and needs no machine.
+ *
+ * Only the landings that have just crossed a boundary are looked at, so this is
+ * a couple of merges a frame rather than a sweep. The grid rule is what makes
+ * that safe: it does not matter when a landing is examined or in what order,
+ * because whether it survives depends only on where it lands.
+ */
+void StateHistory::coarsen(int64_t newestFrame)
+{
+	if (!composeAvailable()) return;   /* an older host: keep every link */
+	tidy(newestFrame - m_nearFrames, m_midStride);
+	tidy(newestFrame - m_nearFrames - m_midFrames, m_farStride);
+}
+
+void StateHistory::tidy(int64_t frame, int64_t stride)
+{
+	if (stride <= 1 || frame <= 0) return;
+	if (frame % stride == 0) return;   /* on the grid: this band wants it */
+
+	for (Segment &seg : m_segments)
+	{
+		if (seg.lastFrame() < frame) continue;
+		if (seg.anchorFrame >= frame) break;         /* ordered: nothing later holds it */
+		const int64_t steps = seg.stepsTo(frame);
+		if (steps <= 0) return;                      /* not a landing, or the anchor */
+		const size_t i = static_cast<size_t>(steps) - 1;
+		if (i + 1 >= seg.links.size()) return;       /* the last link has nothing to merge into */
+
+		/* A composed link that already costs what a whole machine costs is not
+		 * worth composing further - that is the point at which this band would
+		 * be better served by the anchor it is walking from. Leaving the
+		 * landing in place only makes the band denser than asked, which is
+		 * safe; the budget is what answers for the memory. */
+		Link &a = seg.links[i];
+		Link &b = seg.links[i + 1];
+		if (!seg.anchor.empty() && a.bytes.size() + b.bytes.size() > seg.anchor.size()) return;
+
+		std::vector<uint8_t> merged;
+		ByteSink sink{ &merged };
+		ByteSource sa{ a.bytes.data(), a.bytes.size(), 0 };
+		ByteSource sb{ b.bytes.data(), b.bytes.size(), 0 };
+		WbxReturn r{};
+		m_host->wbx_compose_delta(sourceRead, reinterpret_cast<uintptr_t>(&sa),
+			sourceRead, reinterpret_cast<uintptr_t>(&sb),
+			sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
+		if (!r.ok()) return;   /* a merge that will not happen costs memory, nothing else */
+
+		const uint64_t was = a.bytes.size() + b.bytes.size();
+		seg.bytes -= was;
+		m_bytes -= was;
+		seg.bytes += merged.size();
+		m_bytes += merged.size();
+		if (historyTrace())
+		{
+			fprintf(stderr, "[history] merged the landing at %lld into %lld: %llu -> %zu bytes\n",
+				(long long)frame, (long long)b.endFrame, (unsigned long long)was, merged.size());
+			fflush(stderr);
+		}
+		b.bytes = std::move(merged);
+		seg.links.erase(seg.links.begin() + static_cast<std::ptrdiff_t>(i));
+		return;
 	}
 }
 

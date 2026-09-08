@@ -62,6 +62,14 @@ struct HostApi
 	void (*wbx_save_delta)(void *obj, bool forward, WbxWriteCb cb, uintptr_t userdata, WbxReturn *ret);
 	void (*wbx_load_delta)(void *obj, WbxReadCb cb, uintptr_t userdata, WbxReturn *ret);
 	void (*wbx_get_epoch_page_count)(void *obj, WbxReturn *ret);
+
+	/* Two adjacent deltas as one that spans both, which is how the history
+	 * thins itself. Takes no host: a delta is bytes, and this is a transform on
+	 * them, so stored states can be merged with no machine loaded. Bound apart
+	 * from the four above because a host can have epochs without it, in which
+	 * case the history keeps every link it captured and simply costs more. */
+	void (*wbx_compose_delta)(WbxReadCb a, uintptr_t aUserdata, WbxReadCb b, uintptr_t bUserdata,
+		WbxWriteCb out, uintptr_t outUserdata, WbxReturn *ret);
 };
 
 /* The loaded host, or nullptr with *error set. Loads once, then cached. */

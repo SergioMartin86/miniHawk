@@ -42,6 +42,21 @@ public:
 	void configure(const HostApi *host, void *obj, uint64_t budgetBytes);
 	void clear();
 
+	/* How dense the history is at each distance from the newest frame it holds,
+	 * all in FRAMES - the engine does not know a core's frame rate and the
+	 * caller does. Any value left at 0 keeps the current one.
+	 *
+	 * Editing a movie is local: the frames somebody steps through and re-records
+	 * are the ones around the playhead, while the frames from ten minutes ago
+	 * are jumped to rather than scrubbed through. So a frame is captured into
+	 * the near band and coarsened as the playhead leaves it behind, which is a
+	 * thing that can be done to a stored delta without a machine.
+	 *
+	 * `anchorSpacing` is the one that decides what a seek costs, since a
+	 * restore walks the links of one anchor's stretch and no further. */
+	void bands(int64_t nearFrames, int64_t midFrames, int64_t midStride,
+	           int64_t farStride, int64_t anchorSpacing);
+
 	bool enabled() const { return m_budget != 0; }
 	uint64_t bytes() const { return m_bytes; }
 
@@ -128,25 +143,23 @@ private:
 		int64_t stepsTo(int64_t f) const;
 	};
 
-	/* How long a delta chain may get before the next anchor. A seek pays one
-	 * delta application per link, so this is the latency budget in disguise.
-	 *
-	 * Measured on xemu (docs/state-manager.md): a restore is the anchor load,
-	 * 30-45 ms and near enough flat whatever the state weighs, plus 4.7 ms for
-	 * every delta walked. So a chain of 512 - what this was, on the guess that
-	 * it sat inside a second - is 2.4 s, and the worst seek of that run really
-	 * did measure 2.07 s. 200 is the length that makes the sentence true on the
-	 * core measured, and it costs about a sixth more memory to take anchors
-	 * that much more often.
-	 *
-	 * It is still a constant, and a constant is still wrong: the number that
-	 * belongs here is the latency target divided by the per-delta cost THIS
-	 * core is showing, which a NES core would answer with tens of thousands and
-	 * rpcs3 with a handful. That policy is the next piece of phase 2. */
-	static constexpr size_t kMaxChain = 200;
-
 	bool deltasAvailable() const;
+	bool composeAvailable() const;
 	void evict();
+
+	/* Thins the bands the newest frame has just pushed a landing out of. Runs
+	 * after every capture and does at most one merge per boundary, because the
+	 * playhead moves one frame at a time and so exactly one landing crosses
+	 * each boundary per frame. That is what keeps this off the critical path:
+	 * coarsening follows DISTANCE, not the budget, so it is a little work every
+	 * frame rather than a stall when the budget fills. */
+	void coarsen(int64_t newestFrame);
+
+	/* Drops the landing at `frame` if the band it has fallen into does not want
+	 * one there, by composing its link into the one after it. The landings a
+	 * band keeps are the multiples of its stride, which makes this idempotent
+	 * and the result independent of the order frames arrive in. */
+	void tidy(int64_t frame, int64_t stride);
 
 	const HostApi *m_host = nullptr;
 	void *m_obj = nullptr;
@@ -154,6 +167,17 @@ private:
 	uint64_t m_bytes = 0;
 	std::vector<Segment> m_segments;   /* ordered by anchorFrame, never overlapping */
 	bool m_epochOpen = false;          /* an epoch is marked and a delta is wanted */
+
+	/* Defaults for 60 frames a second, and conservative on purpose: they are
+	 * what a core gets before anyone has measured it. See the band table in
+	 * docs/state-manager.md for what they cost on a heavy one. */
+	int64_t m_nearFrames = 120;        /* 2 s of every frame */
+	int64_t m_midFrames = 1800;        /* then 30 s of one in a few */
+	int64_t m_midStride = 3;
+	int64_t m_farStride = 1200;        /* and beyond that, one in 20 s - which,
+	                                    * being wider than a segment, collapses
+	                                    * an old segment to its anchor */
+	int64_t m_anchorSpacing = 600;     /* a new anchor every 10 s */
 };
 
 } // namespace chimera

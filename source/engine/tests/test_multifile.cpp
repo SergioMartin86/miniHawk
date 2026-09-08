@@ -10,6 +10,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <filesystem>
 #include <cstring>
 #include <string>
 
@@ -42,7 +43,13 @@ static std::string entry(const std::string &name, const std::string &sha1, const
 
 int main(int argc, char **argv)
 {
-	g_dir = argc > 1 ? argv[1] : ".";
+	/* A directory of its own. These tests scribble files with ordinary
+	 * names - save.hdd, disc2.iso - and two of them scribble the SAME
+	 * names, so sharing the build directory made them race: one removed
+	 * save.hdd to prove a missing file is reported missing while the
+	 * other was writing it back. */
+	g_dir = argc > 1 ? argv[1] : "work-multifile";
+	std::filesystem::create_directories(g_dir);
 	const char *err = nullptr;
 
 	// ---- the happy path: create through the engine, then open ----
