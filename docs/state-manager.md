@@ -217,6 +217,63 @@ to the runs that actually change, instead of walking the arena, was worth about
 with little churn - a 2 GB DOS machine writing fifty pages a frame - is the
 case it exists for, but it is not where the time goes on a console.
 
+## What a seek costs
+
+Capture was the first half and storage was the second; getting a frame BACK is
+the half the one-second decision actually rests on, and it was measured last.
+
+`tests/perf/seekbench.cpp` runs a real xemu boot into Prince of Persia, captures
+every frame of a stretch, and then times seeks to frames it has stored. Every
+target is a stored frame, so the seek's own replay is zero frames and what the
+clock sees is the restore alone. `CHIMERA_NO_DELTAS=1` makes every capture an
+anchor, which is the same build, the same run and the same budget against whole
+states - the A to this B.
+
+300 captured frames, a 4 GB budget, null renderer, and a bare frame of 29 ms:
+
+| | whole states | deltas |
+|---|---|---|
+| frames the budget held | 56 | 301 |
+| a stored frame | 72.8 MB | 1.66 MB |
+| a captured frame | 91.3 ms (+62) | 40.8 ms (+12) |
+| worst seek | 19.7 s | 1.19 s |
+| mean seek | 8.8 s | 0.61 s |
+
+The old shape is worse at both ends at once, which is the part worth saying
+plainly. It is not that whole states buy speed with memory: they cost five times
+the capture overhead AND they hold a fortieth of the run, and because they hold
+so little of it every seek lands far from a stored frame and turns into a replay
+of a hundred-odd frames at 90 ms each. The 19.7 s worst case is 225 frames of
+replay, and it grows with the run.
+
+The delta side is linear and legible. From the traced 1200-frame run:
+
+| | |
+|---|---|
+| anchor load | 30-45 ms, flat from a 68 MB state to a 201 MB one |
+| a delta applied | 4.7 ms, steady across chains of 24 to 450 |
+| so a restore | about 35 ms + 4.7 ms per link |
+
+Two things follow.
+
+**A delta is six times cheaper than re-running the frame.** 4.7 ms against 29
+ms. That is the ratio that justifies deltas over the obvious alternative of
+sparse anchors and replay, and it is a ratio to re-measure per core rather than
+assume: a core whose frame is cheap and whose churn is heavy could invert it,
+and for that core the right chain is short.
+
+**The chain limit is the latency target, written in the wrong units.** 512 links
+is 2.4 s, and the run's worst seek measured 2.07 s - so the constant's own
+comment, which claimed it sat inside a second, was wrong. It is now 200, which
+makes the claim true on this core at a cost of roughly a sixth more memory. It
+should not be a constant at all: the number that belongs there is the target
+divided by the per-delta cost this core is showing, and that is the next piece
+of phase 2.
+
+What is still unmeasured, and should not be guessed at: the cost with the GPU
+renderer running rather than the null one, and the same numbers on rpcs3, whose
+state and churn are both larger.
+
 ## Phasing
 
 Each phase is separately gated and separately landable.

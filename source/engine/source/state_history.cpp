@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 
 namespace chimera
 {
@@ -38,6 +39,13 @@ intptr_t sourceRead(uintptr_t ud, void *out, uintptr_t len)
  * delta silently falling back to a whole state is the failure mode with no
  * symptom - everything still works, it just costs a hundred times more - so
  * there has to be a way to look. */
+double nowSeconds()
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return static_cast<double>(t.tv_sec) + static_cast<double>(t.tv_nsec) / 1e9;
+}
+
 bool historyTrace()
 {
 	static const int on = [] {
@@ -66,9 +74,23 @@ void StateHistory::clear()
 	m_epochOpen = false;
 }
 
+/* CHIMERA_NO_DELTAS=1 keeps whole states, as the greenzone did before epochs.
+ * It is here for the same reason CHIMERA_NO_GPU is: two things that fail
+ * differently should be tellable apart on a machine that is not here, and a
+ * regression in capture cost or in seek latency wants an A against its B on
+ * the same build. */
+static bool deltasRefused()
+{
+	static const int off = [] {
+		const char *e = getenv("CHIMERA_NO_DELTAS");
+		return e != nullptr && e[0] != '\0' && e[0] != '0' ? 1 : 0;
+	}();
+	return off != 0;
+}
+
 bool StateHistory::deltasAvailable() const
 {
-	return m_host != nullptr && m_host->wbx_epoch_begin != nullptr
+	return !deltasRefused() && m_host != nullptr && m_host->wbx_epoch_begin != nullptr
 		&& m_host->wbx_save_delta != nullptr && m_host->wbx_load_delta != nullptr;
 }
 
@@ -221,6 +243,7 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 		return false;
 	}
 
+	const double t0 = historyTrace() ? nowSeconds() : 0.0;
 	WbxReturn r{};
 	ByteSource anchor{ seg->anchor.data(), seg->anchor.size(), 0 };
 	m_host->wbx_load_state(m_obj, sourceRead, reinterpret_cast<uintptr_t>(&anchor), &r);
@@ -229,6 +252,7 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 		error = r.errorMessage;
 		return false;
 	}
+	const double t1 = historyTrace() ? nowSeconds() : 0.0;
 	for (int64_t i = 0; i < frame - seg->anchorFrame; i++)
 	{
 		const std::vector<uint8_t> &d = seg->deltas[static_cast<size_t>(i)];
@@ -239,6 +263,15 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 			error = r.errorMessage;
 			return false;
 		}
+	}
+	if (historyTrace())
+	{
+		const int64_t chain = frame - seg->anchorFrame;
+		const double t2 = nowSeconds();
+		fprintf(stderr,
+			"[history] restore %lld: anchor %lld (%.1f MB) %.0f ms + %lld deltas %.0f ms = %.0f ms\n",
+			(long long)frame, (long long)seg->anchorFrame, seg->anchor.size() / 1048576.0,
+			(t1 - t0) * 1000, (long long)chain, (t2 - t1) * 1000, (t2 - t0) * 1000);
 	}
 	/* whatever epoch was marked described the machine we have just left */
 	m_epochOpen = false;

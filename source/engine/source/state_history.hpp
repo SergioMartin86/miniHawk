@@ -102,11 +102,21 @@ private:
 	};
 
 	/* How long a delta chain may get before the next anchor. A seek pays one
-	 * delta application per link, so this is the latency budget in disguise;
-	 * the measured policy that sets it from the cost the engine observes is
-	 * still to come (docs/state-manager.md), and until then it is a constant
-	 * chosen to be comfortably inside a second on the slowest core measured. */
-	static constexpr size_t kMaxChain = 512;
+	 * delta application per link, so this is the latency budget in disguise.
+	 *
+	 * Measured on xemu (docs/state-manager.md): a restore is the anchor load,
+	 * 30-45 ms and near enough flat whatever the state weighs, plus 4.7 ms for
+	 * every delta walked. So a chain of 512 - what this was, on the guess that
+	 * it sat inside a second - is 2.4 s, and the worst seek of that run really
+	 * did measure 2.07 s. 200 is the length that makes the sentence true on the
+	 * core measured, and it costs about a sixth more memory to take anchors
+	 * that much more often.
+	 *
+	 * It is still a constant, and a constant is still wrong: the number that
+	 * belongs here is the latency target divided by the per-delta cost THIS
+	 * core is showing, which a NES core would answer with tens of thousands and
+	 * rpcs3 with a handful. That policy is the next piece of phase 2. */
+	static constexpr size_t kMaxChain = 200;
 
 	bool deltasAvailable() const;
 	void evict();
