@@ -79,8 +79,8 @@ namespace Chimera.Tests.Client.GUI
 				"a software renderer has nothing to be careful about");
 
 			form.SetRenderer("opengl-hw");
-			StringAssert.Contains(form.RendererCaveatText, "desync",
-				"the cost is said where the choice is made");
+			StringAssert.Contains(form.RendererCaveatText, "video output",
+				"the cost - a picture that can differ elsewhere - is said where the choice is made");
 			StringAssert.Contains(form.RendererCaveatText, "greenzone",
 				"and so is what to do about it");
 

@@ -3230,7 +3230,7 @@ namespace Chimera.Client.GUI
 			if (Emulator.IsNull()) return;
 			if (Emulator is IGpuRendered { GpuRenderer: { Length: > 0 } driver })
 			{
-				AddOnScreenMessage($"GPU: {driver} - this run is not deterministic", 5);
+				AddOnScreenMessage($"GPU: {driver}", 5);
 			}
 		}
 
