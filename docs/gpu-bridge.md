@@ -283,13 +283,30 @@ miss.
 null framebuffer: the rebuild cleared `m_current_framebuffer` and the machine
 draws through `BPFunctions::SetScissorAndViewport` as soon as it runs, which
 dereferences it. Binding the EFB afterwards fixes that, and dolphin now survives
-a reopen and draws - but the machine it comes back with is not the one that was
-saved. The rebuild remakes the EFB framebuffer, and the EFB's pixels are not
-merely a picture: the game copies them into its own RAM. So the console's 24 MB
-of System RAM diverges, which is a silent desync rather than a crash. Dolphin's
-package therefore declares `gpuStatesSurviveTheContext: false` until the EFB
-survives a rebuild - a discarded greenzone costs recomputation, and a kept one
-that desyncs costs the run.
+a reopen and draws.
+
+The machine it comes back with is still not the one that was saved. Isolated by
+building the core without each part of the rebuild in turn: it is
+`g_texture_cache->Invalidate()`, and within it the single line
+`m_textures_by_address.clear()`. With that one clear left out and everything
+else intact the reopen is byte-identical, picture included. Ruled out the same
+way - `FlushEFBCopies`, `TMEM::InvalidateAll`, the bounding box, the perf query,
+`RecreateEFBFramebuffer`, the shader recompile.
+
+The clear cannot simply go: those entries' textures name a context that is gone
+once the process is, and EFB copies read back THROUGH them into RAM, so keeping
+dead ones trades a visible desync for a quieter one. What is wanted is a texture
+cache that survives a context change with its contents - re-uploading what came
+from RAM, preserving what came from rendering - and that is real work in
+dolphin's texture cache. Until it exists dolphin declares
+`gpuStatesSurviveTheContext: false`: a discarded greenzone costs recomputation,
+and a kept one that desyncs costs the run.
+
+Worth keeping in mind for whoever picks this up: the GL context is made once per
+PROCESS, so an in-process reopen still has the first session's objects alive -
+which is why disabling the rebuild entirely also reads as byte-identical here
+and would not be a fix. The harness cannot tell that case apart from a genuine
+cross-process reopen, and the id it keys on cannot either.
 
 The isolation that found both is worth keeping in mind: reload into the session
 that MADE the state, and reopen with no GPU bridge at all. When those two are

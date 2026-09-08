@@ -84,6 +84,62 @@ struct Fold
 	}
 };
 
+/* The bytes of one domain, for looking at what actually changed. */
+static std::vector<uint8_t> domainBytes(ce_session *s, int32_t index)
+{
+	const int64_t size = ce_session_domain_size(s, index);
+	std::vector<uint8_t> buf((size_t)(size > 0 ? size : 0));
+	if (!buf.empty()) ce_session_domain_read(s, index, 0, buf.data(), size);
+	return buf;
+}
+
+/* Where two copies of a domain part company: how many bytes, in how many runs,
+ * and where the first one is. A single contiguous block the size of a texture
+ * says something very different from scattered words. */
+static void reportDiff(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b)
+{
+	if (a.size() != b.size() || a.empty()) { printf("      (sizes differ)\n"); return; }
+	size_t bad = 0, runs = 0, first = 0;
+	bool in = false, seen = false;
+	size_t runStart = 0, biggest = 0, biggestAt = 0;
+	for (size_t i = 0; i < a.size(); i++)
+	{
+		if (a[i] != b[i])
+		{
+			bad++;
+			if (!seen) { first = i; seen = true; }
+			if (!in) { in = true; runs++; runStart = i; }
+		}
+		else if (in)
+		{
+			in = false;
+			if (i - runStart > biggest) { biggest = i - runStart; biggestAt = runStart; }
+		}
+	}
+	if (in && a.size() - runStart > biggest) { biggest = a.size() - runStart; biggestAt = runStart; }
+	printf("      %zu bytes differ (%.3f%% of the domain) in %zu run(s); first at 0x%zx,"
+	       " longest run %zu bytes at 0x%zx\n",
+		bad, 100.0 * bad / a.size(), runs, first, biggest, biggestAt);
+}
+
+/* Per domain, per frame: which memory diverged and on which frame. "The machine
+ * came back different" is where a diagnosis starts, not where it ends. */
+static std::vector<uint64_t> domainHashes(ce_session *s)
+{
+	std::vector<uint64_t> out;
+	std::vector<uint8_t> buf;
+	for (int32_t i = 0; i < ce_session_domain_count(s); i++)
+	{
+		const int64_t size = ce_session_domain_size(s, i);
+		if (size <= 0 || size > (256 << 20) || ce_session_domain_writable(s, i) == 0) continue;
+		buf.resize((size_t)size);
+		uint64_t h = 1469598103934665603ull;
+		if (ce_session_domain_read(s, i, 0, buf.data(), size) == size) Fold::mix(h, buf.data(), buf.size());
+		out.push_back(h);
+	}
+	return out;
+}
+
 /* The machine's own memory, which is the thing that must not differ.
  *
  * A hardware renderer's picture can wobble - the same commands on the same
@@ -158,7 +214,7 @@ int main(int argc, char **argv)
 	std::string settings = "{}";
 	std::string shot;
 	long frames = 120, after = 60;
-	bool inSession = false, noState = false, wantGl = true, trace = false;
+	bool inSession = false, noState = false, wantGl = true, trace = false, perFrame = false;
 	std::vector<std::string> fwIds, fwPaths;
 	for (int i = 3; i < argc; i++)
 	{
@@ -179,6 +235,8 @@ int main(int argc, char **argv)
 		else if (a == "--trace") trace = true;
 		/* <prefix>-straight.ppm and <prefix>-reopened.ppm, to be looked at */
 		else if (a == "--shot" && i + 1 < argc) shot = argv[++i];
+		/* which memory went first, and on which frame */
+		else if (a == "--where") perFrame = true;
 		else if (a == "--firmware" && i + 1 < argc)
 		{
 			std::string spec = argv[++i];
@@ -229,7 +287,18 @@ int main(int argc, char **argv)
 	 * on each side - makes every core on earth look broken, which is how the
 	 * first version of this file read. */
 	Fold straight;
-	for (long i = 0; i < after; i++) { ce_session_frame_advance(a, 0, 1); straight.frame(a); }
+	std::vector<std::vector<uint64_t>> straightPerFrame;
+	std::vector<uint8_t> straightFirstFrame;
+	for (long i = 0; i < after; i++)
+	{
+		ce_session_frame_advance(a, 0, 1);
+		straight.frame(a);
+		if (perFrame)
+		{
+			straightPerFrame.push_back(domainHashes(a));
+			if (i == 0) straightFirstFrame = domainBytes(a, 0);
+		}
+	}
 	int64_t ramBytes = 0;
 	int ramDomains = 0;
 	const uint64_t straightRam = ramHash(a, &ramBytes, &ramDomains);
@@ -288,6 +357,22 @@ int main(int argc, char **argv)
 		if (trace) { fprintf(stderr, "[reopen] second session, frame %ld\n", i); fflush(stderr); }
 		ce_session_frame_advance(b, 0, 1);
 		reopened.frame(b);
+		if (perFrame && (size_t)i < straightPerFrame.size())
+		{
+			const auto here = domainHashes(b);
+			for (size_t d = 0; d < here.size() && d < straightPerFrame[i].size(); d++)
+			{
+				if (here[d] == straightPerFrame[i][d]) continue;
+				printf("      first divergence: frame %ld after the load, domain %d (%s)\n",
+					i + 1, (int)d, ce_session_domain_name(b, (int32_t)d));
+				if (i == 0 && d == 0 && !straightFirstFrame.empty())
+				{
+					reportDiff(straightFirstFrame, domainBytes(b, 0));
+				}
+				perFrame = false;   /* the first one is the whole story */
+				break;
+			}
+		}
 	}
 	const uint64_t reopenedRam = ramHash(b);
 	if (!shot.empty()) { writePpm(shot + "-straight.ppm", straight); writePpm(shot + "-reopened.ppm", reopened); }
