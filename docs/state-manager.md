@@ -426,13 +426,21 @@ Each phase is separately gated and separately landable.
    - **Spill** (`7c9502c`). The oldest stretches to the caller's directory once
      the budget is full, restored by reading only as far along one as the target
      needs.
-   STILL TO COME: pointing the frontend's saves at the per-user cache directory
-   that now exists, and giving it somewhere to spill.
+   The frontend's greenzone moved to the per-user cache (`c595db6`), so a
+   project's folder holds the project and nothing else. Phase 2 is closed.
 3. **The frontend: one history.** TAStudio onto the session's history, with the
    rewind gesture rebound to a reverse delta rather than a backwards seek;
-   `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer`, the
-   settings chooser and the sidecar deleted; the cache moves to the per-user
-   directory.
+   `PagedStateManager`, `ZwinderStateManager`, `ZwinderBuffer` and the settings
+   chooser deleted.
+
+   Note what this phase, and only this phase, unlocks. The frontend binds 135
+   `ce_session_*` entry points and not one of the greenzone ones: it saves and
+   loads whole states through the ABI and does every piece of history
+   bookkeeping itself, in C#. So none of what phase 2 built - the bands, the
+   composition, the spilling - is reaching a user yet, and
+   `ce_session_greenzone_spill` has nothing to be pointed at until TAStudio is
+   the thing asking. Wiring a spill directory before then would be a call
+   nothing makes.
 
 ## Sharp edges to expect
 
