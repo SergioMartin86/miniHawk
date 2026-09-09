@@ -125,7 +125,8 @@ That gives the history two new kinds of thing to store:
 - a **forward delta**: the pages changed during an epoch, as they ended. Apply
   it to the machine at the epoch's start and you have the machine at its end.
 - a **reverse delta**: the same pages as they *began*, which the fault handler
-  captured anyway. Apply it and you go back one epoch.
+  captured anyway. Apply it and you go back one epoch. (Removed later - see
+  "What rewinding cost, and why it is gone". Every frame is reached forwards.)
 
 The consequences are what make this worth doing:
 
@@ -136,10 +137,11 @@ The consequences are what make this worth doing:
   nearest anchor, apply deltas forward", and the latency budget sets how far
   apart anchors sit, measured in delta applications rather than in emulated
   frames.
-- **Rewind stops being a seek.** One frame back is one reverse delta, costing
-  that frame's churn, instead of restoring the nearest state and replaying
-  forward to get there. Going back a frame finally costs about what going
-  forward a frame costs, which is what the gesture always implied.
+- ~~**Rewind stops being a seek.**~~ One frame back was to be one reverse
+  delta, costing that frame's churn, instead of restoring the nearest state and
+  replaying to get there. This is the one part of the design that did not
+  survive contact with the measurement: see "What rewinding cost, and why it is
+  gone".
 
 Content-addressed storage still earns its place underneath, because deltas
 repeat: a page written with the same bytes every frame is one chunk. Dedup
@@ -422,9 +424,12 @@ on disk is close to free until the disk is slow.
 coarsening is real work done every frame. That is the trade the design makes on
 purpose: a little per frame, always, instead of a stall when the budget fills.
 
-## What rewinding costs
+## What rewinding cost, and why it is gone
 
-The same xemu run, 1200 frames, 4 GB budget, with the reverse deltas on and off:
+Reverse deltas were removed. Every frame is now reached the one way: **load an
+anchor and apply the deltas since it.**
+
+They were measured, on the same xemu run, 1200 frames, 4 GB budget:
 
 | | kept | not kept |
 |---|---|---|
@@ -432,16 +437,84 @@ The same xemu run, 1200 frames, 4 GB budget, with the reverse deltas on and off:
 | one frame back | 5.2 ms | a seek, up to 1.0 s |
 | the history on disk | 1557 MB | 1557 MB |
 
-The file is the same size either way: a reverse delta is never written out,
-because playing forward makes it again and it is only ever wanted near the
-playhead.
+Eight milliseconds on every captured frame, against a gesture that dropped from
+a second to five - and that was the honest trade as long as capture was rare.
+It stopped being rare. The greenzone captures every frame now, so the eight
+milliseconds is paid by everybody all the time, and it bought a gesture that a
+faster seek serves well enough.
 
-So it is 8 ms on every captured frame, paid whether or not anybody rewinds,
-against the gesture somebody makes over and over dropping from a second to five
-milliseconds. That is worth it for a person stepping back and forth over a hard
-trick and not worth it for an unattended encode, which is why it is a knob -
-`ce_session_greenzone_rewind_frames`, 0 to turn it off - rather than a decree.
-An encode does not pay it in any case: it suppresses state capture entirely.
+The saving is larger than the table says, because the price was not only the
+second delta. Keeping backwards possible meant the fault handler copied every
+page the first time a frame wrote it - a four kilobyte memcpy per page per
+frame, inside a signal handler, out of a fixed pool that could be exhausted -
+and it meant carrying a pre-image pointer and kind on every page struct, which
+made every remaining walk of the page array wider. All of that went with it.
+
+`mb_block_delta_save` refuses the backward direction outright rather than
+answering it with zeros: a delta of zeros would wipe memory the machine still
+needs, and nothing else would ever say so.
+
+## What a captured frame costs, and what it is proportional to
+
+Capturing every frame only works if a capture costs the frame. It did not.
+
+Measured with `tests/perf/epochbench.c`, which is the epoch machinery alone -
+no core, no game - on an arena of a chosen size with a chosen number of pages
+written per frame. Milliseconds per frame, before and after:
+
+| arena | written/frame | open | faults | delta | total |
+|---|---|---|---|---|---|
+| 64 MB | 256 | 0.41 -> 0.39 | 1.20 -> 0.88 | 0.06 -> 0.00 | **1.67 -> 1.27** |
+| 256 MB | 256 | 0.70 -> 0.40 | 1.32 -> 0.88 | 0.24 -> 0.00 | **2.26 -> 1.28** |
+| 1 GB | 256 | 1.56 -> 0.43 | 1.38 -> 0.89 | 1.11 -> 0.01 | **4.04 -> 1.33** |
+| 2 GB | 256 | 3.51 -> 0.44 | 1.70 -> 1.05 | 4.43 -> 0.02 | **9.64 -> 1.51** |
+| 2 GB | 16 | 2.78 -> 0.09 | 0.14 -> 0.06 | 3.24 -> 0.01 | **6.15 -> 0.16** |
+| 2 GB | 1024 | 5.20 -> 1.66 | 5.86 -> 3.84 | 5.47 -> 0.02 | **16.53 -> 5.51** |
+
+Read the 16-page and 1024-page rows together and the fault is plain: writing
+sixteen pages cost 6.1 ms and writing a thousand cost 16.5 - **the work was
+proportional to how big the machine could be, not to what it did.** Sixty four
+kilobytes of change cost more than a third of a frame at sixty a second, on
+every core with a big arena, which is exactly the "everything got slower" that
+prompted this.
+
+Every per-frame path walked the page array end to end, several times over:
+opening an epoch cleared per-page state and set a flag on every tracked page,
+then looked for the runs to re-protect; saving a delta counted the dirty pages,
+compared the whole allocation map against a copy of itself taken when the epoch
+opened, and then walked the array again for the data. A page struct is forty
+bytes, so a two gigabyte arena is twenty one megabytes a pass.
+
+The fix is not cleverness, it is bookkeeping. The sets a frame cares about are
+kept as **bitmaps**, one bit a page, sixty four kilobytes for that same arena:
+
+- `epoch_bits` - written during this epoch. Set by the fault that lets the
+  write through, which is two words of work inside the handler.
+- `stat_bits` + `epoch_status` - pages whose allocation changed, and what it
+  was. Recorded as the change happens, which replaced both the half-megabyte
+  copy taken per epoch and the comparison that read it back.
+- `unheld_bits` - pages mapped writable right now. This is the one that matters
+  most: opening an epoch re-protects exactly these, and they are exactly the
+  pages written since the last epoch opened, because everything else is still
+  protected from that one. It used to re-protect every page the machine had
+  ever written, every frame.
+
+Iteration is ascending, which the delta format needs: both its lists are in
+page order so that composing two deltas is a merge of sorted runs.
+
+A clean page needs no hold and gets none. It is already read-only for the
+baseline's sake, its first write already faults, and that fault records the
+epoch's page too - which is why the flag can be set on so few pages without
+losing any.
+
+What is left is proportional to the frame: one `mprotect` per run of pages
+written last frame, the guest's own write faults, and the delta's own bytes.
+The bench scatters its writes as widely as it can, so its runs are one page
+long and its numbers are the worst case; a real machine writes in clusters.
+
+The `faults` column fell too, by a quarter to a third, and that is the removal
+of reverse deltas showing up: the handler no longer copies a page every time a
+frame first writes it.
 
 ## Phasing
 
