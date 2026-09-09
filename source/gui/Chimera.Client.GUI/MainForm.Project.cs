@@ -59,6 +59,12 @@ namespace Chimera.Client.GUI
 				// belongs to the session that has just ended rather than to this one
 				_projectSession++;
 			}
+
+			// The cache has just grown by whatever the session added, and the
+			// greenzone that was untouchable a moment ago is now an ordinary row.
+			// Both of those are only true once the close has finished, so this is
+			// outside the finally rather than in it.
+			AutoCleanCaches();
 		}
 
 		/// <summary>

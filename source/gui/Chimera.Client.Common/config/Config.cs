@@ -98,6 +98,22 @@ namespace Chimera.Client.Common
 		/// </summary>
 		public List<RosterCore> ExternalCores { get; set; } = new();
 
+		/// <summary>
+		/// Whether Tools &gt; Cache Manager holds the cache under
+		/// <see cref="CacheSizeLimitMb"/> on its own, removing the oldest
+		/// unlocked entries when it goes over. On by default; see
+		/// <see cref="CacheCleanPolicy"/> for why, and docs/cache-manager.md.
+		/// </summary>
+		public bool CacheAutoClean { get; set; } = true;
+
+		/// <summary>
+		/// What the whole cache may weigh, in megabytes, before the auto-clean
+		/// starts taking the oldest. Megabytes for the same reason
+		/// <see cref="MovieConfig.GreenzoneBudgetMb"/> is: it is the unit this file
+		/// keeps sizes in.
+		/// </summary>
+		public int CacheSizeLimitMb { get; set; } = CacheCleanPolicy.DefaultLimitMb;
+
 		public bool PauseWhenMenuActivated { get; set; } = true;
 		public bool SaveWindowPosition { get; set; } = true;
 		public bool MainFormStayOnTop { get; set; }

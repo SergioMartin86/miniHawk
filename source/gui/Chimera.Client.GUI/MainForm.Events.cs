@@ -484,7 +484,30 @@ namespace Chimera.Client.GUI
 		/// </summary>
 		public void ShowCacheManager()
 		{
-			using CacheManagerForm form = new(() => CacheSurvey.Take(
+			using CacheManagerForm form = new(
+				TakeCacheSurvey,
+				setLocked: static (items, locked) => CacheLocks.Set(items, locked),
+				policy: CacheCleanPolicyFromConfig(),
+				savePolicy: p =>
+				{
+					Config.CacheAutoClean = p.Enabled;
+					Config.CacheSizeLimitMb = (int) (p.LimitBytes / 1024 / 1024);
+				});
+			this.ShowDialogWithTempMute(form);
+			// a limit that was just lowered should mean something before the next
+			// project closes, and the window has already asked about anything it
+			// removed itself
+			AutoCleanCaches();
+		}
+
+		/// <summary>
+		/// What is cached right now, from the two roots only the window knows about
+		/// and what this session is standing on. One place, because the cache
+		/// manager and the auto-clean have to be looking at the same list - an
+		/// auto-clean that did not know what was open would take it.
+		/// </summary>
+		private IReadOnlyList<CacheItem> TakeCacheSurvey()
+			=> CacheSurvey.Take(
 				corePackageCacheRoot: Path.Combine(Chimera.Common.PathExtensions.PathUtils.ExeDirectoryPath, "CoreCache"),
 				compiledCodeRoot: Config.PathEntries.CoreCacheAbsolutePath(),
 				// what is open right now may not be pulled out from under itself
@@ -492,8 +515,40 @@ namespace Chimera.Client.GUI
 				loadedPackageSha1s: CoreRegistry.Instance.LoadedPackages
 					.Select(static p => p.Sha1)
 					.Where(static s => !string.IsNullOrEmpty(s))
-					.ToList()!));
-			this.ShowDialogWithTempMute(form);
+					.ToList()!);
+
+		private CacheCleanPolicy CacheCleanPolicyFromConfig()
+			=> new() { Enabled = Config.CacheAutoClean, LimitBytes = Config.CacheSizeLimitMb * 1024L * 1024L };
+
+		/// <summary>
+		/// Holds the cache to its limit, taking the oldest unlocked entries first
+		/// (docs/cache-manager.md).
+		///
+		/// Runs where a cache has just stopped being needed rather than on a timer:
+		/// at startup, and when a project closes - which is the moment its greenzone
+		/// stops being the one thing that may not be touched, and the moment the
+		/// cache has just grown by however many gigabytes the session added. Doing
+		/// it while a run is open would mean deleting somebody's disk space in the
+		/// middle of their frame advance.
+		/// </summary>
+		private void AutoCleanCaches()
+		{
+			if (!Config.CacheAutoClean) return;
+			try
+			{
+				var result = CacheSurvey.AutoClean(TakeCacheSurvey(), CacheCleanPolicyFromConfig());
+				if (result.Removed.Count is 0) return;
+				var freed = CacheSurvey.Size(result.Before - result.After);
+				Console.WriteLine($"[cache] removed {result.Removed.Count} of the oldest unlocked item(s), freeing {freed}"
+					+ $": {string.Join(", ", result.Removed.Select(static i => i.Label))}");
+				AddOnScreenMessage($"Cache auto-clean freed {freed}");
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// a cache that will not be measured or removed is not worth stopping
+				// anything for; it is a cache
+				Console.WriteLine($"[cache] auto-clean gave up: {ex.Message}");
+			}
 		}
 
 		public void ShowCoreManager()
@@ -988,6 +1043,11 @@ namespace Chimera.Client.GUI
 			}
 
 			HandlePlatformMenus();
+
+			// After the window is up rather than before it: this walks every cache
+			// directory on the machine, and a frontend that sat on a black screen
+			// counting bytes would look broken.
+			AutoCleanCaches();
 		}
 
 		protected override void OnClosed(EventArgs e)

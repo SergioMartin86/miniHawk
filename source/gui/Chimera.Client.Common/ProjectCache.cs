@@ -49,24 +49,32 @@ namespace Chimera.Client.Common
 		/// wants, and what lets a test point the cache at a temporary directory
 		/// instead of at the machine's real one. It is a few string joins.
 		/// </summary>
-		public static string Root => Resolve();
+		public static string Root => Path.Combine(DataHome, DirName);
+
+		/// <summary>
+		/// The per-user directory Chimera keeps its own things under, of which the
+		/// project caches are one. Named here because more than the projects live
+		/// in it - the lock book does too (see <see cref="CacheLocks"/>) - and
+		/// everything that does has to agree about where "here" is.
+		/// </summary>
+		public static string DataHome => Resolve();
 
 		private const string DirName = "Projects";
 
 		private static string Resolve()
 		{
 			var dataHome = Environment.GetEnvironmentVariable("CHIMERA_DATA_HOME");
-			if (!string.IsNullOrWhiteSpace(dataHome)) return Path.Combine(dataHome!, DirName);
+			if (!string.IsNullOrWhiteSpace(dataHome)) return dataHome!;
 			if (OSTailoredCode.IsUnixHost)
 			{
 				var xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
 				var home = Environment.GetEnvironmentVariable("HOME") ?? ".";
 				var baseDir = string.IsNullOrWhiteSpace(xdg) ? Path.Combine(home, ".local", "share") : xdg!;
-				return Path.Combine(baseDir, "chimera", DirName);
+				return Path.Combine(baseDir, "chimera");
 			}
 			var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify);
-			if (string.IsNullOrWhiteSpace(local)) return Path.Combine(PathUtils.DataDirectoryPath, DirName);
-			return Path.Combine(local, "Chimera", DirName);
+			if (string.IsNullOrWhiteSpace(local)) return PathUtils.DataDirectoryPath;
+			return Path.Combine(local, "Chimera");
 		}
 
 		/// <summary>

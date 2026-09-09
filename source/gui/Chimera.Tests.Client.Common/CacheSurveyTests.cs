@@ -195,6 +195,158 @@ namespace Chimera.Tests.Client.Common
 			Assert.IsFalse(items.Any(static i => i.Kind is CacheKind.CorePackage or CacheKind.CompiledCode));
 		}
 
+		/// <summary>
+		/// The defaults follow which way round the mistake would matter: a
+		/// greenzone is the room a limit exists to bound, and everything else is
+		/// small enough that evicting it frees nothing worth having.
+		/// </summary>
+		[TestMethod]
+		public void GreenzonesStartUnlockedAndTheRestStartsLocked()
+		{
+			ProjectCache.Ensure("0000000000000101");
+			Fill(ProjectCache.DirectoryFor("0000000000000101"), "history.bin", 4096);
+			var packages = Path.Combine(_dir, "CoreCache-defaults");
+			Fill(Path.Combine(packages, "gpgx-4ed3532117ad"), "core.wbx", 2048);
+
+			var items = CacheSurvey.Take(packages, null);
+			Assert.IsFalse(items.Single(i => i.Detail is "0000000000000101").Locked,
+				"a greenzone is what the limit is for, so it is the thing the limit can reach");
+			Assert.IsTrue(items.Single(i => i.Kind is CacheKind.CorePackage && i.Label is "gpgx").Locked,
+				"an unpacked core is furniture: taking it frees nothing and stalls the next boot");
+		}
+
+		/// <summary>
+		/// A lock is about the AUTO-clean and nothing else. Somebody who ticks a
+		/// row and presses Remove has already decided, and a padlock that argued
+		/// with them would be a lock on the wrong thing.
+		/// </summary>
+		/// <remarks>
+		/// Serialised: this assembly runs its tests in parallel, and the lock book
+		/// is ONE file that every test in the process shares. Two of them
+		/// read-modify-writing it at once is a race in the test, not in the
+		/// product, where the book has one reader and one writer.
+		/// </remarks>
+		[TestMethod]
+		[DoNotParallelize]
+		public void ALockIsRememberedAndOnlyBindsTheAutoClean()
+		{
+			ProjectCache.Ensure("0000000000000102");
+			Fill(ProjectCache.DirectoryFor("0000000000000102"), "history.bin", 8192);
+
+			var before = CacheSurvey.Take(null, null).Single(i => i.Detail is "0000000000000102");
+			Assert.IsFalse(before.Locked);
+			CacheLocks.Set(new[] { before }, locked: true);
+
+			var locked = CacheSurvey.Take(null, null).Single(i => i.Detail is "0000000000000102");
+			Assert.IsTrue(locked.Locked, "and it survives the survey being taken again");
+			Assert.AreEqual(0, CacheSurvey.WhatWouldGo(new[] { locked }, limitBytes: 0).Count,
+				"nothing the auto-clean does can reach it");
+
+			Assert.IsNull(CacheSurvey.Remove(locked), "but Remove still takes it");
+			Assert.IsFalse(Directory.Exists(locked.Path));
+			Assert.IsFalse(CacheLocks.Read().ContainsKey(locked.Path),
+				"and the lock goes with the thing it was put on");
+		}
+
+		/// <summary>
+		/// Only deliberate exceptions are written down, so that what a kind
+		/// defaults to stays the answer for everything nobody has overruled.
+		/// </summary>
+		/// <remarks>Serialised for the reason above: one file, many tests.</remarks>
+		[TestMethod]
+		[DoNotParallelize]
+		public void OnlyWhatDiffersFromTheDefaultIsWrittenDown()
+		{
+			ProjectCache.Ensure("0000000000000103");
+			Fill(ProjectCache.DirectoryFor("0000000000000103"), "history.bin", 512);
+			var item = CacheSurvey.Take(null, null).Single(i => i.Detail is "0000000000000103");
+
+			CacheLocks.Set(new[] { item }, locked: true);
+			Assert.IsTrue(CacheLocks.Read().ContainsKey(item.Path));
+			CacheLocks.Set(new[] { item }, locked: false);
+			Assert.IsFalse(CacheLocks.Read().ContainsKey(item.Path), "back to its default is back to silence");
+			Assert.IsFalse(CacheLocks.IsLocked(CacheKind.Project, item.Path));
+		}
+
+		private static CacheItem Aged(string path, long bytes, int daysAgo, bool locked = false, bool inUse = false)
+			=> new()
+			{
+				Kind = CacheKind.Project,
+				Label = path,
+				Path = path,
+				Bytes = bytes,
+				LastUsed = new DateTime(2026, 9, 9).AddDays(-daysAgo),
+				Locked = locked,
+				InUse = inUse,
+			};
+
+		/// <summary>
+		/// Oldest first, and only as many as it takes. "Least likely to be wanted
+		/// next" is the one ordering worth having, and a lock is how the run where
+		/// that is wrong says so.
+		/// </summary>
+		[TestMethod]
+		public void TheAutoCleanTakesTheOldestUntilItIsUnderTheLimit()
+		{
+			CacheItem[] items =
+			{
+				Aged("/oldest", 30, daysAgo: 40),
+				Aged("/middle", 30, daysAgo: 20),
+				Aged("/newest", 30, daysAgo: 1),
+			};
+
+			CollectionAssert.AreEqual(
+				new[] { "/oldest" },
+				CacheSurvey.WhatWouldGo(items, limitBytes: 70).Select(static i => i.Path).ToArray(),
+				"one is enough, so only one goes");
+			CollectionAssert.AreEqual(
+				new[] { "/oldest", "/middle" },
+				CacheSurvey.WhatWouldGo(items, limitBytes: 40).Select(static i => i.Path).ToArray());
+			Assert.AreEqual(0, CacheSurvey.WhatWouldGo(items, limitBytes: 90).Count,
+				"a cache that is already under its limit is left entirely alone");
+		}
+
+		[TestMethod]
+		public void TheAutoCleanTakesNeitherWhatIsLockedNorWhatIsOpen()
+		{
+			CacheItem[] items =
+			{
+				Aged("/locked", 50, daysAgo: 40, locked: true),
+				Aged("/open", 50, daysAgo: 30, inUse: true),
+				Aged("/free", 50, daysAgo: 10),
+			};
+
+			CollectionAssert.AreEqual(
+				new[] { "/free" },
+				CacheSurvey.WhatWouldGo(items, limitBytes: 10).Select(static i => i.Path).ToArray(),
+				"the two oldest are both spoken for, so the newest is what is left to take");
+		}
+
+		/// <summary>
+		/// Being unable to reach the limit is the lock doing its job, not a
+		/// failure - but it is worth saying, or the cache quietly stays over.
+		/// </summary>
+		[TestMethod]
+		public void ALimitThatCannotBeMetIsSaidRatherThanForced()
+		{
+			var result = CacheSurvey.AutoClean(
+				new[] { Aged("/locked", 500, daysAgo: 90, locked: true) },
+				new CacheCleanPolicy { LimitBytes = 100 });
+			Assert.AreEqual(0, result.Removed.Count);
+			Assert.IsTrue(result.StillOver);
+			Assert.AreEqual(result.Before, result.After);
+		}
+
+		[TestMethod]
+		public void SwitchingTheAutoCleanOffMeansNothingIsTaken()
+		{
+			var result = CacheSurvey.AutoClean(
+				new[] { Aged("/free", 500, daysAgo: 90) },
+				new CacheCleanPolicy { Enabled = false, LimitBytes = 1 });
+			Assert.AreEqual(0, result.Removed.Count);
+			Assert.IsFalse(result.StillOver, "nothing is being enforced, so nothing is over anything");
+		}
+
 		[TestMethod]
 		public void SizesReadInTheUnitsRowsAreComparedIn()
 		{

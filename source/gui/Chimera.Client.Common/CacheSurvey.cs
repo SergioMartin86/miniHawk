@@ -83,6 +83,14 @@ namespace Chimera.Client.Common
 		public bool InUse { get; init; }
 
 		/// <summary>
+		/// True when the auto-clean may not take this one (see <see cref="CacheLocks"/>).
+		/// It says nothing about removing it by hand: a person who ticks a row and
+		/// presses Remove has already decided, and a padlock that also argued with
+		/// them would be a lock on the wrong thing.
+		/// </summary>
+		public bool Locked { get; init; }
+
+		/// <summary>
 		/// Why this row is worth a second look, or "". Only ever advice: an orphan
 		/// is still perfectly good, it is simply the one nothing is asking for.
 		/// </summary>
@@ -99,6 +107,61 @@ namespace Chimera.Client.Common
 			CacheKind.CoreVersions => "The Core Manager asks each repository again instead of showing what it saw last.",
 			_ => "",
 		};
+	}
+
+	/// <summary>
+	/// How large the cache is allowed to get, and whether anything enforces it.
+	///
+	/// Passed around rather than read out of the config where it is needed, so
+	/// that what the limit DOES can be tested without a config file - the same
+	/// reason the survey takes its roots as arguments.
+	/// </summary>
+	public sealed class CacheCleanPolicy
+	{
+		/// <summary>
+		/// Whether the cache is held under the limit on its own. On by default:
+		/// a cache that grows without bound is a disk that fills up while somebody
+		/// is working, and every rule here already says that losing a cache costs
+		/// time and never work. Anyone who would rather decide by hand turns it
+		/// off, and anyone who wants one particular run kept locks it.
+		/// </summary>
+		public bool Enabled { get; set; } = true;
+
+		/// <summary>
+		/// What the whole cache may weigh. A hundred gigabytes because a single
+		/// PS2 or PS3 greenzone runs to tens of them, so a smaller number would
+		/// spend its life evicting the run being worked on, and a machine with
+		/// room to spare loses nothing by keeping more.
+		/// </summary>
+		public long LimitBytes { get; set; } = DefaultLimitBytes;
+
+		/// <summary>
+		/// In megabytes, because that is the unit the config stores a size in
+		/// (see <c>MovieConfig.GreenzoneBudgetMb</c>) and the one its round-trip
+		/// test knows how to keep stable.
+		/// </summary>
+		public const int DefaultLimitMb = 100 * 1024;
+
+		public const long DefaultLimitBytes = DefaultLimitMb * 1024L * 1024L;
+	}
+
+	/// <summary>What one pass of the auto-clean did.</summary>
+	public sealed class CacheCleanResult
+	{
+		public IReadOnlyList<CacheItem> Removed { get; init; } = Array.Empty<CacheItem>();
+
+		/// <summary>What the cache weighed before, and what it weighs now.</summary>
+		public long Before { get; init; }
+
+		public long After { get; init; }
+
+		/// <summary>
+		/// True when the cache is STILL over the limit and nothing else may be
+		/// taken - everything left is locked, or in use. Not a failure: it is the
+		/// lock doing exactly what it was asked to, and worth saying so rather
+		/// than silently going on being over.
+		/// </summary>
+		public bool StillOver { get; init; }
 	}
 
 	/// <summary>
@@ -134,6 +197,7 @@ namespace Chimera.Client.Common
 			IReadOnlyCollection<string>? loadedPackageSha1s = null)
 		{
 			List<CacheItem> items = new();
+			var locks = CacheLocks.Read();
 
 			foreach (var project in ProjectCache.All())
 			{
@@ -155,6 +219,7 @@ namespace Chimera.Client.Common
 					Bytes = project.Bytes,
 					LastUsed = project.LastUsed,
 					InUse = inUse,
+					Locked = CacheLocks.IsLocked(locks, CacheKind.Project, project.Path),
 				});
 			}
 
@@ -177,6 +242,7 @@ namespace Chimera.Client.Common
 					LastUsed = TouchedAt(dir),
 					InUse = sha1.Length is not 0 && loadedPackageSha1s is not null
 						&& loadedPackageSha1s.Any(s => string.Equals(s, sha1, StringComparison.OrdinalIgnoreCase)),
+					Locked = CacheLocks.IsLocked(locks, CacheKind.CorePackage, dir),
 				});
 			}
 
@@ -195,6 +261,7 @@ namespace Chimera.Client.Common
 						Path = versionDir,
 						Bytes = SizeOf(versionDir),
 						LastUsed = TouchedAt(versionDir),
+						Locked = CacheLocks.IsLocked(locks, CacheKind.CompiledCode, versionDir),
 					});
 				}
 			}
@@ -210,6 +277,7 @@ namespace Chimera.Client.Common
 					Path = feed,
 					Bytes = SizeOf(feed),
 					LastUsed = TouchedAt(feed),
+					Locked = CacheLocks.IsLocked(locks, CacheKind.CoreVersions, feed),
 				});
 			}
 
@@ -230,12 +298,80 @@ namespace Chimera.Client.Common
 			try
 			{
 				if (Directory.Exists(item.Path)) Directory.Delete(item.Path, recursive: true);
+				// a lock belongs to the thing it was put on; leaving it behind would
+				// hand its answer to whatever is written at that location next
+				CacheLocks.Forget(item.Path);
 				return null;
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 			{
 				return ex.Message;
 			}
+		}
+
+		/// <summary>
+		/// Which entries the auto-clean would take, in the order it would take
+		/// them, to bring the cache back under the limit. Nothing is removed by
+		/// asking - this is what the window shows before it does anything, and
+		/// what a test can check without a disk to delete from.
+		///
+		/// OLDEST FIRST, by when anything in it was last written. That is the one
+		/// ordering that means "least likely to be wanted next", and it is the
+		/// rule a lock exists to overrule for the run where it is wrong.
+		///
+		/// What may never go: a cache something open is standing on (removing it
+		/// would cost work, not time) and a locked one. Entries that weigh nothing
+		/// are left alone too - taking them would not move the total, so removing
+		/// them would be deletion for its own sake.
+		/// </summary>
+		public static IReadOnlyList<CacheItem> WhatWouldGo(IReadOnlyList<CacheItem> items, long limitBytes)
+		{
+			var total = items.Sum(static i => i.Bytes);
+			if (total <= limitBytes) return Array.Empty<CacheItem>();
+
+			List<CacheItem> going = new();
+			var candidates = items
+				.Where(static i => !i.InUse && !i.Locked && i.Bytes > 0)
+				.OrderBy(static i => i.LastUsed)
+				// among entries of the same age the biggest goes first, so reaching
+				// the limit costs as few removals as it can
+				.ThenByDescending(static i => i.Bytes);
+			foreach (var item in candidates)
+			{
+				if (total <= limitBytes) break;
+				going.Add(item);
+				total -= item.Bytes;
+			}
+			return going;
+		}
+
+		/// <summary>
+		/// Brings the cache back under its limit, oldest first. Does nothing at
+		/// all when the policy is off or the cache is already under it.
+		/// </summary>
+		public static CacheCleanResult AutoClean(IReadOnlyList<CacheItem> items, CacheCleanPolicy policy)
+		{
+			var before = items.Sum(static i => i.Bytes);
+			if (!policy.Enabled || before <= policy.LimitBytes)
+			{
+				return new CacheCleanResult { Before = before, After = before };
+			}
+
+			List<CacheItem> removed = new();
+			var after = before;
+			foreach (var item in WhatWouldGo(items, policy.LimitBytes))
+			{
+				if (Remove(item) is not null) continue;
+				removed.Add(item);
+				after -= item.Bytes;
+			}
+			return new CacheCleanResult
+			{
+				Removed = removed,
+				Before = before,
+				After = after,
+				StillOver = after > policy.LimitBytes,
+			};
 		}
 
 		/// <summary>A size in the units somebody compares two rows in.</summary>
