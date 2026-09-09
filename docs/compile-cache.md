@@ -42,7 +42,9 @@ names carry the module hash, its version and the CPU, so the same firmware
 library compiles once for every game.
 
 The engine sets the directory with `ce_cache_dir` before opening a session,
-the frontend names it `<Core Cache path>/<core>/<package version>/`, and
+the frontend names it `<data home>/CompiledCode/<core>/<package version>/`
+(see `CacheStore`; the data home is `%LOCALAPPDATA%\Chimera` or
+`$XDG_DATA_HOME/chimera`), and
 `ce_session_cache_stored` / `ce_session_cache_fetched` say what a session did.
 Every object that crosses is announced on stdout as `[cache] stored <name>
 <sha1>` or `[cache] fetched <name> <sha1>`, which is how a frontend watching a
@@ -50,6 +52,13 @@ child process learns what a game needs.
 
 One directory per package version, because a different build of the package
 generates different code and must not read the old one's objects.
+
+It is not a configurable path and it is emphatically not inside the install.
+A Chimera bundle is a zip somebody unpacks, and updating it means unpacking a
+newer one: a gigabyte of a PS3 game's compiled code sitting in there would be
+lost on every update, and would make the size of the install depend on what
+had been played. It used to live in `<exe>/CoreCache`; an older install's is
+moved out on the first run that finds it.
 
 ## Precompile sessions
 

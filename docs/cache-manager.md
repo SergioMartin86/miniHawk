@@ -31,6 +31,35 @@ The one exception the window enforces itself: **what is open cannot be
 removed**. Pulling a greenzone out from under a running session costs work, not
 time, so the tick is refused rather than the removal being attempted.
 
+## Where it all is
+
+Everything the window lists is under the user's data directory -
+`%LOCALAPPDATA%\Chimera` on Windows, `$XDG_DATA_HOME/chimera` (default
+`~/.local/share/chimera`) elsewhere, or `CHIMERA_DATA_HOME` where that is set:
+
+| | |
+| --- | --- |
+| `Projects/<id>/` | one run's greenzone and what its project is called |
+| `UnpackedCores/<name>-<sha1>/` | a `.chimeraCore` unzipped so it can be loaded |
+| `CompiledCode/<core>/<version>/` | what cores compiled for a game |
+| `Cores/.feed-cache/` | what each core repository last said it published |
+| `cache-locks.json` | which entries the auto-clean may not take |
+
+**Nothing cached goes in the install directory.** A Chimera bundle is a zip
+somebody unpacks, and updating it means unpacking a newer one - anything that
+grows inside it is lost on every update, and makes the size of the install
+depend on what has been played. The bundle should be exactly what was
+downloaded.
+
+Unpacked cores and compiled code used to share one directory, `<exe>/CoreCache`,
+which was wrong twice over: it was inside the install, and one directory holding
+two layouts cannot be read back without guessing - a survey walking it for
+packages found the compiled-code directories too and listed each core's name as
+an unpacked package. They are two roots now, and an older install's `CoreCache`
+is moved into them on the first run that finds it (`CacheStore.AdoptLegacy`).
+Moved rather than deleted: it is all regenerable, but a PS3 game's compiled code
+is an hour of somebody's evening and a rename is free.
+
 ## The limit
 
 A cache that grows without bound is a disk that fills up while somebody is
@@ -122,8 +151,10 @@ never called an orphan, whatever the note says: it was opened from somewhere.
 * `CacheSurvey` - what is listed, what each row costs, what the auto-clean
   would take and in what order. No UI, so all of it is tested without one.
 * `CacheLocks` - the lock book and the per-kind defaults.
-* `ProjectCache` - the per-project directories and what the window shows
-  instead of sixteen hex digits.
+* `CacheStore` - where the unpacked cores and the compiled code live, and the
+  one-time move out of the install directory.
+* `ProjectCache` - the per-project directories, the data home they all hang
+  under, and what the window shows instead of sixteen hex digits.
 * `CacheManagerForm` - arranges the above. Thin, like the firmware windows are
   over their surveys.
 * `Config.CacheAutoClean`, `Config.CacheSizeLimitMb` - the setting. In
