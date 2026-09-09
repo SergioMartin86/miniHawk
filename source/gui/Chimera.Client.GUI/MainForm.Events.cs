@@ -161,8 +161,14 @@ namespace Chimera.Client.GUI
 		private void ScheduleShutdown()
 			=> _exitRequestPending = true;
 
+		/// <summary>See <see cref="IMainFormForTools.ShutdownIsUnattended"/>.</summary>
+		public bool ShutdownIsUnattended { get; private set; }
+
 		public void CloseEmulator(int? exitCode = null)
 		{
+			// asked for through the API - a Lua script, a harness - so there is
+			// nobody to answer a prompt on the way out
+			ShutdownIsUnattended = true;
 			ScheduleShutdown();
 			if (exitCode != null) _exitCode = exitCode.Value;
 		}

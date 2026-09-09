@@ -39,6 +39,17 @@ namespace Chimera.Client.Common
 		bool EnsureCoreIsAccurate();
 
 		/// <summary>
+		/// True while a shutdown NOBODY IS SITTING IN FRONT OF is under way - one
+		/// asked for through the API, which is what a Lua script's client.exit()
+		/// is. A prompt raised then is a prompt nothing can answer: the window
+		/// waits forever on a question with no asker, and the run loop spins
+		/// beside it. So the prompts that would block a close consult this and
+		/// take the safe branch instead - safe because it is the one that leaves
+		/// the file on disk exactly as it was.
+		/// </summary>
+		bool ShutdownIsUnattended { get; }
+
+		/// <summary>
 		/// Ends the session once the caller's own close has finished: a project and
 		/// its TAStudio are one thing, so closing that window closes the project.
 		/// </summary>

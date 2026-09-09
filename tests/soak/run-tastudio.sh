@@ -11,6 +11,13 @@
 #
 # CHIMERA_EXE      the frontend to drive (default build/Chimera.exe)
 # CHIMERA_SOAK_*   passed through to the script (see its header)
+# CHIMERA_SOAK_WINDOWED  1 to drive the real window instead of --headless
+# CHIMERA_SOAK_TIMEOUT   seconds before the run is called hung (default 3600)
+#
+# The timeout is not paranoia. A frontend that will not EXIT is as broken as one
+# that crashes and looks nothing like it - the process sits there busy, holding
+# a modal question no script can answer - so a run that has to be killed is
+# reported as a failure rather than waited on.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
@@ -27,6 +34,16 @@ case "$(uname -s)" in
 	*) runner=(mono) ;;
 esac
 
-exec "${runner[@]}" "$exe" --headless \
+headless=(--headless)
+[ "${CHIMERA_SOAK_WINDOWED:-}" = "1" ] && headless=()
+
+timeout --foreground -k 10 "${CHIMERA_SOAK_TIMEOUT:-3600}" \
+	"${runner[@]}" "$exe" "${headless[@]}" \
 	"--project=$project" \
 	"--lua=$here/tastudio-play.lua"
+rc=$?
+if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+	echo "run-tastudio: HUNG - the frontend never exited (killed after ${CHIMERA_SOAK_TIMEOUT:-3600}s)" >&2
+	exit 1
+fi
+exit "$rc"

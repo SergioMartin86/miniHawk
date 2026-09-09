@@ -828,6 +828,20 @@ namespace Chimera.Client.GUI
 				{
 					_exitRequestPending = false;
 					Close();
+					/* An unattended close that is REFUSED would otherwise spin
+					 * here forever: the request is spent, the window is still
+					 * up, and nothing will ask again. Whatever cancelled it
+					 * wanted an answer nobody is there to give, so name it and
+					 * stop rather than hang - the same bargain HeadlessMode
+					 * makes, and the same exit code, because it is the same
+					 * situation with a window attached. */
+					if (ShutdownIsUnattended && !IsDisposed && !_windowClosedAndSafeToExitProcess)
+					{
+						Console.Error.WriteLine("[chimera] an unattended shutdown was refused by a window "
+							+ "that wanted an answer; leaving anyway");
+						_exitCode = HeadlessMode.EXIT_CODE_DIALOG;
+						break;
+					}
 				}
 
 				if (IsDisposed || _windowClosedAndSafeToExitProcess)

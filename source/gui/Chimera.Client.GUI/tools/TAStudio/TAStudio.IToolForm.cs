@@ -1,4 +1,6 @@
-﻿using Chimera.Client.Common;
+﻿using System;
+
+using Chimera.Client.Common;
 using Chimera.Emulation.Common;
 
 namespace Chimera.Client.GUI
@@ -153,6 +155,23 @@ namespace Chimera.Client.GUI
 			}
 
 			if (CurrentTasMovie?.Changes is not true) return true;
+
+			/* Nobody to ask. A script's client.exit() reaches here with a modal
+			 * three-way question and no hand to answer it: the box waits on the
+			 * desktop forever while the run loop spins beside it, which is what
+			 * a "hang on exit" turned out to be. Take the branch that leaves the
+			 * project on disk exactly as it was - the unsaved edits are the
+			 * script's own, and a script that wanted them kept had the API to
+			 * save them - and say so, because a discarded change should never be
+			 * silent. */
+			if (MainForm.ShutdownIsUnattended)
+			{
+				Console.Error.WriteLine(
+					"[tastudio] closing unattended with unsaved changes; the project on disk is unchanged");
+				CurrentTasMovie.ClearChanges();
+				return true;
+			}
+
 			var shouldSaveResult = DialogController.DoWithTempMute(() => this.ModalMessageBox3(
 				caption: "Closing with Unsaved Changes",
 				icon: EMsgBoxIcon.Question,
