@@ -445,7 +445,11 @@ namespace Chimera.Client.GUI
 			// The compile cache (docs: a core's compiled objects, kept between
 			// sessions under the Compile Cache path). A precompile session is this
 			// same frontend as a child process; it installs no hook of its own.
-			WaterboxCore.CoreCacheRoot = Config.PathEntries.CoreCacheAbsolutePath();
+			// Not a configurable path: it is regenerable per-user data, so it lives
+			// where the core store and the project caches do rather than wherever
+			// somebody's config last said (see CacheStore).
+			CacheStore.AdoptLegacy();
+			WaterboxCore.CoreCacheRoot = CacheStore.CompiledCode;
 			if (_argParser.cmdPrecompile is { } precompileSpec)
 			{
 				var parts = precompileSpec.Split('/');

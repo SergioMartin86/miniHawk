@@ -508,8 +508,8 @@ namespace Chimera.Client.GUI
 		/// </summary>
 		private IReadOnlyList<CacheItem> TakeCacheSurvey()
 			=> CacheSurvey.Take(
-				corePackageCacheRoot: Path.Combine(Chimera.Common.PathExtensions.PathUtils.ExeDirectoryPath, "CoreCache"),
-				compiledCodeRoot: Config.PathEntries.CoreCacheAbsolutePath(),
+				corePackageCacheRoot: CacheStore.UnpackedCores,
+				compiledCodeRoot: CacheStore.CompiledCode,
 				// what is open right now may not be pulled out from under itself
 				openProjectId: _openProject?.Id,
 				loadedPackageSha1s: CoreRegistry.Instance.LoadedPackages

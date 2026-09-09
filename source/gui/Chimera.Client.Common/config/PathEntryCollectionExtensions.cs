@@ -153,18 +153,6 @@ namespace Chimera.Client.Common
 			return collection.AbsolutePathFor(path, null);
 		}
 
-		/// <summary>
-		/// Where cores keep the code they compiled for a game between sessions
-		/// (docs/compile-cache.md). Regenerable from the rom and the package; a
-		/// project records the names and hashes, not the files.
-		/// </summary>
-		public static string CoreCacheAbsolutePath(this PathEntryCollection collection)
-		{
-			var entry = collection[PathEntryCollection.GLOBAL, "Core Cache"];
-			var path = entry?.Path ?? Path.Combine(".", "CoreCache");
-			return collection.AbsolutePathFor(path, null);
-		}
-
 		public static string MovieAbsolutePath(this PathEntryCollection collection)
 		{
 			var path = collection[PathEntryCollection.GLOBAL, "Movies"].Path;

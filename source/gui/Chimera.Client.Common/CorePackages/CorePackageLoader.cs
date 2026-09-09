@@ -129,7 +129,7 @@ namespace Chimera.Client.Common
 			// instances (or a stale cache from an older zip) therefore never conflict:
 			// whoever wins the rename provides the cache, losers just use it.
 			var packageName = Path.GetFileNameWithoutExtension(zipPath);
-			var cacheRoot = Path.Combine(Chimera.Common.PathExtensions.PathUtils.ExeDirectoryPath, "CoreCache");
+			var cacheRoot = CacheStore.UnpackedCores;
 			var cacheDir = Path.Combine(cacheRoot, $"{packageName}-{packageSha1}");
 			if (Directory.Exists(cacheDir)) return cacheDir; // complete by construction (only ever appears via rename)
 			Directory.CreateDirectory(cacheRoot);

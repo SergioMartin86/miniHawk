@@ -102,7 +102,6 @@ namespace Chimera.Client.Common
 				BaseEntryFor(GLOBAL, "."),
 				ROMEntryFor(GLOBAL),
 				new(GLOBAL, "Firmware", Path.Combine(".", "Firmware")),
-				new(GLOBAL, "Core Cache", Path.Combine(".", "CoreCache")),
 				new(GLOBAL, "Movies", Path.Combine(".", "Movies")),
 				new(GLOBAL, "Movie backups", Path.Combine(".", "Movies", "backup")),
 				new(GLOBAL, "A/V Dumps", "."),
