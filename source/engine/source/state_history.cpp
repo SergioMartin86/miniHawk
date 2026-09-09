@@ -197,6 +197,7 @@ void StateHistory::spillTo(const char *dir)
 			[](const Segment &seg) { return seg.spilled; }),
 		m_segments.end());
 	m_spillDir = next;
+	m_spillFailed = false;   /* a new directory is a fresh chance at it */
 }
 
 void StateHistory::dropSpillFile()
@@ -662,6 +663,16 @@ void StateHistory::evict()
 		{
 			if (m_segments[i].spilled) continue;
 			if (spill(m_segments[i])) { moved = true; break; }
+			/* Asked to spill, and could not - a full disk, near enough always.
+			 * The thinning below carries on, so this costs frames rather than
+			 * the session, but it is not something to keep to ourselves. */
+			if (!m_spillDir.empty() && !m_spillFailed)
+			{
+				m_spillFailed = true;
+				fprintf(stderr, "[history] could not spill to %s - the far band will be dropped instead"
+					" (the disk is full, or the directory has gone)\n", m_spillDir.c_str());
+				fflush(stderr);
+			}
 			break;   /* nowhere to spill: everything after this fails the same way */
 		}
 		if (moved) continue;

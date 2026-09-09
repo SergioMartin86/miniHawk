@@ -444,6 +444,8 @@ namespace Chimera.Emulation.Common.Waterbox
 
 		public void SpillTo(string directory) => _session.GreenzoneSpillTo(directory ?? "");
 
+		public bool SpillFailed => _session.GreenzoneSpillFailed;
+
 		public long Count => _session.GreenzoneCount;
 
 		public int Nearest(int frame) => checked((int)_session.GreenzoneNearest(frame));

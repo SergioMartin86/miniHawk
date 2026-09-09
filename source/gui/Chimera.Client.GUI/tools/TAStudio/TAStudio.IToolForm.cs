@@ -63,6 +63,28 @@ namespace Chimera.Client.GUI
 
 		protected override void FastUpdateBefore() => UpdateBefore();
 
+		/// <summary>Said once: the condition lasts, and repeating it would be noise.</summary>
+		private bool _saidTheGreenzoneCannotReachTheDisk;
+
+		/// <summary>
+		/// A greenzone that cannot spill carries on by thinning in memory instead,
+		/// which is the right fallback and completely silent - from the piano roll
+		/// it looks like the history going sparse for no reason anybody can see.
+		/// The engine knows why; this is where somebody is told.
+		///
+		/// Asked about once a second rather than every frame: it is a condition
+		/// that lasts, so there is nothing to be gained by catching it sooner, and
+		/// the answer costs a call into the engine.
+		/// </summary>
+		private void SayIfTheGreenzoneCannotReachTheDisk()
+		{
+			if (_saidTheGreenzoneCannotReachTheDisk || Emulator.Frame % 60 is not 0) return;
+			if (CurrentTasMovie?.States?.SpillFailed is not true) return;
+			_saidTheGreenzoneCannotReachTheDisk = true;
+			MessageStatusLabel.Text = "The greenzone cannot be written to disk - it is being thinned instead.";
+			MainForm.AddOnScreenMessage("The disk is full: the greenzone is being thinned instead of spilled");
+		}
+
 		protected override void UpdateAfter()
 		{
 			if (!IsHandleCreated || IsDisposed || CurrentTasMovie == null)
@@ -82,6 +104,7 @@ namespace Chimera.Client.GUI
 			}
 
 			CurrentTasMovie.TasSession.UpdateValues(Emulator.Frame, CurrentTasMovie.Branches.Current);
+			SayIfTheGreenzoneCannotReachTheDisk();
 			MaybeFollowCursor();
 
 			if (Settings.AutoPause && SeekingTo == -1)

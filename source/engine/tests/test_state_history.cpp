@@ -479,6 +479,41 @@ int main(void)
 		}
 	}
 
+	{ // A spill that cannot be written says so, and carries on. The history's
+	  // fallback is to thin in memory, which is right and completely silent -
+	  // from a piano roll it looks like the greenzone going sparse for no
+	  // reason, so the fact has to be somewhere a frontend can ask for it.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 512);
+		h.bands(2, 6, 3, 12, 8);
+		/* a directory that is not there: fopen fails exactly as it does on a
+		 * disk with nothing left, without needing one */
+		h.spillTo("work-history-nowhere/nor-here");
+		h.capture(0);
+		assert(!h.spillFailed());   /* nothing has been asked of it yet */
+
+		for (int64_t f = 1; f <= 60; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+		}
+
+		assert(h.spillFailed());
+		assert(h.bytes() <= 512);          /* it kept its budget the other way */
+		assert(h.count() > 0);             /* and it is still a history */
+		assert(h.nearest(60) == 60);       /* with the work still in it */
+
+		/* somewhere it can write is a fresh chance, and the flag says so */
+		std::filesystem::create_directories("work-history-elsewhere");
+		h.spillTo("work-history-elsewhere");
+		assert(!h.spillFailed());
+		std::filesystem::remove_all("work-history-elsewhere");
+	}
+
 	{ // A budget too small to hold the run: the far end goes to disk, and the
 	  // frames out there are still frames the history can produce.
 		const chimera::HostApi api = fakeHost();

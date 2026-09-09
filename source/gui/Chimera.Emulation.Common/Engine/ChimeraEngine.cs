@@ -593,6 +593,9 @@ namespace Chimera.Emulation.Common.Engine
 		public abstract void ce_session_greenzone_spill(IntPtr session, string dir);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract int ce_session_greenzone_spill_failed(IntPtr session);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract void ce_session_greenzone_pin(IntPtr session, long frame, int pinned);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
@@ -1720,6 +1723,15 @@ namespace Chimera.Emulation.Common.Engine
 			=> E.ce_session_greenzone_bands(_session, nearFrames, midFrames, midStride, farStride, anchorSpacing);
 
 		public void GreenzoneSpillTo(string dir) => E.ce_session_greenzone_spill(_session, dir ?? "");
+
+		/// <summary>
+		/// Whether the far band could not be put on disk - a full disk, near
+		/// enough always. The history carries on by thinning in memory instead,
+		/// so this costs frames rather than the session, but it is the difference
+		/// between a greenzone going sparse for a reason and one doing it for no
+		/// reason anybody can see.
+		/// </summary>
+		public bool GreenzoneSpillFailed => E.ce_session_greenzone_spill_failed(_session) != 0;
 
 		public void GreenzonePin(long frame, bool pinned) => E.ce_session_greenzone_pin(_session, frame, pinned ? 1 : 0);
 

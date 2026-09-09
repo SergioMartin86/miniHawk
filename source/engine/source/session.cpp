@@ -2040,6 +2040,12 @@ void ce_session_greenzone_spill(ce_session *s, const char *dir)
 	s->history.spillTo(dir);
 }
 
+int32_t ce_session_greenzone_spill_failed(const ce_session *s)
+{
+	if (s == nullptr) return 0;
+	return s->history.spillFailed() ? 1 : 0;
+}
+
 int64_t ce_session_greenzone_count(const ce_session *s)
 {
 	return s->history.count();

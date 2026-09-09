@@ -1133,6 +1133,15 @@ CE_API void ce_session_greenzone_unpin_all(ce_session *s);
  * removed by it; changing the directory throws away what was already out there.
  * A project's cache directory is what this is for. */
 CE_API void ce_session_greenzone_spill(ce_session *s, const char *dir);
+/* Whether putting the far band on disk has failed since the directory was set;
+ * a full disk, near enough always. Setting a new directory clears it.
+ *
+ * The history carries on when it happens - it thins in memory instead, which
+ * is the right fallback and completely silent. From a piano roll that looks
+ * like the greenzone mysteriously going sparse, so somebody has to be told.
+ * The engine knows; saying it is the frontend's job, which is why this is a
+ * question to ask rather than a message to print. */
+CE_API int32_t ce_session_greenzone_spill_failed(const ce_session *s);
 /* The nearest stored frame at or before frame; -1 when none is. */
 CE_API int64_t ce_session_greenzone_nearest(const ce_session *s, int64_t frame);
 /* Drops stored states AFTER frame - an input edit at frame N makes every

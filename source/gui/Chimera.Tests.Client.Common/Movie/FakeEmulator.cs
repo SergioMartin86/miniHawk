@@ -62,6 +62,9 @@ namespace Chimera.Tests.Client.Common.Movie
 
 		public void SpillTo(string directory) => SpillDirectory = directory;
 
+		/// <summary>Set by a test that wants to see what a full disk does.</summary>
+		public bool SpillFailed { get; set; }
+
 		public long Count => _states.Count;
 
 		public int Nearest(int frame)

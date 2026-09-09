@@ -79,6 +79,15 @@ public:
 	 * frames themselves rather than the time to read them back. */
 	void spillTo(const char *dir);
 
+	/* Whether putting the far band on disk has failed since the directory was
+	 * set - a full disk, almost always.
+	 *
+	 * The history carries on when it does: it thins in memory instead, which is
+	 * correct and completely silent. From the piano roll that looks like the
+	 * greenzone mysteriously going sparse, so somebody has to be told, and the
+	 * engine is where the fact is. Saying it is the frontend's. */
+	bool spillFailed() const { return m_spillFailed; }
+
 	bool enabled() const { return m_budget != 0; }
 	uint64_t bytes() const { return m_bytes; }
 
@@ -280,6 +289,7 @@ private:
 	std::string m_spillDir;
 	std::FILE *m_spill = nullptr;      /* one file, appended to, holes and all */
 	uint64_t m_spillBytes = 0;
+	bool m_spillFailed = false;
 
 public:
 	~StateHistory();
