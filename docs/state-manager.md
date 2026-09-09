@@ -554,10 +554,38 @@ guard-page fault was the symptom of reporting the real one. miniBox now names
 the region an address lands in, so that reads as "the guard at the bottom of
 the alt stack - this stack overflowed" rather than as a page number.
 
-What the evidence does point at: three faults in three unrelated PS2
-subsystems - a `std::map` insert, the microVU dispatch, an INI setting write -
-all reading through a near-null pointer, preceded in the log by a refused guest
-`mmap` of 64 GiB into a 3072 MiB arena. That is an allocation failing and going
-unchecked, not a delta being wrong. miniBox now prints the guest return
+### What it was
+
+A delta being wrong after all, and in the one place nothing was watching.
+
+`munmap` zeroes the page it takes away, because that is what the guest's next
+`mmap` of it is entitled to find - musl hands fresh anonymous memory to malloc
+on exactly that promise. None of that goes through the fault handler, so the
+epoch never heard about it: the delta recorded the page moving to free and back
+and not a byte of content, and a frame rebuilt from it came back holding what
+the page held BEFORE it was freed. The guest then handed that out as fresh
+memory. A heap does this all day, which is why the damage was neither subtle nor
+local, and why it always landed somewhere unrelated - a `std::map` insert, the
+microVU dispatch - seventy frames after the seek that caused it.
+
+Finding it needed the crash on demand, and that needed the piano roll, because
+the trigger is a seek BACKWARDS and nothing else:
+
+| variant, 1500 frames | result |
+| --- | --- |
+| plain play, TAStudio open | survives |
+| record mode, no jumps | survives |
+| jumps back, with or without record | dies within ~70 frames of the first |
+
+Fixed in miniBox a710035: an epoch is told when a page's allocation changes,
+not only when one is written. Both crashing variants now survive.
+
+Two things worth keeping from the search. `test_delta` calls its cases from
+`run_all` by hand, so adding a function is not adding a test - the three tests
+that pin this passed against the broken code the first time they were written,
+which is a green run that means nothing. And the 64 GiB `mmap` in the log, which
+looked like the cause for most of a day, was a corrupted size read out of a heap
+that had already been handed a stale page: a symptom of this, several steps
+downstream. miniBox now prints the guest return
 addresses on a refusal that large, and a core package ships `core.wbx`
 unstripped, so `addr2line` names the caller.
