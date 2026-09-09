@@ -55,18 +55,6 @@ namespace Chimera.Emulation.Common
 		/// </summary>
 		bool RestoreTo(int frame);
 
-		/// <summary>
-		/// Walks the machine BACKWARDS towards a frame, and answers with the one
-		/// it reached; -1 if it could not move at all.
-		///
-		/// This is what rewinding wants. Reaching the frame before through
-		/// <see cref="RestoreTo"/> costs an anchor and every step between it and
-		/// the target - to undo one frame's work. Going back undoes exactly that
-		/// frame. It is only ever possible near the playhead, which is where
-		/// stepping backwards happens, so it stops early rather than failing.
-		/// </summary>
-		int RewindTo(int frame, int from);
-
 		/// <summary>Drops everything after this frame - what an input edit means.</summary>
 		void InvalidateAfter(int afterFrame);
 

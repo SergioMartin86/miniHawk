@@ -1168,20 +1168,12 @@ namespace Chimera.Client.GUI
 		private int PriorStateForFramebuffer(int frame)
 			=> CurrentTasMovie.States.Nearest(frame > 0 ? frame - 1 : 0);
 
-		/// <summary>Puts the machine on a frame the history holds.</summary>
+		/// <summary>
+		/// Puts the machine on a frame the history holds. Always forwards from an
+		/// anchor, whichever way the frame lies: see docs/state-manager.md.
+		/// </summary>
 		public void LoadStateAt(int frame)
 		{
-			// Backwards a short way - which is what rewinding is - undoes the
-			// frames between here and there, and costs those frames. Restoring
-			// costs an anchor and every step taken since it, to undo one frame's
-			// work. The walk stops where the reverse deltas stop and never goes
-			// further than the near band, so a longer jump falls through to the
-			// restore rather than paying to discover it should have.
-			if (frame < Emulator.Frame && CurrentTasMovie.States.RewindTo(frame, Emulator.Frame) == frame)
-			{
-				AfterStateLoaded(frame, null);
-				return;
-			}
 			if (!CurrentTasMovie.States.RestoreTo(frame)) return;
 			AfterStateLoaded(frame, null);
 		}

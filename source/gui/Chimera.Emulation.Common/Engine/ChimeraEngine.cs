@@ -622,8 +622,6 @@ namespace Chimera.Emulation.Common.Engine
 		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract int ce_session_greenzone_restore(IntPtr session, long frame);
 
-		[ChimeraImport(CallingConvention.Cdecl)]
-		public abstract long ce_session_greenzone_rewind(IntPtr session, long from, long to);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract int ce_session_history_save(IntPtr session, string path, string machineId);
@@ -1773,7 +1771,6 @@ namespace Chimera.Emulation.Common.Engine
 		/// Stops where the reverse deltas stop rather than failing, so the caller
 		/// compares what it got with what it asked for. -1 = it did not move.
 		/// </summary>
-		public long GreenzoneRewind(long from, long to) => E.ce_session_greenzone_rewind(_session, from, to);
 
 		/// <summary>
 		/// The history across sessions. A history naming a different machine is
