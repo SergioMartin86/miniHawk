@@ -424,6 +424,51 @@ on disk is close to free until the disk is slow.
 coarsening is real work done every frame. That is the trade the design makes on
 purpose: a little per frame, always, instead of a stall when the budget fills.
 
+## What coarsening costs
+
+Thinning a band merges a landing into its neighbour, and the neighbour keeps
+the span - so the neighbour ACCUMULATES, and every later merge re-reads all of
+it. Collapsing four hundred landings that way is quadratic in the bytes, and
+that stayed invisible for as long as the only core measured had frames that
+overlapped almost perfectly.
+
+`tests/perf/coarsenbench.c` is that loop with real deltas and no core. The
+number that decides everything is how much of a frame's churn lands on the same
+pages as the frame before it:
+
+| frames overlap | uncapped | capped at 8 MB |
+|---|---|---|
+| 99% | 0.16 ms/frame, band 4.1 MB | 0.17 ms/frame, band 4.1 MB |
+| 90% | **11.0 ms/frame**, band 40.1 MB | 0.42 ms/frame, band 45.6 MB |
+| 70% | **33.6 ms/frame**, band 119.9 MB | 0.63 ms/frame, band 132.6 MB |
+
+Thirty three milliseconds a frame, spent reclaiming a few per cent, on a
+machine whose frames overlap seventy per cent. Two fixes, and the second is the
+one that matters:
+
+**Compose two deltas where they lie.** The streaming `wbx_compose_delta` reads
+both into buffers of its own before it can merge them, because a count is
+written before its list and a write callback cannot be seeked back to. That is
+the right shape for a delta coming off a disk and the wrong one for the caller
+that does this every frame, which holds both contiguously already - it was
+copying megabytes to look at megabytes. `wbx_compose_delta_mem` walks them in
+place: nothing allocated, each input byte read once, each output byte written
+once. Nine times faster on a two megabyte merge. It is bound optionally, and a
+host without it falls back to the streaming one for the same answer.
+
+**Cap how large a merge may get** (`kMergeCap`, 8 MB - about a millisecond of
+memory bandwidth). This is what turns the quadratic into a bounded per-frame
+cost, and it is nearly free: the merges it refuses are the handful of biggest
+ones, which are exactly where the union is closest to the sum and least is
+reclaimed. Six refusals out of four hundred buy back a twenty-six-fold
+speed-up for fourteen per cent more memory in the band. A landing left in place
+only makes the band denser than asked, which is safe; the budget answers for
+the memory.
+
+The anchor guard stays as the outer bound on the same thought: a composed link
+that already costs what a whole machine costs is better served by the anchor it
+is walking from.
+
 ## What rewinding cost, and why it is gone
 
 Reverse deltas were removed. Every frame is now reached the one way: **load an

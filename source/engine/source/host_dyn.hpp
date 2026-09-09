@@ -72,6 +72,15 @@ struct HostApi
 	 * case the history keeps every link it captured and simply costs more. */
 	void (*wbx_compose_delta)(WbxReadCb a, uintptr_t aUserdata, WbxReadCb b, uintptr_t bUserdata,
 		WbxWriteCb out, uintptr_t outUserdata, WbxReturn *ret);
+
+	/* The same, for two deltas the caller already holds contiguously - which
+	 * the history always does, and which it does every frame. The streaming
+	 * one above has to read both into buffers of its own before it can merge
+	 * them, so it copies megabytes to look at megabytes; this walks them where
+	 * they lie. Optional: an older host has only the one above, and the answer
+	 * is the same either way. */
+	void (*wbx_compose_delta_mem)(const uint8_t *a, uintptr_t aLen, const uint8_t *b, uintptr_t bLen,
+		WbxWriteCb out, uintptr_t outUserdata, WbxReturn *ret);
 };
 
 /* The loaded host, or nullptr with *error set. Loads once, then cached. */

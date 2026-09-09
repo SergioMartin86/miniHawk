@@ -119,6 +119,8 @@ void loadOnce()
 	/* Composition on its own: epochs without it means a history that keeps
 	 * every link it captured, which is dense and expensive but not wrong. */
 	if (!g_ok || !bind(g_api.wbx_compose_delta, "wbx_compose_delta")) g_api.wbx_compose_delta = nullptr;
+	/* and the in-memory form of it, which an older host does not have */
+	if (!g_ok || !bind(g_api.wbx_compose_delta_mem, "wbx_compose_delta_mem")) g_api.wbx_compose_delta_mem = nullptr;
 }
 
 } // namespace

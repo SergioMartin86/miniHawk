@@ -449,23 +449,55 @@ void StateHistory::tidy(int64_t frame, int64_t stride)
 		const size_t i = static_cast<size_t>(steps) - 1;
 		if (i + 1 >= seg.links.size()) return;       /* the last link has nothing to merge into */
 
-		/* A composed link that already costs what a whole machine costs is not
-		 * worth composing further - that is the point at which this band would
-		 * be better served by the anchor it is walking from. Leaving the
-		 * landing in place only makes the band denser than asked, which is
-		 * safe; the budget is what answers for the memory. */
+		/* A merge reads both links and writes their union, so it costs their
+		 * combined size - and coarsening merges into a neighbour that KEEPS the
+		 * span, so that neighbour accumulates and every later merge re-reads
+		 * all of it. Collapsing four hundred landings that way cost four and a
+		 * half seconds of pure composition on a machine whose frames overlap
+		 * ninety per cent, and thirteen seconds at seventy; measured per frame,
+		 * ten to thirty milliseconds spent reclaiming a few per cent.
+		 *
+		 * So a merge is capped at what fits in about a millisecond of memory
+		 * bandwidth. It costs almost nothing: the merges it refuses are the
+		 * handful of biggest ones, which are exactly the ones where the union
+		 * is closest to the sum and least is reclaimed - a tenth of a per cent
+		 * of the work buys back four to fourteen per cent of the memory.
+		 * Leaving the landing in place only makes the band denser than asked,
+		 * which is safe; the budget is what answers for the memory.
+		 *
+		 * The anchor is the outer bound on the same thought: a composed link
+		 * that already costs what a whole machine costs is not worth composing
+		 * further, because the band would be better served by the anchor it is
+		 * walking from. */
+		static constexpr uint64_t kMergeCap = 8u << 20;
 		Link &a = seg.links[i];
 		Link &b = seg.links[i + 1];
-		if (!seg.anchor.empty() && a.bytes.size() + b.bytes.size() > seg.anchor.size()) return;
+		const uint64_t together = a.bytes.size() + b.bytes.size();
+		if (together > kMergeCap) return;
+		if (!seg.anchor.empty() && together > seg.anchor.size()) return;
 
 		std::vector<uint8_t> merged;
+		/* The merge of two sorted lists is at most both of them, and asking for
+		 * that up front is one allocation instead of a dozen doublings with a
+		 * copy each - on a delta of megabytes that is most of the write. */
+		merged.reserve(a.bytes.size() + b.bytes.size());
 		ByteSink sink{ &merged };
-		ByteSource sa{ a.bytes.data(), a.bytes.size(), 0 };
-		ByteSource sb{ b.bytes.data(), b.bytes.size(), 0 };
 		WbxReturn r{};
-		m_host->wbx_compose_delta(sourceRead, reinterpret_cast<uintptr_t>(&sa),
-			sourceRead, reinterpret_cast<uintptr_t>(&sb),
-			sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
+		if (m_host->wbx_compose_delta_mem != nullptr)
+		{
+			/* Both are already contiguous here, so the host has no reason to
+			 * copy them into buffers of its own to look at them. */
+			m_host->wbx_compose_delta_mem(a.bytes.data(), a.bytes.size(), b.bytes.data(), b.bytes.size(),
+				sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
+		}
+		else
+		{
+			ByteSource sa{ a.bytes.data(), a.bytes.size(), 0 };
+			ByteSource sb{ b.bytes.data(), b.bytes.size(), 0 };
+			m_host->wbx_compose_delta(sourceRead, reinterpret_cast<uintptr_t>(&sa),
+				sourceRead, reinterpret_cast<uintptr_t>(&sb),
+				sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
+		}
 		if (!r.ok()) return;   /* a merge that will not happen costs memory, nothing else */
 
 		const uint64_t was = a.bytes.size() + b.bytes.size();
