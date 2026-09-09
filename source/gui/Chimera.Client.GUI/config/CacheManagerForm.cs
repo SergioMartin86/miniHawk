@@ -64,6 +64,11 @@ namespace Chimera.Client.GUI
 		/// <summary>The limit and whether it is enforced, as the window has it right now.</summary>
 		private readonly CacheCleanPolicy _policy;
 
+		/// <summary>What is free on the disk the caches are on; asked once per survey.</summary>
+		private readonly Func<long> _freeSpace;
+
+		private long _free = long.MaxValue;
+
 		private static readonly ImageList _padlocks = BuildPadlocks();
 
 		/// <summary>
@@ -102,16 +107,21 @@ namespace Chimera.Client.GUI
 		/// <param name="setLocked">records which entries the auto-clean may not take</param>
 		/// <param name="policy">the limit as it stands, read once when the window opens</param>
 		/// <param name="savePolicy">where a changed limit goes</param>
+		/// <param name="freeSpace">what the disk has left, for the floor the limit
+		/// is capped by; long.MaxValue means nobody asked, which is what a test
+		/// with no disk to fill wants</param>
 		public CacheManagerForm(
 			Func<IReadOnlyList<CacheItem>> survey,
 			Action<IReadOnlyList<CacheItem>, bool>? setLocked = null,
 			CacheCleanPolicy? policy = null,
-			Action<CacheCleanPolicy>? savePolicy = null)
+			Action<CacheCleanPolicy>? savePolicy = null,
+			Func<long>? freeSpace = null)
 		{
 			_survey = survey;
 			_setLocked = setLocked ?? CacheLocks.Set;
 			_policy = policy ?? new CacheCleanPolicy();
 			_savePolicy = savePolicy ?? (static _ => { });
+			_freeSpace = freeSpace ?? (static () => long.MaxValue);
 
 			SuspendLayout();
 			ClientSize = new(UIHelper.ScaleX(1460), UIHelper.ScaleY(500));
@@ -333,6 +343,7 @@ namespace Chimera.Client.GUI
 		{
 			var wasSelected = Selected()?.Path;
 			_items = Sorted(_survey()).ToList();
+			_free = _freeSpace();
 			// a tick whose row has gone leaves with it, or Remove would act on
 			// something no longer listed
 			_ticked.IntersectWith(_items.Select(static i => i.Path));
@@ -633,7 +644,7 @@ namespace Chimera.Client.GUI
 			if (going.Count is 0)
 			{
 				_status.Text = _items.Sum(static i => i.Bytes) > LimitBytes
-					? "Over the limit, but everything that is left is locked or in use."
+					? "Over the limit, and nothing left may be taken: what remains is locked, in use, or the run last worked on."
 					: "The cache is already under its limit.";
 				return;
 			}
@@ -642,15 +653,18 @@ namespace Chimera.Client.GUI
 			var result = CacheSurvey.AutoClean(_items, new CacheCleanPolicy { Enabled = true, LimitBytes = LimitBytes });
 			Reload();
 			_status.Text = $"Removed {result.Removed.Count} of the oldest unlocked item(s),"
-				+ $" freeing {CacheSurvey.Size(result.Before - result.After)}.";
+				+ $" freeing {CacheSurvey.Size(result.Before - result.After)}."
+				+ (result.StillOver ? $" Still over: {result.Why}" : "");
 		}
 
 		/// <summary>
-		/// What the cache may weigh, as the box has it right now. The tick beside it
-		/// decides whether anything enforces it on its own; Clean Now applies it
-		/// either way, since somebody who pressed it is enforcing it by hand.
+		/// What the cache may weigh: the smaller of what the box says and what
+		/// leaves the disk its floor. The tick beside the box decides whether
+		/// anything enforces it on its own; Clean Now applies it either way, since
+		/// somebody who pressed it is enforcing it by hand.
 		/// </summary>
-		private long LimitBytes => _policy.LimitBytes;
+		private long LimitBytes
+			=> CacheSurvey.EffectiveLimit(_policy, _items.Sum(static i => i.Bytes), _free);
 
 		/// <summary>
 		/// The line that says the cache is over its limit, or "". Only ever shown
@@ -660,13 +674,17 @@ namespace Chimera.Client.GUI
 		/// </summary>
 		private string OverTheLimit(long total)
 		{
-			if (total <= _policy.LimitBytes) return "";
-			var reachable = _items.Where(static i => !i.Locked && !i.InUse).Sum(static i => i.Bytes);
-			var over = total - _policy.LimitBytes;
+			var limit = LimitBytes;
+			if (total <= limit) return "";
+			var over = total - limit;
+			var going = CacheSurvey.WhatWouldGo(_items, limit);
 			return Environment.NewLine
-				+ $"That is {CacheSurvey.Size(over)} over the limit. "
-				+ (reachable < over
-					? "Everything else is locked or in use, so the limit cannot be met without unlocking something."
+				+ (limit < _policy.LimitBytes
+					? $"The disk is low, so the cache is being held to {CacheSurvey.Size(limit)} rather than to the number beside it. "
+					: "")
+				+ $"That is {CacheSurvey.Size(over)} over. "
+				+ (going.Sum(static i => i.Bytes) < over
+					? "What is left is locked, in use, or the run last worked on, so the limit cannot be met without unlocking something."
 					: _autoClean.Checked
 						? "The oldest unlocked items go when this window or a project closes, or now with Clean Now."
 						: "Nothing is enforcing it while the tick is off; Clean Now applies it once.");

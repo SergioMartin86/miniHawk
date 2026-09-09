@@ -143,6 +143,24 @@ namespace Chimera.Client.Common
 		public const int DefaultLimitMb = 100 * 1024;
 
 		public const long DefaultLimitBytes = DefaultLimitMb * 1024L * 1024L;
+
+		/// <summary>
+		/// How much of the disk to leave alone, whatever the limit says.
+		///
+		/// The limit bounds Chimera's own footprint and says nothing about the
+		/// machine: a hundred-gigabyte ceiling on a small SSD does not stop that
+		/// SSD filling up, and a run can reach the end of the disk with the cache
+		/// at three gigabytes. So the limit that actually applies is the SMALLER
+		/// of the two - what was asked for, and what leaves this much free.
+		///
+		/// Twenty gigabytes because it has to survive one more session of whatever
+		/// is running: a console greenzone grows by tens of gigabytes in an
+		/// afternoon, and a floor that only just holds today is a floor that is
+		/// gone tomorrow.
+		/// </summary>
+		public long FreeSpaceFloorBytes { get; set; } = DefaultFreeSpaceFloorMb * 1024L * 1024L;
+
+		public const int DefaultFreeSpaceFloorMb = 20 * 1024;
 	}
 
 	/// <summary>What one pass of the auto-clean did.</summary>
@@ -155,6 +173,12 @@ namespace Chimera.Client.Common
 
 		public long After { get; init; }
 
+		/// <summary>The limit that actually applied, which the disk may have lowered.</summary>
+		public long Limit { get; init; }
+
+		/// <summary>True when the disk, rather than the setting, is what set that limit.</summary>
+		public bool DiskDecidedTheLimit { get; init; }
+
 		/// <summary>
 		/// True when the cache is STILL over the limit and nothing else may be
 		/// taken - everything left is locked, or in use. Not a failure: it is the
@@ -162,6 +186,44 @@ namespace Chimera.Client.Common
 		/// than silently going on being over.
 		/// </summary>
 		public bool StillOver { get; init; }
+
+		/// <summary>
+		/// Of what is left over the limit, how much is held by a lock. This is the
+		/// half that will still be true tomorrow: somebody has to unlock something
+		/// or raise the limit, so it is worth saying out loud.
+		/// </summary>
+		public long HeldByLocks { get; init; }
+
+		/// <summary>
+		/// And how much is held by what is open. This half resolves itself when
+		/// the project closes and the next pass runs, so it is not worth
+		/// interrupting anybody over.
+		/// </summary>
+		public long HeldByWhatIsOpen { get; init; }
+
+		/// <summary>How much is the newest entry, which is never taken.</summary>
+		public long HeldByTheNewest { get; init; }
+
+		/// <summary>
+		/// Why it stopped while still over, in a sentence, or "". The reasons are
+		/// different in kind - a lock waits for a person, an open project waits
+		/// for the session to end - so the sentence says which rather than
+		/// reporting a number nobody can act on.
+		/// </summary>
+		public string Why
+		{
+			get
+			{
+				if (!StillOver) return "";
+				List<string> held = new();
+				if (HeldByLocks > 0) held.Add($"{CacheSurvey.Size(HeldByLocks)} of it is locked");
+				if (HeldByWhatIsOpen > 0) held.Add($"{CacheSurvey.Size(HeldByWhatIsOpen)} is in use right now");
+				if (HeldByTheNewest > 0) held.Add($"{CacheSurvey.Size(HeldByTheNewest)} is the run last worked on, which is never taken");
+				return held.Count is 0
+					? "Nothing left can be removed."
+					: string.Join("; ", held) + ".";
+			}
+		}
 	}
 
 	/// <summary>
@@ -315,6 +377,19 @@ namespace Chimera.Client.Common
 		/// asking - this is what the window shows before it does anything, and
 		/// what a test can check without a disk to delete from.
 		///
+		/// <paramref name="spare"/> names cache locations this pass may not take
+		/// whatever their age. It is for the run that has just been closed: a
+		/// greenzone large enough to break the limit on its own is also, once it
+		/// is the only thing left, the oldest thing there is - and eviction
+		/// reaching the work of the last ten minutes is not a cache policy.
+		///
+		/// The NEWEST entry is never taken either, whoever asks. That is the
+		/// durable half of the same thought: a caller has to remember to spare
+		/// something, but nothing has to remember that the last thing worked on
+		/// survives. It also means the cache can never empty itself - if one run
+		/// breaks the limit on its own, the answer is to say so, not to delete
+		/// the only thing there.
+		///
 		/// OLDEST FIRST, by when anything in it was last written. That is the one
 		/// ordering that means "least likely to be wanted next", and it is the
 		/// rule a lock exists to overrule for the run where it is wrong.
@@ -324,14 +399,18 @@ namespace Chimera.Client.Common
 		/// are left alone too - taking them would not move the total, so removing
 		/// them would be deletion for its own sake.
 		/// </summary>
-		public static IReadOnlyList<CacheItem> WhatWouldGo(IReadOnlyList<CacheItem> items, long limitBytes)
+		public static IReadOnlyList<CacheItem> WhatWouldGo(
+			IReadOnlyList<CacheItem> items,
+			long limitBytes,
+			IReadOnlyCollection<string>? spare = null)
 		{
 			var total = items.Sum(static i => i.Bytes);
 			if (total <= limitBytes) return Array.Empty<CacheItem>();
 
+			var newest = Newest(items);
 			List<CacheItem> going = new();
 			var candidates = items
-				.Where(static i => !i.InUse && !i.Locked && i.Bytes > 0)
+				.Where(i => !i.InUse && !i.Locked && i.Bytes > 0 && !IsSpared(spare, i) && !ReferenceEquals(i, newest))
 				.OrderBy(static i => i.LastUsed)
 				// among entries of the same age the biggest goes first, so reaching
 				// the limit costs as few removals as it can
@@ -346,33 +425,105 @@ namespace Chimera.Client.Common
 		}
 
 		/// <summary>
-		/// Brings the cache back under its limit, oldest first. Does nothing at
-		/// all when the policy is off or the cache is already under it.
+		/// The limit that actually applies: the smaller of what was asked for and
+		/// what leaves the disk its floor.
+		///
+		/// A limit is a promise about the machine, not about Chimera, and the
+		/// setting alone cannot keep it - a hundred gigabytes on a small SSD is no
+		/// promise at all. So when the disk is low the cache is held to whatever
+		/// gives the floor back, and when it is not this is simply the setting.
 		/// </summary>
-		public static CacheCleanResult AutoClean(IReadOnlyList<CacheItem> items, CacheCleanPolicy policy)
+		/// <param name="freeBytes">what is free on the disk the cache is on, or
+		/// <see cref="long.MaxValue"/> when nobody could say</param>
+		public static long EffectiveLimit(CacheCleanPolicy policy, long cacheBytes, long freeBytes)
+		{
+			if (freeBytes >= policy.FreeSpaceFloorBytes) return policy.LimitBytes;
+			// giving the floor back costs exactly what it is short by, and the
+			// cache can only give what it holds
+			var shortBy = policy.FreeSpaceFloorBytes - freeBytes;
+			var fromCache = cacheBytes - shortBy;
+			return Math.Max(0, Math.Min(policy.LimitBytes, fromCache));
+		}
+
+		/// <summary>
+		/// Brings the cache back under its limit, oldest first. Does nothing at
+		/// all when the policy is off, or when the cache is already under both the
+		/// limit and whatever the disk allows.
+		/// </summary>
+		public static CacheCleanResult AutoClean(
+			IReadOnlyList<CacheItem> items,
+			CacheCleanPolicy policy,
+			long freeBytes = long.MaxValue,
+			IReadOnlyCollection<string>? spare = null)
 		{
 			var before = items.Sum(static i => i.Bytes);
-			if (!policy.Enabled || before <= policy.LimitBytes)
+			var limit = EffectiveLimit(policy, before, freeBytes);
+			if (!policy.Enabled || before <= limit)
 			{
-				return new CacheCleanResult { Before = before, After = before };
+				return new CacheCleanResult { Before = before, After = before, Limit = limit };
 			}
 
 			List<CacheItem> removed = new();
 			var after = before;
-			foreach (var item in WhatWouldGo(items, policy.LimitBytes))
+			foreach (var item in WhatWouldGo(items, limit, spare))
 			{
 				if (Remove(item) is not null) continue;
 				removed.Add(item);
 				after -= item.Bytes;
 			}
+
+			// What is left over the limit is held by something, and by what decides
+			// whether saying so is worth anybody's attention.
+			var over = after - limit;
+			var newest = Newest(items);
+			var locked = items.Where(i => i.Locked && !i.InUse && !IsSpared(spare, i)).Sum(static i => i.Bytes);
+			var open = items.Where(static i => i.InUse).Sum(static i => i.Bytes);
+			var kept = newest is not null && !newest.InUse && !newest.Locked ? newest.Bytes : 0;
 			return new CacheCleanResult
 			{
 				Removed = removed,
 				Before = before,
 				After = after,
-				StillOver = after > policy.LimitBytes,
+				Limit = limit,
+				DiskDecidedTheLimit = limit < policy.LimitBytes,
+				StillOver = over > 0,
+				HeldByLocks = over > 0 ? Math.Min(over, locked) : 0,
+				HeldByWhatIsOpen = over > 0 ? Math.Min(over, open) : 0,
+				HeldByTheNewest = over > 0 ? Math.Min(over, kept) : 0,
 			};
 		}
+
+		/// <summary>
+		/// What is free on the disk this directory is on, or
+		/// <see cref="long.MaxValue"/> when the machine will not say - an unknown
+		/// answer must not be read as "none left", which would empty the cache.
+		/// </summary>
+		public static long FreeSpaceAt(string path)
+		{
+			try
+			{
+				var root = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path));
+				if (string.IsNullOrEmpty(root)) return long.MaxValue;
+				return new DriveInfo(root!).AvailableFreeSpace;
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+			{
+				return long.MaxValue;
+			}
+		}
+
+		private static bool IsSpared(IReadOnlyCollection<string>? spare, CacheItem item)
+			=> spare is not null && spare.Contains(item.Path, StringComparer.Ordinal);
+
+		/// <summary>
+		/// The entry most recently written to, which the auto-clean never takes.
+		/// Entries weighing nothing are not it: sparing one of those would spare
+		/// nothing and leave the real newest exposed.
+		/// </summary>
+		private static CacheItem? Newest(IReadOnlyList<CacheItem> items)
+			=> items.Where(static i => i.Bytes > 0)
+				.OrderByDescending(static i => i.LastUsed)
+				.FirstOrDefault();
 
 		/// <summary>A size in the units somebody compares two rows in.</summary>
 		public static string Size(long bytes)

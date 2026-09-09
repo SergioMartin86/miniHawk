@@ -114,6 +114,14 @@ namespace Chimera.Client.Common
 		/// </summary>
 		public int CacheSizeLimitMb { get; set; } = CacheCleanPolicy.DefaultLimitMb;
 
+		/// <summary>
+		/// How much of the disk to leave free whatever the limit says, in
+		/// megabytes. The limit bounds Chimera; this bounds the damage Chimera can
+		/// do to the machine, which is a different promise - see
+		/// <see cref="CacheCleanPolicy.FreeSpaceFloorBytes"/>.
+		/// </summary>
+		public int CacheFreeSpaceFloorMb { get; set; } = CacheCleanPolicy.DefaultFreeSpaceFloorMb;
+
 		public bool PauseWhenMenuActivated { get; set; } = true;
 		public bool SaveWindowPosition { get; set; } = true;
 		public bool MainFormStayOnTop { get; set; }

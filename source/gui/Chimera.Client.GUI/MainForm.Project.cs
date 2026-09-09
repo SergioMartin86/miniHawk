@@ -47,6 +47,9 @@ namespace Chimera.Client.GUI
 		{
 			if (_closingProject) return;
 			_closingProject = true;
+			// before the close, which is what takes it away: the auto-clean below
+			// must know which run this session was working on
+			var wasOpen = _openProject?.Id;
 			try
 			{
 				if (Tools.IsLoaded<TAStudio>()) Tools.Close<TAStudio>();
@@ -64,7 +67,12 @@ namespace Chimera.Client.GUI
 			// greenzone that was untouchable a moment ago is now an ordinary row.
 			// Both of those are only true once the close has finished, so this is
 			// outside the finally rather than in it.
-			AutoCleanCaches();
+			//
+			// An ordinary row, but not one this pass may take: a greenzone big
+			// enough to break the limit on its own is also, once everything older
+			// has gone, the oldest thing left - and closing a run should not be
+			// how it gets deleted.
+			AutoCleanCaches(spareProjectId: wasOpen);
 		}
 
 		/// <summary>

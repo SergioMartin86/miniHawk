@@ -492,7 +492,8 @@ namespace Chimera.Client.GUI
 				{
 					Config.CacheAutoClean = p.Enabled;
 					Config.CacheSizeLimitMb = (int) (p.LimitBytes / 1024 / 1024);
-				});
+				},
+				freeSpace: () => CacheSurvey.FreeSpaceAt(ProjectCache.DataHome));
 			this.ShowDialogWithTempMute(form);
 			// a limit that was just lowered should mean something before the next
 			// project closes, and the window has already asked about anything it
@@ -518,7 +519,19 @@ namespace Chimera.Client.GUI
 					.ToList()!);
 
 		private CacheCleanPolicy CacheCleanPolicyFromConfig()
-			=> new() { Enabled = Config.CacheAutoClean, LimitBytes = Config.CacheSizeLimitMb * 1024L * 1024L };
+			=> new()
+			{
+				Enabled = Config.CacheAutoClean,
+				LimitBytes = Config.CacheSizeLimitMb * 1024L * 1024L,
+				FreeSpaceFloorBytes = Config.CacheFreeSpaceFloorMb * 1024L * 1024L,
+			};
+
+		/// <summary>
+		/// Said once a session, and only for the half that will still be true
+		/// tomorrow: a cache held over its limit by locks needs a person, while
+		/// one held by an open project sorts itself out at the next close.
+		/// </summary>
+		private bool _saidTheCacheCannotBeCleaned;
 
 		/// <summary>
 		/// Holds the cache to its limit, taking the oldest unlocked entries first
@@ -531,17 +544,42 @@ namespace Chimera.Client.GUI
 		/// it while a run is open would mean deleting somebody's disk space in the
 		/// middle of their frame advance.
 		/// </summary>
-		private void AutoCleanCaches()
+		/// <param name="spareProjectId">a project whose cache this pass may not
+		/// take - the one that has just been closed</param>
+		private void AutoCleanCaches(string spareProjectId = null)
 		{
 			if (!Config.CacheAutoClean) return;
 			try
 			{
-				var result = CacheSurvey.AutoClean(TakeCacheSurvey(), CacheCleanPolicyFromConfig());
-				if (result.Removed.Count is 0) return;
-				var freed = CacheSurvey.Size(result.Before - result.After);
-				Console.WriteLine($"[cache] removed {result.Removed.Count} of the oldest unlocked item(s), freeing {freed}"
-					+ $": {string.Join(", ", result.Removed.Select(static i => i.Label))}");
-				AddOnScreenMessage($"Cache auto-clean freed {freed}");
+				var spare = string.IsNullOrEmpty(spareProjectId)
+					? null
+					: new[] { ProjectCache.DirectoryFor(spareProjectId) };
+				var result = CacheSurvey.AutoClean(
+					TakeCacheSurvey(),
+					CacheCleanPolicyFromConfig(),
+					// the limit is a promise about the machine, and the setting alone
+					// cannot keep it on a disk that is nearly full
+					freeBytes: CacheSurvey.FreeSpaceAt(ProjectCache.DataHome),
+					spare: spare);
+
+				if (result.Removed.Count is not 0)
+				{
+					var freed = CacheSurvey.Size(result.Before - result.After);
+					Console.WriteLine($"[cache] removed {result.Removed.Count} of the oldest unlocked item(s), freeing {freed}"
+						+ (result.DiskDecidedTheLimit ? $" (the disk, not the setting, set the limit at {CacheSurvey.Size(result.Limit)})" : "")
+						+ $": {string.Join(", ", result.Removed.Select(static i => i.Label))}");
+					AddOnScreenMessage($"Cache auto-clean freed {freed}");
+				}
+
+				if (!result.StillOver) return;
+				var over = CacheSurvey.Size(result.After - result.Limit);
+				Console.WriteLine($"[cache] still {over} over the {CacheSurvey.Size(result.Limit)} limit. {result.Why}");
+				// An open project is what a session IS; saying so would be telling
+				// somebody off for working. A lock waits for a person, so it is said
+				// - once, because it will be just as true at the next close.
+				if (result.HeldByLocks <= 0 || _saidTheCacheCannotBeCleaned) return;
+				_saidTheCacheCannotBeCleaned = true;
+				AddOnScreenMessage($"The cache is {over} over its limit and what is left is locked");
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 			{

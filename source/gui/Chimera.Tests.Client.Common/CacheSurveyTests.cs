@@ -314,12 +314,126 @@ namespace Chimera.Tests.Client.Common
 				Aged("/locked", 50, daysAgo: 40, locked: true),
 				Aged("/open", 50, daysAgo: 30, inUse: true),
 				Aged("/free", 50, daysAgo: 10),
+				Aged("/newest", 50, daysAgo: 1),
 			};
 
 			CollectionAssert.AreEqual(
 				new[] { "/free" },
 				CacheSurvey.WhatWouldGo(items, limitBytes: 10).Select(static i => i.Path).ToArray(),
-				"the two oldest are both spoken for, so the newest is what is left to take");
+				"the two oldest are spoken for and the last is the newest, so one row is all it can take");
+		}
+
+		/// <summary>
+		/// The durable half of "do not evict the work of the last ten minutes".
+		/// It also means the cache can never empty itself: one run that breaks the
+		/// limit on its own is something to SAY, not something to delete.
+		/// </summary>
+		[TestMethod]
+		public void TheNewestIsNeverTaken()
+		{
+			CacheItem[] one = { Aged("/only", 500, daysAgo: 200) };
+			Assert.AreEqual(0, CacheSurvey.WhatWouldGo(one, limitBytes: 1).Count,
+				"the one thing there is is also the last thing worked on");
+
+			CacheItem[] two = { Aged("/old", 500, daysAgo: 200), Aged("/new", 500, daysAgo: 1) };
+			CollectionAssert.AreEqual(
+				new[] { "/old" },
+				CacheSurvey.WhatWouldGo(two, limitBytes: 1).Select(static i => i.Path).ToArray());
+		}
+
+		/// <summary>
+		/// The run that has just been closed is not a candidate, however old its
+		/// files look. Closing a project should never be how it gets deleted.
+		/// </summary>
+		[TestMethod]
+		public void WhatTheCallerSparesIsLeftAlone()
+		{
+			CacheItem[] items =
+			{
+				Aged("/just-closed", 500, daysAgo: 40),
+				Aged("/older-still", 100, daysAgo: 90),
+				Aged("/newest", 50, daysAgo: 1),
+			};
+
+			CollectionAssert.AreEqual(
+				new[] { "/older-still" },
+				CacheSurvey.WhatWouldGo(items, limitBytes: 1, spare: new[] { "/just-closed" })
+					.Select(static i => i.Path).ToArray(),
+				"the oldest by date is spared, so the next oldest goes and the newest stays");
+		}
+
+		/// <summary>
+		/// A limit is a promise about the machine, and the setting alone cannot
+		/// keep it: a hundred gigabytes on a small disk is no promise at all.
+		/// </summary>
+		[TestMethod]
+		public void TheDiskCanLowerTheLimitButNeverRaiseIt()
+		{
+			CacheCleanPolicy policy = new() { LimitBytes = 1000, FreeSpaceFloorBytes = 100 };
+
+			Assert.AreEqual(1000, CacheSurvey.EffectiveLimit(policy, cacheBytes: 800, freeBytes: 5000),
+				"with room to spare the setting is the whole of it");
+			Assert.AreEqual(1000, CacheSurvey.EffectiveLimit(policy, cacheBytes: 800, freeBytes: 100),
+				"exactly at the floor is not below it");
+
+			// 40 short of the floor, so the cache has to give 40 of its 800 back
+			Assert.AreEqual(760, CacheSurvey.EffectiveLimit(policy, cacheBytes: 800, freeBytes: 60));
+			Assert.AreEqual(0, CacheSurvey.EffectiveLimit(policy, cacheBytes: 50, freeBytes: 0),
+				"a cache smaller than the shortfall gives everything it has and no more");
+			Assert.AreEqual(1000, CacheSurvey.EffectiveLimit(policy, cacheBytes: 800, freeBytes: long.MaxValue),
+				"and a machine that will not say how much is free is not read as having none");
+		}
+
+		[TestMethod]
+		public void AFullDiskCleansEvenWhenTheCacheIsUnderItsLimit()
+		{
+			CacheItem[] items = { Aged("/old", 400, daysAgo: 90), Aged("/new", 400, daysAgo: 1) };
+			// well under the limit, but the disk is 300 short of its floor
+			var result = CacheSurvey.AutoClean(
+				items,
+				new CacheCleanPolicy { LimitBytes = 100_000, FreeSpaceFloorBytes = 1000 },
+				freeBytes: 700);
+
+			Assert.IsTrue(result.DiskDecidedTheLimit);
+			Assert.AreEqual(500, result.Limit, "the cache has to give back exactly what the floor is short by");
+			CollectionAssert.AreEqual(new[] { "/old" }, result.Removed.Select(static i => i.Path).ToArray());
+		}
+
+		/// <summary>
+		/// Being unable to reach the limit is different depending on WHY: a lock
+		/// waits for a person, an open project waits for the session to end. The
+		/// two are reported apart because only one of them is worth saying.
+		/// </summary>
+		[TestMethod]
+		public void WhyItStoppedSaysWhichKindOfBlockedItIs()
+		{
+			var locked = CacheSurvey.AutoClean(
+				new[] { Aged("/locked", 500, daysAgo: 90, locked: true), Aged("/newest", 10, daysAgo: 1) },
+				new CacheCleanPolicy { LimitBytes = 100 });
+			Assert.IsTrue(locked.StillOver);
+			Assert.AreEqual(410, locked.HeldByLocks);
+			Assert.AreEqual(0, locked.HeldByWhatIsOpen);
+			StringAssert.Contains(locked.Why, "locked");
+
+			var open = CacheSurvey.AutoClean(
+				new[] { Aged("/open", 500, daysAgo: 90, inUse: true), Aged("/newest", 10, daysAgo: 1) },
+				new CacheCleanPolicy { LimitBytes = 100 });
+			Assert.IsTrue(open.StillOver);
+			Assert.AreEqual(0, open.HeldByLocks);
+			Assert.AreEqual(410, open.HeldByWhatIsOpen);
+			StringAssert.Contains(open.Why, "in use");
+
+			var newest = CacheSurvey.AutoClean(
+				new[] { Aged("/only", 500, daysAgo: 90) },
+				new CacheCleanPolicy { LimitBytes = 100 });
+			Assert.IsTrue(newest.StillOver);
+			Assert.AreEqual(400, newest.HeldByTheNewest);
+			StringAssert.Contains(newest.Why, "last worked on");
+
+			Assert.AreEqual("", CacheSurvey.AutoClean(
+				new[] { Aged("/small", 10, daysAgo: 1) },
+				new CacheCleanPolicy { LimitBytes = 100 }).Why,
+				"a cache under its limit has nothing to explain");
 		}
 
 		/// <summary>
