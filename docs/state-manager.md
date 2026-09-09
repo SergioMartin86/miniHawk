@@ -329,6 +329,23 @@ Every boundary in that table is a knob with a per-core default, in frames rather
 than seconds, because the engine does not know a core's frame rate and the
 frontend does.
 
+### When the far band cannot reach the disk
+
+A full disk, near enough always. The history carries on: `evict()` falls back to
+thinning in memory - dropping trailing deltas, then whole stretches - which is
+the correct fallback and costs frames rather than the session.
+
+It is also completely silent, and from a piano roll a greenzone that stops
+growing looks like the history going sparse for no reason anybody can see. So
+the history remembers that it happened (`spillFailed()`, cleared when a new
+spill directory is set) and `ce_session_greenzone_spill_failed` hands the fact
+over. The engine knows; **saying it is the frontend's** - TAStudio asks about
+once a second until it is true, then says it once and stops asking.
+
+A message rather than an error because nothing has gone wrong that the history
+cannot handle. What has gone wrong is the disk, and that is worth knowing before
+the next thing on it fails less gracefully.
+
 ### Coarsening is composition, never deletion
 
 This is the part that constrains the implementation, and it is easy to get

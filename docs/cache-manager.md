@@ -87,6 +87,59 @@ It runs where a cache has just stopped being needed, not on a timer:
 Never while a run is open. Deleting somebody's disk space in the middle of
 their frame advance is not housekeeping.
 
+## The disk floor
+
+**The limit bounds Chimera; it does not bound the machine.** A hundred-gigabyte
+ceiling on a small SSD is no promise at all, and a long run can reach the end of
+the disk with the cache at three gigabytes - the two failures are unrelated. So
+the limit that actually applies is the **smaller** of two numbers: what the
+setting asks for, and what leaves the disk **20 GB free**
+(`Config.CacheFreeSpaceFloorMb`).
+
+Twenty because the floor has to survive one more session of whatever is running:
+a console greenzone grows by tens of gigabytes in an afternoon, and a floor that
+only just holds today is gone tomorrow.
+
+A machine that will not say how much is free counts as having plenty. An unknown
+answer must never be read as "none left", which would empty the cache on a
+filesystem nobody could measure.
+
+When the disk is what set the limit, the window says so instead of showing a
+number that disagrees with the box beside it.
+
+## What it will never take
+
+Three things, for three different reasons:
+
+* **What is open.** Removing it costs work rather than time.
+* **What is locked.** Somebody said so.
+* **The newest entry**, whoever asks. This is the durable half of "do not evict
+  the work of the last ten minutes": a greenzone big enough to break the limit
+  on its own is also, once everything older has gone, the oldest thing left, and
+  closing a run must not be how it gets deleted. It also means the cache can
+  never empty itself - one run that breaks the limit alone is something to
+  **say**, not something to delete.
+
+The frontend additionally spares, for that one pass, the project it has just
+closed. The newest rule covers that case on its own almost always; the explicit
+spare covers the almost.
+
+## When it cannot get under
+
+Then it says so, which is the whole of the answer. `CacheCleanResult` reports
+what is holding it apart, because the two kinds are not the same problem:
+
+* **held by locks** - waits for a person. Said on screen, once a session,
+  because it will be just as true at the next close.
+* **held by what is open** - resolves itself when the project closes and the
+  next pass runs. Logged, never announced: telling somebody their open project
+  is in the way is telling them off for working.
+* **held by the newest** - the rule above, working.
+
+Everything goes to the log either way. The one thing that must not happen is
+what used to: the cache quietly staying over a limit somebody set, with the
+answer computed and thrown away.
+
 ## Locks
 
 A lock says *the auto-clean may not take this one*. It says nothing else: a
