@@ -1,0 +1,131 @@
+# The cache manager
+
+What Chimera keeps on disk that it could work out again, how much room it is
+allowed, and which of it may not be thrown away.
+
+## The rule the window rests on
+
+**Losing a cache costs recomputation, never work.** That single rule is what
+makes a window with a Remove button in it safe to offer at all, and it is what
+decides membership: a thing belongs here only if the worst outcome of deleting
+it is waiting.
+
+So the window lists four kinds:
+
+* **Project** - a run's state history (the greenzone) and where this machine
+  last found the project's files. Losing it means the run replays instead of
+  resuming.
+* **Unpacked core** - a `.chimeraCore` unzipped so it can be loaded. Losing it
+  means unzipping it again.
+* **Compiled code** - a core's translation of a game's code
+  (`docs/compile-cache.md`). Losing it means minutes on the next first boot.
+* **Core versions** - what each core repository last said it had published.
+  Losing it means the Core Manager asks again.
+
+And it lists nothing else. Installed cores are the Core Manager's, because a
+movie needs the exact build that recorded it; projects, roms and firmware are
+not caches at all. A window that mixed those in would be a window where the
+rule stops being true, and then no row in it is safe.
+
+The one exception the window enforces itself: **what is open cannot be
+removed**. Pulling a greenzone out from under a running session costs work, not
+time, so the tick is refused rather than the removal being attempted.
+
+## The limit
+
+A cache that grows without bound is a disk that fills up while somebody is
+working. So there is a limit - **100 GB by default, on by default** - and when
+the cache is over it the oldest entries go until it is under again.
+
+A hundred gigabytes because a single PS2 or PS3 greenzone runs to tens of
+them. A smaller default would spend its life evicting the run being worked on,
+which is a policy that looks like a fault.
+
+**Oldest first**, by when anything in the entry was last written. It is the one
+ordering that approximates "least likely to be wanted next", and it is
+occasionally exactly wrong - which is what locks are for.
+
+It runs where a cache has just stopped being needed, not on a timer:
+
+* at startup, after the window is up (it walks every cache directory, and a
+  frontend that sat on a black screen counting bytes would look broken);
+* when a project closes, which is both the moment its greenzone stops being
+  untouchable and the moment the cache has just grown by whatever the session
+  added;
+* when the Cache Manager closes, so that a limit somebody has just lowered
+  means something before the next project ends.
+
+Never while a run is open. Deleting somebody's disk space in the middle of
+their frame advance is not housekeeping.
+
+## Locks
+
+A lock says *the auto-clean may not take this one*. It says nothing else: a
+locked entry is still removed by Remove, because ticking a row and pressing a
+button is not something anybody does by accident. A padlock that argued with a
+deliberate press would be a lock on the wrong thing.
+
+The defaults follow which way round the mistake would matter:
+
+| Kind | Starts | Why |
+| --- | --- | --- |
+| Project (greenzone) | **unlocked** | it is the room, and the thing a limit exists to bound |
+| Unpacked core | locked | small; evicting it frees nothing and stalls the next boot |
+| Compiled code | locked | same |
+| Core versions | locked | same |
+
+So the limit falls where the room actually goes, and the furniture stays put
+unless somebody says otherwise.
+
+Locks live in `cache-locks.json` in the data home - beside the caches, never
+inside them, because an unpacked core directory has to stay exactly what its
+package said it was. They are keyed by location, which is machine-local, which
+is what the caches themselves are. **Only deliberate exceptions are written
+down**: an entry that matches its kind's default is absent from the file, so
+changing a default later takes effect for everything nobody has overruled, and
+the book stays a short list rather than a second copy of the cache. An entry
+that is removed takes its lock with it, or a location reused later would
+inherit an answer nobody gave about it.
+
+One file with one writer. Two Chimeras open at once could talk over each other
+and the later save would win, which is a lost padlock and not a lost run - not
+worth a lock file to prevent.
+
+## The window
+
+`Tools > Cache Manager`. Two kinds of act, the same division the Core Manager
+draws:
+
+* **Ticking** is for doing the same thing to several rows: Remove Ticked, Lock
+  / Unlock, Select all orphans.
+* **Selecting** is for looking closely at one: Open Folder, and the detail
+  lines under the list.
+
+Lock / Unlock is one button rather than two. What it will do is visible in the
+padlocks it is pointed at, and the mixed case has an obvious right answer -
+somebody who ticks a locked row and an unlocked one and presses it meant to
+keep both.
+
+Clean Now applies the limit by hand, and asks first, because it is a press
+rather than a rule and it names things nobody ticked. Changing the limit itself
+removes nothing: a number being typed passes through 1 on its way to 100, and a
+window that emptied the cache mid-keystroke is one nobody would dare open.
+
+**Orphans** are caches whose project file is not where it was last seen -
+deleted, or moved and not opened since. They are perfectly good caches; they
+are simply the ones nothing is asking for, which makes "select all orphans" the
+one selection worth making on somebody's behalf. A project that is OPEN is
+never called an orphan, whatever the note says: it was opened from somewhere.
+
+## Where the code is
+
+* `CacheSurvey` - what is listed, what each row costs, what the auto-clean
+  would take and in what order. No UI, so all of it is tested without one.
+* `CacheLocks` - the lock book and the per-kind defaults.
+* `ProjectCache` - the per-project directories and what the window shows
+  instead of sixteen hex digits.
+* `CacheManagerForm` - arranges the above. Thin, like the firmware windows are
+  over their surveys.
+* `Config.CacheAutoClean`, `Config.CacheSizeLimitMb` - the setting. In
+  megabytes, like `MovieConfig.GreenzoneBudgetMb`, because that is the unit the
+  config file keeps sizes in.
