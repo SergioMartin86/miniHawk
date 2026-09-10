@@ -349,6 +349,37 @@ Every boundary in that table is a knob with a per-core default, in frames rather
 than seconds, because the engine does not know a core's frame rate and the
 frontend does.
 
+### What is on disk is never thinned, and never dropped
+
+Two limits are described above and only one of them exists. The budget governs
+MEMORY: `evict()` runs while `m_bytes > m_budget`, and its first move is to put
+the oldest stretch on disk - which satisfies the loop by moving the bytes, not by
+giving them up. Nothing compares the spill file against anything, `coarsen()`
+skips a spilled stretch (`if (seg.spilled) continue`), and `evict()` skips one
+too, on the reasoning that dropping something already costing no memory buys
+nothing. All three are individually right and together they mean: **once a frame
+reaches the disk it stays there, at whatever density it had when it went, for as
+long as the session lasts.**
+
+Six thousand Game Boy frames under a 64MB budget put 1567MB in the spill file -
+which is close to every frame's delta, because a stretch spilled out of the near
+band was never coarsened afterwards.
+
+The cache manager is what bounds the cache directory the spill file lives in, and
+it will never take what is open (docs/cache-manager.md) - correctly, because the
+history is reading it. So during a session nothing bounds it at all.
+
+Two things would fix it and they are not the same:
+
+* **spill what is already coarse.** The paragraph above says the budget decides
+  what happens to the far band; the code spills the oldest stretch whichever band
+  it is in, so a near-band stretch at full density can land on disk. Spilling
+  only what has fallen far would make the file a fraction of the size on its own.
+* **a disk budget**, with the oldest spilled stretches dropped when it is
+  exceeded - the rule the memory side already has, applied to the other half.
+
+Neither is written. This is the honest state of it.
+
 ### When the far band cannot reach the disk
 
 A full disk, near enough always. The history carries on: `evict()` falls back to
