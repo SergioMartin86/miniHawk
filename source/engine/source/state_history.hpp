@@ -42,6 +42,19 @@ class StateHistory
 public:
 	/* budget 0 disables and drops everything. */
 	void configure(const HostApi *host, void *obj, uint64_t budgetBytes);
+
+	/* What the spill file may weigh, or 0 for no limit.
+	 *
+	 * The memory budget is met by MOVING bytes to disk, so on its own it bounds
+	 * only half of what a history costs. This bounds the other half, by the same
+	 * rule: the oldest goes first. What that costs is replaying to reach a frame
+	 * that used to be stored, which is what the whole cache is - time, never
+	 * work. */
+	void diskBudget(uint64_t bytes);
+
+	/* What the stretches still in the spill file weigh. The file itself is
+	 * between this and twice it - see diskBudget. */
+	uint64_t diskBytes() const { return m_spillLive; }
 	void clear();
 
 	/* How dense the history is at each distance from the newest frame it holds,
@@ -77,6 +90,10 @@ public:
 	bool spillFailed() const { return m_spillFailed; }
 
 	bool enabled() const { return m_budget != 0; }
+
+	/* What it may hold now, which is not what it was configured with if the
+	 * machine has run out of memory since. */
+	uint64_t budget() const { return m_budget; }
 	uint64_t bytes() const { return m_bytes; }
 
 	/* Frames the history can produce, which is every anchor plus every delta -
@@ -209,10 +226,32 @@ private:
 	bool composeAvailable() const;
 	void evict();
 
+	/* capture(), once. capture() itself is the loop that answers an allocation
+	 * failure by making the budget smaller and asking again. */
+	void captureOnce(int64_t frame, const uint8_t *note, size_t noteLen);
+	bool halveBudget();
+
+	/* Under this a history cannot hold one anchor of anything, so halving past
+	 * it would spend allocations to store nothing. Not zero, which the engine
+	 * reads as "no history at all" - a machine short of memory still wants the
+	 * frames it can afford. */
+	static constexpr uint64_t kSmallestBudget = 16ull * 1024 * 1024;
+
+	/* Holds the spill file under its budget by dropping the oldest stretches in
+	 * it, and reclaims what they held: the file is a queue - appended newest,
+	 * dropped oldest - so what is dead is always a prefix, and moving the live
+	 * suffix to the front is all a compaction is. Done when the dead half is the
+	 * bigger half, which makes it O(1) copies per byte over a session. */
+	void evictDisk();
+	bool compactSpill();
+
 	/* m_bytes -= n, and says so rather than wrapping if n is somehow more than
 	 * there is. Clamping keeps a mistake to one wrong number instead of a budget
 	 * that can never be met again. */
 	void releaseBytes(uint64_t n, const char *where);
+
+	/* Drops the stretch at `index`, giving back whatever it held. */
+	void forgetSegment(size_t index);
 
 	/* Moves one segment out to the spill file, freeing what it held in memory.
 	 * False when there is nowhere to put it or the write failed, which is not
@@ -263,7 +302,10 @@ private:
 
 	std::string m_spillDir;
 	std::FILE *m_spill = nullptr;      /* one file, appended to, holes and all */
-	uint64_t m_spillBytes = 0;
+	uint64_t m_spillBytes = 0;    /* how long the file is, dead prefix and all */
+	uint64_t m_spillLive = 0;     /* what the stretches still in it weigh */
+	uint64_t m_diskBudget = 0;    /* what may stay LIVE: half the file's budget.
+	                               * 0: no limit, which is what it was for a year */
 	bool m_spillFailed = false;
 
 public:

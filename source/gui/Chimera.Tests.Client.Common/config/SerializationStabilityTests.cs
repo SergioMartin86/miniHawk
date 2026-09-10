@@ -44,7 +44,7 @@ namespace Chimera.Tests.Client.Common.config
 			[typeof(AnalogBind)] = @"{""Value"":""X1 LeftThumbX Axis"",""Mult"":0.8,""Deadzone"":0.1,""ButtonBindPositive"":""Right"",""ButtonBindNegative"":""Left""}",
 			[typeof(FeedbackBind)] = @"{""Channels"":""Left+Right"",""GamepadPrefix"":""X1 "",""Prescale"":1.0}",
 			[typeof(MessagePosition)] = @"{""X"":0,""Y"":0,""Anchor"":0}",
-			[typeof(MovieConfig)] = @"{""MovieEndAction"":3,""EnableBackupMovies"":true,""MovieCompressionLevel"":2,""VBAStyleMovieLoadState"":false,""GreenzoneBudgetMb"":2048}",
+			[typeof(MovieConfig)] = @"{""MovieEndAction"":3,""EnableBackupMovies"":true,""MovieCompressionLevel"":2,""VBAStyleMovieLoadState"":false,""GreenzoneBudgetMb"":4096,""GreenzoneDiskBudgetMb"":10240}",
 			[typeof(PathEntry)] = PATHENTRY_SER,
 			[typeof(PathEntryCollection)] = $@"{{""Paths"":[{PATHENTRY_SER}],""UseRecentForRoms"":false,""LastRomPath"":"".""}}",
 			[typeof(RecentFiles)] = RECENT_SER,

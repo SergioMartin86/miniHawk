@@ -586,6 +586,9 @@ namespace Chimera.Emulation.Common.Engine
 		public abstract void ce_session_greenzone_enable(IntPtr session, ulong budgetBytes);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract void ce_session_greenzone_disk_budget(IntPtr session, ulong budgetBytes);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract void ce_session_greenzone_bands(
 			IntPtr session, long nearFrames, long midFrames, long midStride, long farStride, long anchorSpacing);
 
@@ -1716,6 +1719,8 @@ namespace Chimera.Emulation.Common.Engine
 		// a stored frame and leaves the replay to whoever asked.
 
 		public void GreenzoneEnable(ulong budgetBytes) => E.ce_session_greenzone_enable(_session, budgetBytes);
+
+		public void GreenzoneDiskBudget(ulong budgetBytes) => E.ce_session_greenzone_disk_budget(_session, budgetBytes);
 
 		public void GreenzoneBands(long nearFrames, long midFrames, long midStride, long farStride, long anchorSpacing)
 			=> E.ce_session_greenzone_bands(_session, nearFrames, midFrames, midStride, farStride, anchorSpacing);

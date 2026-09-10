@@ -51,6 +51,8 @@ namespace Chimera.Tests.Client.Common.Movie
 		private readonly System.Collections.Generic.SortedSet<int> _states = new();
 		private readonly System.Collections.Generic.HashSet<int> _pins = new();
 		public long BudgetBytes { get; private set; }
+
+		public long DiskBudgetBytes { get; private set; }
 		public string SpillDirectory { get; private set; }
 
 		public void Enable(long budgetBytes)
@@ -61,6 +63,8 @@ namespace Chimera.Tests.Client.Common.Movie
 		}
 
 		public void SpillTo(string directory) => SpillDirectory = directory;
+
+		public void DiskBudget(long budgetBytes) => DiskBudgetBytes = budgetBytes;
 
 		/// <summary>Set by a test that wants to see what a full disk does.</summary>
 		public bool SpillFailed { get; set; }

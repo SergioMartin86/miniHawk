@@ -1118,6 +1118,22 @@ CE_API void ce_session_greenzone_spill(ce_session *s, const char *dir);
  * like the greenzone mysteriously going sparse, so somebody has to be told.
  * The engine knows; saying it is the frontend's job, which is why this is a
  * question to ask rather than a message to print. */
+/* What the spill file may weigh, or 0 for no limit.
+ *
+ * ce_session_greenzone_enable bounds MEMORY, and the history meets that budget
+ * by moving the oldest stretches to the spill directory - so on its own it
+ * bounds half of what a history costs. This bounds the other half, by the same
+ * rule: oldest first, and the room they held is given back. What it costs is
+ * replaying to reach a frame that used to be stored, which is what every cache
+ * here costs - time, never work.
+ *
+ * A pinned frame's stretch is never dropped, and neither is the newest.
+ */
+CE_API void ce_session_greenzone_disk_budget(ce_session *s, uint64_t budget_bytes);
+
+/* What the stretches now in the spill file weigh. */
+CE_API uint64_t ce_session_greenzone_disk_bytes(const ce_session *s);
+
 CE_API int32_t ce_session_greenzone_spill_failed(const ce_session *s);
 /* The nearest stored frame at or before frame; -1 when none is. */
 CE_API int64_t ce_session_greenzone_nearest(const ce_session *s, int64_t frame);

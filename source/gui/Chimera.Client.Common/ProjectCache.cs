@@ -216,6 +216,77 @@ namespace Chimera.Client.Common
 
 		private const string LabelFile = "about.json";
 
+		private const string BudgetsFile = "budgets.json";
+
+		/// <summary>
+		/// What ONE project's greenzone may weigh, where it differs from the
+		/// defaults. Null for either half means "whatever the settings say".
+		///
+		/// Here and not in the <c>.chimeraProject</c> on purpose. The project file
+		/// holds what affects sync and reproduction and nothing else (docs/project.md),
+		/// and a budget affects neither: it decides how much of a run stays
+		/// reachable without replaying, which is a property of the MACHINE the work
+		/// is being done on. A project handed to somebody with half the memory must
+		/// not arrive carrying a number chosen for a machine they do not have.
+		/// </summary>
+		public sealed class ProjectBudgets
+		{
+			public int? MemoryMb { get; init; }
+
+			public int? DiskMb { get; init; }
+
+			public bool Any => MemoryMb.HasValue || DiskMb.HasValue;
+		}
+
+		/// <summary>What this project asked for, or nothing if it never asked.</summary>
+		public static ProjectBudgets BudgetsOf(string projectId)
+		{
+			try
+			{
+				var path = Path.Combine(DirectoryFor(projectId), BudgetsFile);
+				if (!File.Exists(path)) return new ProjectBudgets();
+				var root = JObject.Parse(File.ReadAllText(path));
+				return new ProjectBudgets
+				{
+					MemoryMb = (int?) root["memoryMb"],
+					DiskMb = (int?) root["diskMb"],
+				};
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+				or ArgumentException or JsonException)
+			{
+				// unreadable is the same as absent: the defaults apply and nothing is lost
+				return new ProjectBudgets();
+			}
+		}
+
+		/// <summary>
+		/// Remembers what one project asked for. Writing budgets with nothing set
+		/// removes the file, so "back to the default" leaves no trace to explain
+		/// later.
+		/// </summary>
+		public static void RememberBudgets(string projectId, ProjectBudgets budgets)
+		{
+			try
+			{
+				var path = Path.Combine(DirectoryFor(projectId), BudgetsFile);
+				if (!budgets.Any)
+				{
+					if (File.Exists(path)) File.Delete(path);
+					return;
+				}
+				JObject root = new();
+				if (budgets.MemoryMb.HasValue) root["memoryMb"] = budgets.MemoryMb.Value;
+				if (budgets.DiskMb.HasValue) root["diskMb"] = budgets.DiskMb.Value;
+				Ensure(projectId);
+				File.WriteAllText(path, root.ToString(Formatting.Indented));
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+			{
+				// the default applies, which is what was happening a moment ago anyway
+			}
+		}
+
 		/// <summary>
 		/// Every project this machine has cached anything for: the id, what it
 		/// calls itself, how much room it takes and when it was last touched.

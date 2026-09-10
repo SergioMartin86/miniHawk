@@ -442,6 +442,8 @@ namespace Chimera.Emulation.Common.Waterbox
 
 		public void Enable(long budgetBytes) => _session.GreenzoneEnable((ulong)Math.Max(budgetBytes, 0));
 
+		public void DiskBudget(long budgetBytes) => _session.GreenzoneDiskBudget((ulong)Math.Max(budgetBytes, 0));
+
 		public void SpillTo(string directory) => _session.GreenzoneSpillTo(directory ?? "");
 
 		public bool SpillFailed => _session.GreenzoneSpillFailed;

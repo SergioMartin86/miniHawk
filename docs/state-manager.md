@@ -349,36 +349,72 @@ Every boundary in that table is a knob with a per-core default, in frames rather
 than seconds, because the engine does not know a core's frame rate and the
 frontend does.
 
-### What is on disk is never thinned, and never dropped
+### Two budgets, and neither is a reservation (user-asked, 2026-09-10)
 
-Two limits are described above and only one of them exists. The budget governs
-MEMORY: `evict()` runs while `m_bytes > m_budget`, and its first move is to put
-the oldest stretch on disk - which satisfies the loop by moving the bytes, not by
-giving them up. Nothing compares the spill file against anything, `coarsen()`
-skips a spilled stretch (`if (seg.spilled) continue`), and `evict()` skips one
-too, on the reasoning that dropping something already costing no memory buys
-nothing. All three are individually right and together they mean: **once a frame
-reaches the disk it stays there, at whatever density it had when it went, for as
-long as the session lasts.**
+A history costs two things and bounding one bounds nothing.
 
-Six thousand Game Boy frames under a 64MB budget put 1567MB in the spill file -
-which is close to every frame's delta, because a stretch spilled out of the near
-band was never coarsened afterwards.
+* **Memory** - what it may hold in RAM. Four gigabytes by default.
+* **Disk** - what the spill file that overflow produces may weigh. Ten
+  gigabytes by default, and 0 means no limit, which is what it was before.
 
-The cache manager is what bounds the cache directory the spill file lives in, and
-it will never take what is open (docs/cache-manager.md) - correctly, because the
-history is reading it. So during a session nothing bounds it at all.
+The disk number is **never below the memory number**, wherever it is set.
+Memory fills first and its overflow is what goes to disk, so a smaller disk
+budget describes a file that is full the moment memory is: every stretch pushed
+out would be dropped as it arrived, paid for in writes and worth nothing.
+Raising memory raises disk with it.
 
-Two things would fix it and they are not the same:
+Both are set in Tools > Cache Manager, which is where somebody looking at what a
+greenzone weighs already is, and where the cache limit next door makes the same
+kind of promise about the same disk. Both can be set **per project**, and a
+project's own numbers live in its cache directory rather than in the
+`.chimeraProject`: a budget is a fact about the machine the work is being done
+on, and the project file is the one thing that gets handed to somebody else. A
+run edited on a workstation must not arrive at a laptop insisting on
+thirty-two gigabytes.
 
-* **spill what is already coarse.** The paragraph above says the budget decides
-  what happens to the far band; the code spills the oldest stretch whichever band
-  it is in, so a near-band stretch at full density can land on disk. Spilling
-  only what has fallen far would make the file a fraction of the size on its own.
-* **a disk budget**, with the oldest spilled stretches dropped when it is
-  exceeded - the rule the memory side already has, applied to the other half.
+The disk number is what the FILE may weigh, because that is what somebody
+watching a disk fill up can check. Half of it is kept reachable; a compaction
+copies every live byte, so one per drop would copy the same bytes over and over,
+and waiting until the dead part is the bigger part makes it one copy per byte
+written. The file sits between the live total and twice it, which is why half.
 
-Neither is written. This is the honest state of it.
+**Neither is a reservation.** A short session never comes near either.
+
+### Running out of memory halves the budget
+
+The history is the biggest thing Chimera holds that it does not need, so it is
+where the end of memory is met first - and it is the one place that can answer.
+A capture that throws `std::bad_alloc` halves the budget, gives back what that
+frees, and tries again; repeatedly, because one halving of a budget the machine
+cannot afford is unlikely to be enough. Below sixteen megabytes it stops and the
+frame is simply not stored, which costs replaying to reach it.
+
+A greenzone that has quietly become half as deep is a run that continues. The
+alternative is a throw out of a capture and a session lost.
+
+The halved figure is **not written back to the settings**. What a machine can
+spare this afternoon is not a decision somebody made, and it must not silently
+become one.
+
+### What is on disk is never thinned
+
+The disk budget drops the oldest stretches in the file, which is the rule the
+memory side has always had. What it does NOT do is thin them: `coarsen()` skips
+a spilled stretch, so what lands on disk keeps whatever density it had when it
+went. Six thousand Game Boy frames under a 64MB memory budget put 1567MB in the
+file with no disk limit, and that is close to every frame's delta, because a
+stretch spilled out of the near band is never coarsened afterwards.
+
+So the disk budget bounds the damage and does not remove the waste. The other
+half of the fix is to **spill what is already coarse**: the paragraph above says
+the budget decides what happens to the far band, and the code spills the oldest
+stretch whichever band it is in, so a near-band stretch at full density can land
+on disk. Doing that would make the file a fraction of the size on its own, and
+is not written.
+
+The cache manager bounds the directory the file lives in, but it will never take
+what is open (docs/cache-manager.md) - correctly, because the history is reading
+it - which is why the limit has to be here.
 
 ### When the far band cannot reach the disk
 

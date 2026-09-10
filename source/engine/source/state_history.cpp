@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
+#include <new>
 
 namespace chimera
 {
@@ -192,12 +193,132 @@ void StateHistory::spillTo(const char *dir)
 	/* Whatever is out there belongs to the old directory, and the segments
 	 * pointing at it are now unreadable - so they go, which costs replaying. */
 	dropSpillFile();
-	m_segments.erase(
-		std::remove_if(m_segments.begin(), m_segments.end(),
-			[](const Segment &seg) { return seg.spilled; }),
-		m_segments.end());
+	for (size_t i = m_segments.size(); i-- > 0; )
+	{
+		if (m_segments[i].spilled) forgetSegment(i);
+	}
 	m_spillDir = next;
 	m_spillFailed = false;   /* a new directory is a fresh chance at it */
+}
+
+/* True when anything between the anchor and the last landing is pinned - the
+ * question eviction asks before throwing a stretch away. */
+static bool holdsPinned(const std::set<int64_t> &pins, int64_t from, int64_t to)
+{
+	const auto it = pins.lower_bound(from);
+	return it != pins.end() && *it <= to;
+}
+
+/* The number given is what the FILE may weigh, because that is the number
+ * somebody watching a disk fill up cares about and the only one they can check.
+ *
+ * What is kept reachable is half of it. A compaction copies every live byte, so
+ * doing one per drop would copy the same bytes over and over; waiting until the
+ * dead part is the bigger part makes it one copy per byte written, amortised,
+ * and means the file sits between the live total and twice it. Half the number
+ * for live is what turns that into a promise that can be read off `ls`. */
+void StateHistory::diskBudget(uint64_t bytes)
+{
+	m_diskBudget = bytes / 2;
+	evictDisk();
+}
+
+/* Drops the oldest stretches in the spill file until it is under its budget,
+ * then reclaims the room they held.
+ *
+ * The newest is spared here as it is in memory - it is where the work is - and
+ * a stretch somebody pinned a frame in is spared too, for the same reason
+ * eviction spares it: a pin is a promise that frame can still be reached.
+ */
+void StateHistory::evictDisk()
+{
+	if (m_diskBudget == 0) return;
+	bool dropped = false;
+	while (m_spillLive > m_diskBudget)
+	{
+		size_t victim = m_segments.size();
+		for (size_t i = 0; i + 1 < m_segments.size(); i++)
+		{
+			if (!m_segments[i].spilled) continue;
+			if (holdsPinned(m_pinned, m_segments[i].anchorFrame, m_segments[i].lastFrame())) continue;
+			victim = i;
+			break;
+		}
+		if (victim == m_segments.size()) break;   /* nothing left that may go */
+		forgetSegment(victim);
+		dropped = true;
+	}
+	if (dropped) compactSpill();
+}
+
+/* Moves what is still live to the front of the file, so the room the dropped
+ * stretches held is actually given back. Only when the dead part is the bigger
+ * part: a compaction copies every live byte, and doing it at every drop would
+ * copy the same bytes over and over.
+ *
+ * A failure here is not an error. The file stays as it was and so do the
+ * offsets in it; what is lost is the room, until the next drop asks again. */
+bool StateHistory::compactSpill()
+{
+	if (m_spill == nullptr) return false;
+	if (m_spillLive == 0)
+	{
+		/* nothing of it is wanted: the cheapest compaction there is */
+		std::rewind(m_spill);
+		m_spillBytes = 0;
+		return true;
+	}
+	if (m_spillBytes - m_spillLive < m_spillLive) return false;   /* dead half is the smaller half */
+
+	const std::string path = m_spillDir + "/history-spill.bin";
+	const std::string tmp = path + ".compacting";
+	std::FILE *out = std::fopen(tmp.c_str(), "w+b");
+	if (out == nullptr) return false;
+
+	std::vector<uint8_t> buf;
+	uint64_t at = 0;
+	for (Segment &seg : m_segments)
+	{
+		if (!seg.spilled) continue;
+		buf.resize(static_cast<size_t>(seg.spillLength));
+		if (!seekTo(m_spill, seg.spillAt) || !readAll(m_spill, buf.data(), buf.size())
+			|| !writeAll(out, buf.data(), buf.size()))
+		{
+			std::fclose(out);
+			std::remove(tmp.c_str());
+			return false;
+		}
+		seg.spillAt = at;
+		at += seg.spillLength;
+	}
+	if (std::fflush(out) != 0)
+	{
+		std::fclose(out);
+		std::remove(tmp.c_str());
+		return false;
+	}
+
+	std::fclose(m_spill);
+	m_spill = nullptr;
+	if (std::rename(tmp.c_str(), path.c_str()) != 0)
+	{
+		/* the old file is still there and still right; reopen it and give up */
+		std::fclose(out);
+		std::remove(tmp.c_str());
+		m_spill = std::fopen(path.c_str(), "r+b");
+		return false;
+	}
+	std::fclose(out);
+	m_spill = std::fopen(path.c_str(), "r+b");
+	if (m_spill == nullptr) return false;
+	m_spillBytes = at;
+	if (historyTrace())
+	{
+		fprintf(stderr, "[history] compacted the spill file to %llu bytes\n",
+			(unsigned long long)m_spillBytes);
+		fflush(stderr);
+	}
+	return true;
 }
 
 void StateHistory::dropSpillFile()
@@ -210,6 +331,7 @@ void StateHistory::dropSpillFile()
 		std::remove(path.c_str());
 	}
 	m_spillBytes = 0;
+	m_spillLive = 0;
 }
 
 void StateHistory::bands(int64_t nearFrames, int64_t midFrames, int64_t midStride,
@@ -311,7 +433,56 @@ void StateHistory::beforeAdvance()
 	m_epochOpen = r.ok();
 }
 
+/* A capture allocates - a whole machine for an anchor, a frame's churn for a
+ * delta - and on a machine under pressure that allocation is where Chimera
+ * meets the end of memory first, because the history is the biggest thing it
+ * holds that it does not need.
+ *
+ * So running out is not fatal here: the budget halves, what that frees is given
+ * back, and the capture is tried again. Repeatedly, down to a floor, because
+ * one halving of a budget the machine cannot afford is unlikely to be enough.
+ * A greenzone that has quietly become half as deep is a run that continues; the
+ * alternative is a crash that loses the session.
+ *
+ * The budget is not written back to the settings. What the machine can spare
+ * today is not a decision somebody made, and it should not silently become one.
+ */
 void StateHistory::capture(int64_t frame, const uint8_t *note, size_t noteLen)
+{
+	for (;;)
+	{
+		try
+		{
+			captureOnce(frame, note, noteLen);
+			return;
+		}
+		catch (const std::bad_alloc &)
+		{
+			/* Already as small as a history gets: the frame is simply not
+			 * stored, which costs replaying to reach it and nothing else. */
+			if (!halveBudget()) return;
+		}
+	}
+}
+
+/* Halves what the history may hold and gives back what that frees. False when
+ * it is already at the floor - below which it could not hold one anchor, and
+ * would be spending allocations to store nothing. */
+bool StateHistory::halveBudget()
+{
+	if (m_budget <= kSmallestBudget) return false;
+	const uint64_t was = m_budget;
+	m_budget = m_budget / 2 < kSmallestBudget ? kSmallestBudget : m_budget / 2;
+	fprintf(stderr, "[history] out of memory with %llu bytes held: the budget goes from"
+		" %llu to %llu and the oldest of the run is given up\n",
+		(unsigned long long)m_bytes, (unsigned long long)was, (unsigned long long)m_budget);
+	fflush(stderr);
+	evict();
+	evictDisk();
+	return true;
+}
+
+void StateHistory::captureOnce(int64_t frame, const uint8_t *note, size_t noteLen)
 {
 	std::vector<uint8_t> carried(note, note + (note != nullptr ? noteLen : 0));
 	if (!enabled()) return;
@@ -336,16 +507,19 @@ void StateHistory::capture(int64_t frame, const uint8_t *note, size_t noteLen)
 		m_host->wbx_save_delta(m_obj, true, sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
 		if (r.ok())
 		{
-			m_segments.back().bytes += bytes.size();
-			m_bytes += bytes.size();
+			const uint64_t added = bytes.size();
+			/* the push first, the arithmetic after: an allocation that throws
+			 * between them leaves a count describing bytes nobody holds */
+			m_segments.back().links.push_back(Link{ std::move(bytes), frame, std::move(carried) });
+			m_segments.back().bytes += added;
+			m_bytes += added;
 			if (historyTrace())
 			{
-				fprintf(stderr, "[history] frame %lld: delta %zu bytes (segment %zu links, %llu total)\n",
-					(long long)frame, bytes.size(),
-					m_segments.back().links.size() + 1, (unsigned long long)m_bytes);
+				fprintf(stderr, "[history] frame %lld: delta %llu bytes (segment %zu links, %llu total)\n",
+					(long long)frame, (unsigned long long)added,
+					m_segments.back().links.size(), (unsigned long long)m_bytes);
 				fflush(stderr);
 			}
-			m_segments.back().links.push_back(Link{ std::move(bytes), frame, std::move(carried) });
 			coarsen(frame);
 			evict();
 			return;
@@ -371,6 +545,22 @@ void StateHistory::capture(int64_t frame, const uint8_t *note, size_t noteLen)
 	m_segments.push_back(std::move(seg));
 	coarsen(frame);
 	evict();
+	evictDisk();
+}
+
+/* Drops one stretch and gives back whatever it was holding - memory, room in
+ * the spill file, or neither. Every erase goes through this: the accounting bug
+ * that wrapped the budget past zero was one erase that did its own arithmetic. */
+void StateHistory::forgetSegment(size_t index)
+{
+	Segment &seg = m_segments[index];
+	releaseBytes(seg.memoryBytes(), "forget");
+	if (seg.spilled)
+	{
+		if (seg.spillLength > m_spillLive) m_spillLive = 0;
+		else m_spillLive -= seg.spillLength;
+	}
+	m_segments.erase(m_segments.begin() + static_cast<std::ptrdiff_t>(index));
 }
 
 void StateHistory::releaseBytes(uint64_t n, const char *where)
@@ -391,8 +581,7 @@ void StateHistory::invalidateAfter(int64_t frame)
 {
 	while (!m_segments.empty() && m_segments.back().anchorFrame > frame)
 	{
-		releaseBytes(m_segments.back().memoryBytes(), "invalidateAfter");
-		m_segments.pop_back();
+		forgetSegment(m_segments.size() - 1);
 	}
 	if (m_segments.empty()) return;
 	Segment &s = m_segments.back();
@@ -438,13 +627,6 @@ void StateHistory::unpinAll()
 	m_pinned.clear();
 }
 
-/* True when anything between the anchor and the last landing is pinned - the
- * question eviction asks before throwing a stretch away. */
-static bool holdsPinned(const std::set<int64_t> &pins, int64_t from, int64_t to)
-{
-	const auto it = pins.lower_bound(from);
-	return it != pins.end() && *it <= to;
-}
 
 void StateHistory::coarsen(int64_t newestFrame)
 {
@@ -574,6 +756,7 @@ bool StateHistory::spill(Segment &seg)
 	seg.spilled = true;
 	seg.spillAt = at;
 	seg.spillLength = m_spillBytes - at;
+	m_spillLive += seg.spillLength;
 
 	/* What it held is now the file's; give the memory back for real. The notes
 	 * stay: they are metadata, like the landings, and answering what was stored
@@ -586,9 +769,11 @@ bool StateHistory::spill(Segment &seg)
 
 	if (historyTrace())
 	{
-		fprintf(stderr, "[history] spilled frames %lld-%lld: %llu bytes to disk (%llu in memory)\n",
+		fprintf(stderr, "[history] spilled frames %lld-%lld: %llu bytes to disk"
+			" (%llu in memory, %llu on disk, file %llu)\n",
 			(long long)seg.anchorFrame, (long long)seg.lastFrame(),
-			(unsigned long long)seg.bytes, (unsigned long long)m_bytes);
+			(unsigned long long)seg.bytes, (unsigned long long)m_bytes,
+			(unsigned long long)m_spillLive, (unsigned long long)m_spillBytes);
 		fflush(stderr);
 	}
 	return true;
@@ -664,7 +849,16 @@ void StateHistory::evict()
 		for (size_t i = 0; i + 1 < m_segments.size(); i++)
 		{
 			if (m_segments[i].spilled) continue;
-			if (spill(m_segments[i])) { moved = true; break; }
+			if (spill(m_segments[i]))
+			{
+				/* right here, not after the whole memory pass: the file is over
+				 * its budget from the moment the write lands, and a limit that
+				 * is only true once the loop finishes is a limit somebody
+				 * watching a disk fill up cannot read off `ls` */
+				evictDisk();
+				moved = true;
+				break;
+			}
 			/* Asked to spill, and could not - a full disk, near enough always.
 			 * The thinning below carries on, so this costs frames rather than
 			 * the session, but it is not something to keep to ourselves. */
@@ -722,8 +916,7 @@ void StateHistory::evict()
 			break;
 		}
 		if (drop == 0) return;
-		releaseBytes(m_segments[drop].memoryBytes(), "evict");
-		m_segments.erase(m_segments.begin() + static_cast<std::ptrdiff_t>(drop));
+		forgetSegment(drop);
 	}
 }
 

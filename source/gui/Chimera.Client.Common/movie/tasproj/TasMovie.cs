@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -45,7 +46,20 @@ namespace Chimera.Client.Common
 			// as the anchor everything else is reached from.
 			States = emulator.AsStateHistory();
 			States.SpillTo(ProjectCache.Ensure(Project.Id));
-			States.Enable((long)Session.Settings.GreenzoneBudgetMb * 1024 * 1024);
+			// Two budgets, and the settings are only the DEFAULT for both: a
+			// project can carry its own, kept beside its greenzone rather than in
+			// the file people hand each other (ProjectCache.ProjectBudgets).
+			var budgets = ProjectCache.BudgetsOf(Project.Id);
+			var memoryMb = Math.Max(
+				budgets.MemoryMb ?? Session.Settings.GreenzoneBudgetMb,
+				MovieConfig.MinimumBudgetMb);
+			// Whatever the two numbers say, the disk one is never the smaller: its
+			// whole job is to hold what memory pushed out, and a config file
+			// edited by hand can say otherwise.
+			var diskMb = MovieConfig.DiskBudgetFor(
+				Math.Max(budgets.DiskMb ?? Session.Settings.GreenzoneDiskBudgetMb, 0), memoryMb);
+			States.DiskBudget((long)diskMb * 1024 * 1024);
+			States.Enable((long)memoryMb * 1024 * 1024);
 			// Read here and not with the rest of the cache, because until the
 			// emulator arrives there is nowhere to put it. A machine a GPU drew
 			// makes states good only in the session that made them, so it starts

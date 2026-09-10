@@ -27,7 +27,7 @@
  * every frame, which must not change anything - that is the point.
  * --bands sets the history's density at each distance from the playhead;
  * --greenzone <MB> its memory budget and --spill <dir> where the far band
- * goes when that budget is full
+ * goes when that budget is full; --greenzone-disk <MB> bounds that file too
  * (near frames, mid frames, mid stride, far stride, anchor spacing; 0 keeps a
  * default). Its use in a test is to make the bands narrow enough that the
  * history is constantly coarsening, which is what the defaults spend minutes
@@ -172,6 +172,7 @@ int main(int argc, char **argv)
 	std::string bands;
 	std::string spillDir;
 	int64_t greenzoneMb = 256;
+	int64_t greenzoneDiskMb = 0;
 	std::string recordPath;
 	std::string savedataDir;
 	std::string projectPath;
@@ -209,6 +210,7 @@ int main(int argc, char **argv)
 		else if (arg == "--bands" && i + 1 < argc) bands = argv[++i];
 		else if (arg == "--spill" && i + 1 < argc) spillDir = argv[++i];
 		else if (arg == "--greenzone" && i + 1 < argc) greenzoneMb = std::atoll(argv[++i]);
+		else if (arg == "--greenzone-disk" && i + 1 < argc) greenzoneDiskMb = std::atoll(argv[++i]);
 		else if (arg == "--stop-at-seek") stopAtSeek = true;
 		else if (arg == "--record" && i + 1 < argc) recordPath = argv[++i];
 		else if (arg == "--settings" && i + 1 < argc) settings = argv[++i];
@@ -531,6 +533,7 @@ int main(int argc, char **argv)
 		 * measurement of what the greenzone costs should not quietly become a
 		 * measurement of what the disk costs. */
 		if (!spillDir.empty()) ce_session_greenzone_spill(session, spillDir.c_str());
+		ce_session_greenzone_disk_budget(session, (uint64_t)greenzoneDiskMb << 20);
 		ce_session_greenzone_enable(session, (uint64_t)greenzoneMb << 20);
 	}
 	/* A history kept from a previous run, which is the thing a reopened project

@@ -55,6 +55,14 @@ namespace Chimera.Client.GUI
 		private readonly Button _cleanNow;
 		private readonly CheckBox _autoClean;
 		private readonly NumericUpDown _limit;
+		private readonly Button _budgets;
+
+		/// <summary>
+		/// Opens the greenzone budgets for the project row that is selected, or
+		/// for nothing in particular when none is. The window does not know how a
+		/// budget is stored, the same way it does not know how a lock is.
+		/// </summary>
+		private readonly Action<CacheItem?> _editBudgets;
 
 		/// <summary>Locks and unlocks what it is given; the model's, so this window can be tested without one.</summary>
 		private readonly Action<IReadOnlyList<CacheItem>, bool> _setLocked;
@@ -115,8 +123,10 @@ namespace Chimera.Client.GUI
 			Action<IReadOnlyList<CacheItem>, bool>? setLocked = null,
 			CacheCleanPolicy? policy = null,
 			Action<CacheCleanPolicy>? savePolicy = null,
-			Func<long>? freeSpace = null)
+			Func<long>? freeSpace = null,
+			Action<CacheItem?>? editBudgets = null)
 		{
+			_editBudgets = editBudgets ?? (static _ => { });
 			_survey = survey;
 			_setLocked = setLocked ?? CacheLocks.Set;
 			_policy = policy ?? new CacheCleanPolicy();
@@ -297,6 +307,19 @@ namespace Chimera.Client.GUI
 			};
 			_selectOrphans.Click += (_, _) => SelectOrphans();
 
+			_budgets = new Button
+			{
+				Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
+				Location = new(margin + (3 * (bw + gap)), buttonRow),
+				Size = new(bw, UIHelper.ScaleY(26)),
+				Text = "Greenzone budgets...",
+			};
+			// What a greenzone may weigh belongs next to what it does weigh. A
+			// project row carries its id, so the button offers that project's own
+			// budgets as well as the defaults; with nothing selected it is the
+			// defaults alone.
+			_budgets.Click += (_, _) => _editBudgets(SelectedProject());
+
 			_openFolder = new Button
 			{
 				Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
@@ -329,7 +352,7 @@ namespace Chimera.Client.GUI
 			Controls.AddRange(new Control[]
 			{
 				_header, _selectAll, _autoClean, _limit, unit, _list, _detail, _status,
-				_remove, _lock, _selectOrphans, _openFolder, _cleanNow, close,
+				_remove, _lock, _selectOrphans, _budgets, _openFolder, _cleanNow, close,
 			});
 			AcceptButton = close;
 			ResumeLayout();
@@ -511,6 +534,13 @@ namespace Chimera.Client.GUI
 
 		private CacheItem? Selected()
 			=> _list.SelectedItems.Count is 0 ? null : _list.SelectedItems[0].Tag as CacheItem;
+
+		/// <summary>The selected row when it is a project, which is the only kind that has budgets.</summary>
+		private CacheItem? SelectedProject()
+		{
+			var item = Selected();
+			return item is { Kind: CacheKind.Project } ? item : null;
+		}
 
 		private void ShowSelected()
 		{

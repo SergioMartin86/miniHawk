@@ -493,12 +493,33 @@ namespace Chimera.Client.GUI
 					Config.CacheAutoClean = p.Enabled;
 					Config.CacheSizeLimitMb = (int) (p.LimitBytes / 1024 / 1024);
 				},
-				freeSpace: () => CacheSurvey.FreeSpaceAt(ProjectCache.DataHome));
+				freeSpace: () => CacheSurvey.FreeSpaceAt(ProjectCache.DataHome),
+				editBudgets: EditGreenzoneBudgets);
 			this.ShowDialogWithTempMute(form);
 			// a limit that was just lowered should mean something before the next
 			// project closes, and the window has already asked about anything it
 			// removed itself
 			AutoCleanCaches();
+		}
+
+		/// <summary>
+		/// The greenzone budgets: the default for every project, and what one
+		/// project asks for instead. A project row carries its id in Detail, which
+		/// is the key its budgets are kept under.
+		/// </summary>
+		private void EditGreenzoneBudgets(CacheItem? project)
+		{
+			var id = project?.Detail ?? "";
+			using GreenzoneBudgetsForm form = new(
+				Config.Movies.GreenzoneBudgetMb,
+				Config.Movies.GreenzoneDiskBudgetMb,
+				projectLabel: id.Length is 0 ? null : project!.Label,
+				projectBudgets: id.Length is 0 ? null : ProjectCache.BudgetsOf(id));
+			if (this.ShowDialogWithTempMute(form) is not DialogResult.OK) return;
+
+			Config.Movies.GreenzoneBudgetMb = form.DefaultMemoryMb;
+			Config.Movies.GreenzoneDiskBudgetMb = form.DefaultDiskMb;
+			if (id.Length is not 0) ProjectCache.RememberBudgets(id, form.ProjectBudgets);
 		}
 
 		/// <summary>

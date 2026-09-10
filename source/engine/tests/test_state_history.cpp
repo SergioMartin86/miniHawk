@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <new>
 #include <vector>
 
 namespace
@@ -116,8 +117,14 @@ void writeCells(chimera::WbxWriteCb cb, uintptr_t ud, const Cells &c)
 	for (const auto &e : c) { cb(ud, &e.first, 1); cb(ud, &e.second, 1); }
 }
 
+/* Set to have the next N captures fail the way a machine out of memory fails.
+ * Nothing else here can produce that, and it is the one condition the history
+ * is expected to survive rather than report. */
+int g_outOfMemoryFor = 0;
+
 void fakeSaveState(void *, chimera::WbxWriteCb cb, uintptr_t ud, chimera::WbxReturn *r)
 {
+	if (g_outOfMemoryFor > 0) { g_outOfMemoryFor--; throw std::bad_alloc(); }
 	*r = {};
 	cb(ud, g_machine.cell, Machine::kCells);
 }
@@ -136,6 +143,7 @@ void fakeEpochBegin(void *, chimera::WbxReturn *r)
 
 void fakeSaveDelta(void *, bool forward, chimera::WbxWriteCb cb, uintptr_t ud, chimera::WbxReturn *r)
 {
+	if (g_outOfMemoryFor > 0) { g_outOfMemoryFor--; throw std::bad_alloc(); }
 	*r = {};
 	if (g_machine.epochBase.empty()) { std::snprintf(r->errorMessage, sizeof r->errorMessage, "no epoch"); return; }
 	Cells changed;
@@ -456,6 +464,101 @@ int main(void)
 		assert(!h.spillFailed());
 		std::filesystem::remove_all("work-history-elsewhere");
 	}
+
+	{ // Running out of memory halves the budget instead of ending the session.
+	  //
+	  // The history is the biggest thing Chimera holds that it does not need, so
+	  // it is where the end of memory is met first - and a greenzone that has
+	  // quietly become half as deep is a run that continues, where a throw out of
+	  // a capture is a session lost.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		chimera::StateHistory h;
+		/* high enough that four halvings still clear the floor */
+		h.configure(&api, nullptr, 1024ull * 1024 * 1024);
+		h.bands(2, 6, 3, 12, 8);
+		h.capture(0);
+		const uint64_t before = h.budget();
+
+		/* four failures in a row: one halving is unlikely to be enough on a
+		 * machine that has actually run out, so it keeps going */
+		g_outOfMemoryFor = 4;
+		h.beforeAdvance();
+		advance(1);
+		h.capture(1);
+		assert(g_outOfMemoryFor == 0);        /* every one of them was answered */
+		assert(h.budget() == before / 16);    /* halved once per failure */
+		assert(h.budget() != 0);              /* and never off: zero is "no history" */
+
+		/* the frame that provoked it is stored, because the last try succeeded */
+		assert(h.nearest(1) == 1);
+
+		/* and it stops at the floor rather than halving towards nothing */
+		g_outOfMemoryFor = 1000;
+		h.beforeAdvance();
+		advance(2);
+		h.capture(2);
+		assert(h.budget() >= 1);
+		assert(g_outOfMemoryFor > 0);         /* it gave up rather than spin */
+		g_outOfMemoryFor = 0;
+	}
+
+	{ // The spill file has a budget of its own, and the oldest goes first.
+	  //
+	  // The memory budget is met by MOVING bytes to disk, so without this one
+	  // half of what a history costs was bounded and the other half was not: six
+	  // thousand Game Boy frames put 1.5GB in the file and nothing ever took any
+	  // of it back.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+
+		std::filesystem::remove_all("work-history-disk");
+		std::filesystem::create_directories("work-history-disk");
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 512);
+		h.bands(2, 6, 3, 12, 8);
+		h.spillTo("work-history-disk");
+		const uint64_t kDisk = 8192;   /* what the FILE may weigh */
+		h.diskBudget(kDisk);
+		h.capture(0);
+		for (int64_t f = 1; f <= 400; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			/* held every frame, not merely at the end: a limit that is only true
+			 * once is a limit nobody can rely on while they work */
+			assert(h.diskBytes() <= kDisk / 2);
+		}
+		/* and the FILE is held too, not just the count of what is live in it -
+		 * dropping the oldest without reclaiming the room it held would be a
+		 * limit on paper only */
+		const uint64_t onDisk = std::filesystem::file_size("work-history-disk/history-spill.bin");
+		assert(onDisk <= kDisk);   /* the number given, on the number `ls` shows */
+
+		/* what is left still works: the newest frames are reachable, which is
+		 * the half of the run the oldest was dropped to protect */
+		assert(h.restore(h.nearest(400), error));
+		assert(h.nearest(1) < h.nearest(400));
+
+		/* and no limit means no limit - the behaviour a year of runs had */
+		chimera::StateHistory u;
+		u.configure(&api, nullptr, 512);
+		u.bands(2, 6, 3, 12, 8);
+		std::filesystem::remove_all("work-history-nolimit");
+		std::filesystem::create_directories("work-history-nolimit");
+		u.spillTo("work-history-nolimit");
+		u.capture(0);
+		for (int64_t f = 1; f <= 400; f++) { u.beforeAdvance(); advance(f); u.capture(f); }
+		/* the same run with no limit keeps everything it ever spilled, which is
+		 * the behaviour this budget exists to bound */
+		fprintf(stderr, "  [disk budget] bounded %llu, unbounded %llu\n",
+			(unsigned long long)h.diskBytes(), (unsigned long long)u.diskBytes());
+		assert(u.diskBytes() > h.diskBytes());
+	}
+	std::filesystem::remove_all("work-history-disk");
+	std::filesystem::remove_all("work-history-nolimit");
 
 	{ // A budget too small to hold the run: the far end goes to disk, and the
 	  // frames out there are still frames the history can produce.

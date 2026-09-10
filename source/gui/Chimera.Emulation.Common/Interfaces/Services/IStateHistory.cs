@@ -20,6 +20,14 @@ namespace Chimera.Emulation.Common
 		/// <summary>Bytes to keep in memory; 0 turns it off and drops everything.</summary>
 		void Enable(long budgetBytes);
 
+		/// <summary>
+		/// What the spill file may weigh, or 0 for no limit. Set BEFORE
+		/// <see cref="Enable"/>: enabling captures the first anchor, and a limit
+		/// that arrives after it has already been asked to hold something is a
+		/// limit that was not applied to it.
+		/// </summary>
+		void DiskBudget(long budgetBytes);
+
 		/// <summary>Where the far band goes when the budget is full; null for nowhere.</summary>
 		void SpillTo(string? directory);
 

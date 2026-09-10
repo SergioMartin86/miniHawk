@@ -2021,6 +2021,18 @@ void ce_session_greenzone_spill(ce_session *s, const char *dir)
 	s->history.spillTo(dir);
 }
 
+void ce_session_greenzone_disk_budget(ce_session *s, uint64_t budget_bytes)
+{
+	if (s == nullptr) return;
+	s->history.diskBudget(budget_bytes);
+}
+
+uint64_t ce_session_greenzone_disk_bytes(const ce_session *s)
+{
+	if (s == nullptr) return 0;
+	return s->history.diskBytes();
+}
+
 int32_t ce_session_greenzone_spill_failed(const ce_session *s)
 {
 	if (s == nullptr) return 0;
