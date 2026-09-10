@@ -12,9 +12,13 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <fcntl.h>
+#include <unistd.h>
 #include <string>
 #include <new>
 #include <vector>
@@ -117,6 +121,11 @@ void writeCells(chimera::WbxWriteCb cb, uintptr_t ud, const Cells &c)
 	for (const auto &e : c) { cb(ud, &e.first, 1); cb(ud, &e.second, 1); }
 }
 
+/* Set to have the next delta load refuse, the way a damaged one would. Nothing
+ * else here can produce that, and what the history does about it - leave the
+ * machine somewhere real rather than half way along a chain - is the point. */
+int g_refuseDeltaLoadIn = -1;
+
 /* Set to have the next N captures fail the way a machine out of memory fails.
  * Nothing else here can produce that, and it is the one condition the history
  * is expected to survive rather than report. */
@@ -159,6 +168,17 @@ void fakeSaveDelta(void *, bool forward, chimera::WbxWriteCb cb, uintptr_t ud, c
 void fakeLoadDelta(void *, chimera::WbxReadCb cb, uintptr_t ud, chimera::WbxReturn *r)
 {
 	*r = {};
+	if (g_refuseDeltaLoadIn == 0)
+	{
+		g_refuseDeltaLoadIn = -1;
+		/* a damaged delta is not a no-op: it writes part of the machine and
+		 * then gives up, which is exactly what makes this worth containing */
+		g_machine.cell[0] = 0xDE;
+		g_machine.cell[1] = 0xAD;
+		std::snprintf(r->errorMessage, sizeof r->errorMessage, "memory delta apply failed");
+		return;
+	}
+	if (g_refuseDeltaLoadIn > 0) g_refuseDeltaLoadIn--;
 	for (const auto &c : readCells(cb, ud)) g_machine.cell[c.first] = c.second;
 	g_machine.epochBase.clear();
 }
@@ -188,6 +208,20 @@ chimera::HostApi fakeHost()
 	api.wbx_load_delta = fakeLoadDelta;
 	api.wbx_compose_delta = fakeComposeDelta;
 	return api;
+}
+
+/* The spill file, whatever it is called: the name carries the process and the
+ * instance now, so that two histories handed the same directory cannot open the
+ * same file. Tests ask the directory, not the name. */
+std::filesystem::path spillFileIn(const std::string &dir)
+{
+	std::error_code ec;
+	for (const auto &entry : std::filesystem::directory_iterator(dir, ec))
+	{
+		const std::string name = entry.path().filename().string();
+		if (name.rfind("history-spill-", 0) == 0) return entry.path();
+	}
+	return {};
 }
 
 /* Frame n writes three cells, which cells depending on n - so a delta is a
@@ -534,7 +568,7 @@ int main(void)
 		/* and the FILE is held too, not just the count of what is live in it -
 		 * dropping the oldest without reclaiming the room it held would be a
 		 * limit on paper only */
-		const uint64_t onDisk = std::filesystem::file_size("work-history-disk/history-spill.bin");
+		const uint64_t onDisk = std::filesystem::file_size(spillFileIn("work-history-disk"));
 		assert(onDisk <= kDisk);   /* the number given, on the number `ls` shows */
 
 		/* what is left still works: the newest frames are reachable, which is
@@ -588,9 +622,9 @@ int main(void)
 		}
 
 		/* it really did spill, or this proves only that nothing broke */
-		assert(std::filesystem::exists("work-history-spill/history-spill.bin"));
+		assert(!spillFileIn("work-history-spill").empty());
 		assert(h.bytes() <= 512);
-		assert(std::filesystem::file_size("work-history-spill/history-spill.bin") > 512);
+		assert(std::filesystem::file_size(spillFileIn("work-history-spill")) > 512);
 
 		/* an early frame, which can only be out on disk by now */
 		const int64_t old = h.nearest(12);
@@ -689,8 +723,347 @@ int main(void)
 	std::filesystem::remove_all("work-history-settle");
 	std::filesystem::remove_all("work-history-settle-control");
 
+	{ // An edit that lands on the last frame of a spilled stretch starts a new
+	  // stretch. A delta pushed onto the spilled one would sit in memory while
+	  // every restore reads the file, where the old timeline's links still are.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+		std::filesystem::remove_all("work-history-edit");
+		std::filesystem::create_directories("work-history-edit");
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 512);
+		h.bands(2, 6, 3, 12, 8);
+		h.spillTo("work-history-edit");
+		h.capture(0);
+		std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+		for (int64_t f = 1; f <= 40; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+		/* frame 8 closes the first stretch, which a 512 byte budget has spilled */
+		assert(h.nearest(8) == 8);
+		assert(h.restore(8, error));
+		h.beforeAdvance();
+		g_machine.cell[3] ^= 0x5C;   /* the edit */
+		advance(9);
+		std::array<uint8_t, Machine::kCells> edited{};
+		std::memcpy(edited.data(), g_machine.cell, Machine::kCells);
+		h.capture(9);
+		assert(h.nearest(INT64_MAX) == 9);
+		/* back to 8 and forward to the edited 9: the old 9 must not come back */
+		assert(h.restore(8, error));
+		assert(std::memcmp(g_machine.cell, truth[8].data(), Machine::kCells) == 0);
+		assert(h.restore(9, error));
+		assert(std::memcmp(g_machine.cell, edited.data(), Machine::kCells) == 0);
+
+		/* and a saved history does not carry what the edit removed: an edit
+		 * inside a spilled stretch, then save and load */
+		const int64_t cut = h.nearest(6);   /* a landing the bands kept inside the first stretch */
+		assert(cut >= 0 && cut <= 6);
+		assert(h.restore(cut, error));
+		h.invalidateAfter(cut);
+		assert(h.nearest(INT64_MAX) == cut);
+		assert(h.saveTo(kPath, "fake", error));
+		chimera::StateHistory back;
+		back.configure(&api, nullptr, 64ull << 20);
+		assert(back.loadFrom(kPath, "fake", error));
+		assert(back.nearest(INT64_MAX) == cut);
+		assert(back.restore(cut, error));
+		assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(cut)].data(), Machine::kCells) == 0);
+	}
+	std::filesystem::remove_all("work-history-edit");
+
+	{ // A chain that will not walk leaves the machine on a frame that DID exist,
+	  // says which, and gives up the stretch - rather than leaving a machine
+	  // that never existed for the session to record a movie against.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 64ull << 20);
+		h.bands(4, 8, 1, 1, 1000);   /* one long stretch, every landing kept */
+		h.capture(0);
+		std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+		for (int64_t f = 1; f <= 30; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+		/* the fourth delta of the walk refuses */
+		g_refuseDeltaLoadIn = 3;
+		int64_t landed = -1;
+		assert(!h.restore(25, error, &landed));
+		assert(landed == 0);                                   /* the anchor it walked from */
+		assert(std::memcmp(g_machine.cell, truth[0].data(), Machine::kCells) == 0);
+		assert(g_refuseDeltaLoadIn == -1);
+		/* and the stretch is gone rather than waiting to fail again */
+		assert(h.count() == 0);
+		assert(h.nearest(25) == -1);
+		g_refuseDeltaLoadIn = -1;
+	}
+
+	{ // Spill files a dead session left behind are swept when a history is
+	  // pointed at the directory: they are named for the process that made
+	  // them, so nothing else would ever remove them, and they are gigabytes.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+		std::filesystem::remove_all("work-history-stale");
+		std::filesystem::create_directories("work-history-stale");
+		{
+			std::ofstream dead("work-history-stale/history-spill-999999-1.bin");
+			dead << "what a session that died left";
+		}
+		{
+			std::ofstream other("work-history-stale/keep-me.bin");
+			other << "not a spill file";
+		}
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 512);
+		h.bands(2, 6, 3, 12, 8);
+		h.spillTo("work-history-stale");
+		assert(!std::filesystem::exists("work-history-stale/history-spill-999999-1.bin"));
+		assert(std::filesystem::exists("work-history-stale/keep-me.bin"));
+
+		/* and the one this history is using is not swept from under it */
+		h.capture(0);
+		for (int64_t f = 1; f <= 60; f++) { h.beforeAdvance(); advance(f); h.capture(f); }
+		const auto mine = spillFileIn("work-history-stale");
+		assert(!mine.empty());
+		h.spillTo("work-history-stale");                 /* the same directory again */
+		assert(std::filesystem::exists(mine));
+		assert(h.nearest(0) == 0 && h.restore(0, error));
+	}
+	std::filesystem::remove_all("work-history-stale");
+
+	{ // Turning the greenzone on again - a budget changed, a project reattached -
+	  // starts from nothing, the spill file included. It used to keep the file
+	  // open and its live count, so the disk budget was then held against
+	  // stretches that no longer existed and the room was never given back.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+		std::filesystem::remove_all("work-history-again");
+		std::filesystem::create_directories("work-history-again");
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 512);
+		h.bands(2, 6, 3, 12, 8);
+		h.spillTo("work-history-again");
+		h.capture(0);
+		for (int64_t f = 1; f <= 60; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+		}
+		assert(h.diskBytes() > 0);
+		assert(!spillFileIn("work-history-again").empty());
+
+		h.configure(&api, nullptr, 4096);
+		assert(h.count() == 0);
+		assert(h.bytes() == 0);
+		assert(h.diskBytes() == 0);           /* nothing is out there any more */
+		assert(spillFileIn("work-history-again").empty());
+		/* and it works from cold: a fresh anchor, frames, and every one exact */
+		g_machine = Machine{};
+		std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+		h.capture(0);
+		for (int64_t f = 1; f <= 40; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			std::array<uint8_t, Machine::kCells> at{};
+			std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+			truth.push_back(at);
+		}
+		for (int64_t f = 0; f <= 40; f++)
+		{
+			if (h.nearest(f) != f) continue;
+			assert(h.restore(f, error));
+			assert(std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+		}
+	}
+	std::filesystem::remove_all("work-history-again");
+
+	{ // The history under random use, against the truth. Every other block asks
+	  // one question of one path; this asks the only one that matters of all
+	  // of them at once: after any sequence of frames, restores, edits, pins,
+	  // budgets, spills and save/load round trips, does every frame the history
+	  // still offers come back exactly as it was? Tiny budgets and small bands,
+	  // so that every path runs every few operations. Deterministic per seed.
+		const chimera::HostApi api = fakeHost();
+		/* the history says so on stderr when its own arithmetic goes wrong;
+		 * that is a failure here, not a note */
+		std::fflush(stderr);
+		/* the trace is somebody debugging: let it through rather than filing it */
+		const bool captureErr = getenv("CHIMERA_HISTORY_TRACE") == nullptr;
+		const int savedErr = captureErr ? dup(2) : -1;
+		const int errFile = captureErr ? open("work-history-fuzz.err", O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
+		if (captureErr) { assert(errFile >= 0); dup2(errFile, 2); }
+		for (int seed = 0; seed < 16; seed++)
+		{
+			uint64_t rng = 0x9E3779B97F4A7C15ull * static_cast<uint64_t>(seed + 1);
+			auto rnd = [&]() { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return static_cast<uint32_t>(rng >> 11); };
+			g_machine = Machine{};
+			std::filesystem::remove_all("work-history-fuzz");
+			std::filesystem::remove_all("work-history-fuzz-b");
+			std::filesystem::create_directories("work-history-fuzz");
+			std::filesystem::create_directories("work-history-fuzz-b");
+			chimera::StateHistory h;
+			const uint64_t budget = 200 + rnd() % 1500;
+			const int64_t near = 1 + rnd() % 4, mid = 2 + rnd() % 8, midStride = 1 + rnd() % 3,
+				farStride = 1 + rnd() % 16, spacing = 2 + rnd() % 10;
+			h.configure(&api, nullptr, budget);
+			h.bands(near, mid, midStride, farStride, spacing);
+			if (rnd() % 4 != 0) h.spillTo("work-history-fuzz");
+			if (rnd() % 2) h.diskBudget(2048 + rnd() % 8192);
+
+			std::vector<std::array<uint8_t, Machine::kCells>> truth(1);
+			std::memcpy(truth[0].data(), g_machine.cell, Machine::kCells);
+			h.capture(0);
+			int64_t frame = 0;
+			int op = 0;
+			std::string story;   /* what happened, for the seed that fails */
+			auto must = [&](bool ok, const char *what, int64_t f) {
+				if (ok) return;
+				std::fprintf(stderr, "seed %d op %d frame %lld: %s (frame %lld): %s\nstory:%s\n", seed, op, (long long)frame, what, (long long)f, error.c_str(), story.c_str());
+				std::fflush(stderr);
+				std::abort();
+			};
+			auto machineIs = [&](int64_t f) { return std::memcmp(g_machine.cell, truth[static_cast<size_t>(f)].data(), Machine::kCells) == 0; };
+			auto putBack = [&]() { std::memcpy(g_machine.cell, truth[static_cast<size_t>(frame)].data(), Machine::kCells); g_machine.epochBase.clear(); };
+			auto checkAll = [&](chimera::StateHistory &x) {
+				/* nothing beyond the truth: a frame from a timeline an edit ended */
+				must(x.nearest(INT64_MAX) < static_cast<int64_t>(truth.size()), "offers a frame past the run's end", x.nearest(INT64_MAX));
+				for (int64_t f = 0; f < static_cast<int64_t>(truth.size()); f++)
+				{
+					if (x.nearest(f) != f) continue;
+					must(x.restore(f, error), &x == &h ? "check: restore refused" : "check of the loaded copy: restore refused", f);
+					must(machineIs(f), &x == &h ? "check: came back wrong" : "check of the loaded copy: came back wrong", f);
+					size_t len = 0;
+					const uint8_t *note = x.noteFor(f, len);
+					if (f != 0) assert(note != nullptr && len == 2 && note[0] == static_cast<uint8_t>(f & 0xFF) && note[1] == 0x5A);
+				}
+				putBack();
+			};
+
+			for (op = 0; op < 500; op++)
+			{
+				switch (rnd() % 14)
+				{
+				case 0:
+				case 1:
+				{ // back to a frame it offers
+					const int64_t f = h.nearest(static_cast<int64_t>(rnd() % truth.size()));
+					if (f < 0) break;
+					story += " restore" + std::to_string(f);
+					must(h.restore(f, error), "restore refused", f);
+					must(machineIs(f), "restored wrong", f);
+					frame = f;
+					break;
+				}
+				case 2:
+				{ // an edit: back to a frame it offers, the input there changes,
+				  // and every frame after it is a timeline that never happens
+					const int64_t f = h.nearest(static_cast<int64_t>(rnd() % truth.size()));
+					if (f < 0) break;
+					story += " edit@" + std::to_string(f);
+					must(h.restore(f, error), "restore for the edit refused", f);
+					must(machineIs(f), "restored wrong before the edit", f);
+					frame = f;
+					h.invalidateAfter(f);
+					truth.resize(static_cast<size_t>(f) + 1);
+					/* the edit itself diverges the NEXT frame's state, the way a
+					 * changed input does - so it happens inside the epoch, after
+					 * beforeAdvance, and lands in the delta that frame records */
+					truth.push_back({});
+					frame++;
+					h.beforeAdvance();
+					advance(frame);
+					g_machine.cell[rnd() % Machine::kCells] ^= static_cast<uint8_t>(1 + rnd() % 255);
+					std::memcpy(truth[static_cast<size_t>(frame)].data(), g_machine.cell, Machine::kCells);
+					const uint8_t note[2] = { static_cast<uint8_t>(frame & 0xFF), 0x5A };
+					h.capture(frame, note, sizeof note);
+					break;
+				}
+				case 3:
+				{
+					const int64_t f = static_cast<int64_t>(rnd() % truth.size());
+					const bool on = rnd() % 2 == 0;
+					story += (on ? " pin" : " unpin") + std::to_string(f);
+					h.pin(f, on);
+					break;
+				}
+				case 4:
+				{ // saved and loaded back: what comes back must be right
+					story += " save";
+					assert(h.saveTo(kPath, "fake", error));
+					chimera::StateHistory back;
+					back.configure(&api, nullptr, budget);
+					back.bands(near, mid, midStride, farStride, spacing);
+					if (rnd() % 2) back.spillTo("work-history-fuzz-b");
+					assert(back.loadFrom(kPath, "fake", error));
+					checkAll(back);
+					break;
+				}
+				case 5:
+					story += " disk";
+					h.diskBudget(rnd() % 2 ? 0 : 1024 + rnd() % 16384);
+					break;
+				case 6:
+					if (rnd() % 8 == 0) { story += " spillto"; h.spillTo(rnd() % 2 ? "work-history-fuzz-b" : "work-history-fuzz"); }
+					break;
+				default:
+				{ // a frame
+					story += " f";
+					h.beforeAdvance();
+					frame++;
+					advance(frame);
+					if (static_cast<int64_t>(truth.size()) <= frame) truth.resize(static_cast<size_t>(frame) + 1);
+					std::memcpy(truth[static_cast<size_t>(frame)].data(), g_machine.cell, Machine::kCells);
+					const uint8_t note[2] = { static_cast<uint8_t>(frame & 0xFF), 0x5A };
+					h.capture(frame, note, sizeof note);
+					break;
+				}
+				}
+				if (op % 40 == 39) checkAll(h);
+			}
+			checkAll(h);
+		}
+		std::fflush(stderr);
+		if (captureErr)
+		{
+			dup2(savedErr, 2);
+			close(savedErr);
+			close(errFile);
+		}
+		if (captureErr)
+		{
+			std::ifstream err("work-history-fuzz.err");
+			std::string line;
+			while (std::getline(err, line))
+			{
+				if (line.find("count was wrong") != std::string::npos || line.find("gave back") != std::string::npos)
+				{
+					std::fprintf(stderr, "the history's accounting complained: %s\n", line.c_str());
+					assert(false);
+				}
+			}
+		}
+		std::filesystem::remove("work-history-fuzz.err");
+		std::filesystem::remove_all("work-history-fuzz");
+		std::filesystem::remove_all("work-history-fuzz-b");
+	}
+
 	/* the spill file belongs to the history and goes with it */
-	assert(!std::filesystem::exists("work-history-spill/history-spill.bin"));
+	assert(spillFileIn("work-history-spill").empty());
 	std::filesystem::remove_all("work-history-spill");
 
 	std::remove(kPath);

@@ -5,6 +5,12 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <chrono>
 #include <new>
 
@@ -37,6 +43,24 @@ intptr_t sourceRead(uintptr_t ud, void *out, uintptr_t len)
 	std::memcpy(out, s->data + s->pos, n);
 	s->pos += n;
 	return static_cast<intptr_t>(n);
+}
+
+/* The spill file is named for the process and the instance, not for the
+ * directory alone. Two histories handed the same directory - a project opened
+ * again before the session that had it is gone, or the same project open
+ * twice - used to open the same file, and the second truncated the first's:
+ * every frame the first had on disk came back as garbage. A name of its own is
+ * the whole fix; what a crashed session leaves behind is a cache file like any
+ * other, and the cache manager's bound on the directory takes it in time. */
+static std::string spillFileName()
+{
+	static int seq = 0;
+#ifdef _WIN32
+	const long pid = static_cast<long>(_getpid());
+#else
+	const long pid = static_cast<long>(getpid());
+#endif
+	return "history-spill-" + std::to_string(pid) + "-" + std::to_string(++seq) + ".bin";
 }
 
 /* fseek and ftell take a long, which is 32 bits on Windows - and the spill file
@@ -130,9 +154,11 @@ void StateHistory::configure(const HostApi *host, void *obj, uint64_t budgetByte
 	m_host = host;
 	m_obj = obj;
 	m_budget = budgetBytes;
-	m_segments.clear();
-	m_bytes = 0;
-	m_epochOpen = false;
+	/* Everything stored goes, the spill file with it: a history configured
+	 * over one that had spilled kept the file open and its live count, and
+	 * then held the disk budget against stretches that no longer existed. The
+	 * directory is kept - the next spill opens a fresh file there. */
+	clear();
 }
 
 void StateHistory::clear()
@@ -141,7 +167,6 @@ void StateHistory::clear()
 	m_bytes = 0;
 	m_epochOpen = false;
 	m_newest = -1;
-	m_settle = Settling{};
 	dropSpillFile();
 }
 
@@ -191,10 +216,42 @@ StateHistory::~StateHistory()
 	dropSpillFile();
 }
 
+/* Spill files a previous session left behind.
+ *
+ * The file is named for the process that made it, so a session that died -
+ * a crash, a machine turned off - leaves its file in the project's cache with
+ * nobody to remove it, and the next runs pile theirs on top. They are cache
+ * files and the cache manager would take them in the end, but "in the end" is
+ * after they have filled a disk, and they are gigabytes each.
+ *
+ * So a history sweeps the directory it is given. A file another LIVE session
+ * is using refuses to go on Windows, which is the answer we want; on Linux the
+ * unlink costs that session its name and nothing else - it holds the handle,
+ * and its own removal simply finds nothing later. */
+void StateHistory::sweepStaleSpills(const std::string &dir)
+{
+	if (dir.empty()) return;
+	std::error_code ec;
+	for (const auto &entry : std::filesystem::directory_iterator(dir, ec))
+	{
+		if (ec) return;
+		std::error_code one;
+		if (!entry.is_regular_file(one) || one) continue;
+		const std::string name = entry.path().filename().string();
+		if (name.rfind("history-spill-", 0) != 0) continue;
+		if (name == std::filesystem::path(m_spillPath).filename().string()) continue;   /* ours */
+		std::filesystem::remove(entry.path(), one);
+	}
+}
+
 void StateHistory::spillTo(const char *dir)
 {
 	const std::string next = dir != nullptr ? dir : "";
-	if (next == m_spillDir) return;
+	if (next == m_spillDir)
+	{
+		sweepStaleSpills(next);
+		return;
+	}
 	/* Whatever is out there belongs to the old directory, and the segments
 	 * pointing at it are now unreadable - so they go, which costs replaying. */
 	dropSpillFile();
@@ -204,6 +261,7 @@ void StateHistory::spillTo(const char *dir)
 	}
 	m_spillDir = next;
 	m_spillFailed = false;   /* a new directory is a fresh chance at it */
+	sweepStaleSpills(next);
 }
 
 /* True when anything between the anchor and the last landing is pinned - the
@@ -275,7 +333,7 @@ bool StateHistory::compactSpill()
 	}
 	if (m_spillBytes - m_spillLive < m_spillLive) return false;   /* dead half is the smaller half */
 
-	const std::string path = m_spillDir + "/history-spill.bin";
+	const std::string path = m_spillPath;
 	const std::string tmp = path + ".compacting";
 	std::FILE *out = std::fopen(tmp.c_str(), "w+b");
 	if (out == nullptr) return false;
@@ -328,12 +386,13 @@ bool StateHistory::compactSpill()
 
 void StateHistory::dropSpillFile()
 {
+	/* whatever was being settled was being read from this file */
+	m_settle = Settling{};
 	if (m_spill != nullptr)
 	{
 		std::fclose(m_spill);
 		m_spill = nullptr;
-		const std::string path = m_spillDir + "/history-spill.bin";
-		std::remove(path.c_str());
+		std::remove(m_spillPath.c_str());
 	}
 	m_spillBytes = 0;
 	m_spillLive = 0;
@@ -502,8 +561,14 @@ void StateHistory::captureOnce(int64_t frame, const uint8_t *note, size_t noteLe
 	ByteSink sink{ &bytes };
 	WbxReturn r{};
 
+	/* Never onto a spilled stretch. An edit far enough back truncates one that
+	 * is on disk, and a delta pushed onto it would sit in memory while every
+	 * restore reads the file - where the old timeline's links still are at
+	 * those positions. The frames after the edit would come back as the
+	 * frames before it. A fresh anchor starts a stretch of its own instead. */
 	const bool wantDelta = m_epochOpen
 		&& !m_segments.empty()
+		&& !m_segments.back().spilled
 		&& m_segments.back().lastFrame() == frame - 1
 		&& m_segments.back().lastFrame() - m_segments.back().anchorFrame < m_anchorSpacing;
 	m_epochOpen = false;
@@ -768,17 +833,20 @@ void StateHistory::settleSpilled(int64_t farFrame)
 			if (!seg.spilled || seg.settled || seg.lastFrame() >= farFrame) continue;
 			if (seg.links.size() <= 1) { seg.settled = true; continue; }   /* nothing to compose */
 			/* the head of the body: the anchor's length is the cap, the rest is stepped over */
-			uint64_t noteLen = 0, count = 0;
+			uint64_t noteLen = 0, count = 0, at = 0;
 			st = Settling{};
-			if (!seekTo(m_spill, seg.spillAt) || !readU64(m_spill, st.anchorLen) || !seekBy(m_spill, st.anchorLen)
-				|| !readU64(m_spill, noteLen) || !skipBy(m_spill, noteLen) || !readU64(m_spill, count)
-				|| !tellAt(m_spill, st.fileAt))
+			if (!seekTo(m_spill, seg.spillAt) || !readU64(m_spill, st.anchorLen) || st.anchorLen > seg.spillLength
+				|| !seekBy(m_spill, st.anchorLen) || !readU64(m_spill, noteLen) || noteLen > kMaxNote
+				|| !skipBy(m_spill, noteLen) || !readU64(m_spill, count) || !tellAt(m_spill, at))
 			{
 				seg.settled = true;   /* unreadable: left as it is, and not asked again */
 				continue;
 			}
 			st.active = true;
 			st.anchorFrame = seg.anchorFrame;
+			st.spillAt = seg.spillAt;
+			st.spillLength = seg.spillLength;
+			st.bodyAt = at - seg.spillAt;
 			/* what the stretch still answers for may be less than the file
 			 * holds - an edit truncated it - and the rest is not wanted back */
 			st.linkCount = count < seg.links.size() ? static_cast<size_t>(count) : seg.links.size();
@@ -787,36 +855,46 @@ void StateHistory::settleSpilled(int64_t farFrame)
 		if (!st.active) return;
 	}
 
+	/* The stretch, as it is NOW: a compaction moves bodies and a drop removes
+	 * them, so it is looked up every time and never kept. */
+	const Segment *seg = settlingSegment();
+	if (seg == nullptr)
+	{
+		m_settle = Settling{};   /* gone or moved meanwhile: nothing to finish */
+		return;
+	}
+
 	/* a few links, then the rest next frame - reading one back costs what
 	 * spilling it cost, and the far boundary moves one frame at a time */
 	static constexpr int kLinksPerFrame = 4;
 	for (int n = 0; n < kLinksPerFrame && st.linkIndex < st.linkCount; n++)
 	{
-		uint64_t endFrame = 0, noteLen = 0, len = 0;
+		uint64_t endFrame = 0, noteLen = 0, len = 0, at = 0;
 		Link next;
-		if (!seekTo(m_spill, st.fileAt) || !readU64(m_spill, endFrame)
-			|| !readU64(m_spill, noteLen) || noteLen > kMaxNote)
+		/* every read stays inside the body: a record that claims more is damage */
+		const uint64_t bodyEnd = seg->spillAt + seg->spillLength;
+		bool ok = st.bodyAt < seg->spillLength
+			&& seekTo(m_spill, seg->spillAt + st.bodyAt) && readU64(m_spill, endFrame)
+			&& readU64(m_spill, noteLen) && noteLen <= kMaxNote;
+		if (ok)
 		{
-			st.linkCount = 0;   /* unreadable: give up on this one below, without a rewrite */
-			st.merges = 0;
-			break;
+			next.note.resize(static_cast<size_t>(noteLen));
+			ok = readAll(m_spill, next.note.data(), next.note.size()) && readU64(m_spill, len)
+				&& tellAt(m_spill, at) && len <= bodyEnd - at;
 		}
-		next.note.resize(static_cast<size_t>(noteLen));
-		if (!readAll(m_spill, next.note.data(), next.note.size()) || !readU64(m_spill, len)
-			|| !tellAt(m_spill, st.fileAt))
+		if (ok)
 		{
-			st.linkCount = 0;
-			st.merges = 0;
-			break;
+			next.bytes.resize(static_cast<size_t>(len));
+			ok = readAll(m_spill, next.bytes.data(), next.bytes.size());
 		}
-		next.bytes.resize(static_cast<size_t>(len));
-		if (!readAll(m_spill, next.bytes.data(), next.bytes.size()))
+		if (!ok)
 		{
-			st.linkCount = 0;
-			st.merges = 0;
-			break;
+			/* unreadable: this stretch is left as it is, and not asked again */
+			if (Segment *mine = settlingSegment()) mine->settled = true;
+			m_settle = Settling{};
+			return;
 		}
-		st.fileAt += len;
+		st.bodyAt = at + len - seg->spillAt;
 		next.endFrame = static_cast<int64_t>(endFrame);
 		st.linkIndex++;
 
@@ -846,19 +924,27 @@ void StateHistory::settleSpilled(int64_t farFrame)
 	finishSettling();
 }
 
-void StateHistory::finishSettling()
+StateHistory::Segment *StateHistory::settlingSegment()
 {
-	Settling st = std::move(m_settle);
-	m_settle = Settling{};
-
-	Segment *seg = nullptr;
 	for (Segment &s : m_segments)
 	{
-		if (s.anchorFrame == st.anchorFrame) { seg = &s; break; }
+		if (s.anchorFrame != m_settle.anchorFrame || !s.spilled) continue;
+		/* the same stretch, in the same place, the same length: anything else
+		 * with this anchor frame is another timeline's */
+		if (s.spillAt != m_settle.spillAt || s.spillLength != m_settle.spillLength) return nullptr;
+		return &s;
 	}
-	/* gone meanwhile - dropped, or re-recorded over - or nothing was merged:
-	 * either way the file is right as it is */
-	if (seg == nullptr || !seg->spilled) return;
+	return nullptr;
+}
+
+void StateHistory::finishSettling()
+{
+	Segment *seg = settlingSegment();
+	Settling st = std::move(m_settle);
+	m_settle = Settling{};
+	/* gone meanwhile - dropped, moved, re-recorded over - or nothing was
+	 * merged: either way the file is right as it is */
+	if (seg == nullptr) return;
 	seg->settled = true;
 	if (st.merges == 0) return;
 
@@ -893,7 +979,7 @@ void StateHistory::finishSettling()
 	seg->spillAt = at;
 	seg->spillLength = end - at;
 	seg->bytes = work.bytes;
-	m_spillLive = m_spillLive - was + seg->spillLength;
+	m_spillLive = (was > m_spillLive ? 0 : m_spillLive - was) + seg->spillLength;
 	/* the landings it now has: metadata only, as a spilled stretch keeps them */
 	seg->links.clear();
 	for (Link &l : work.links)
@@ -926,8 +1012,8 @@ bool StateHistory::spill(Segment &seg)
 
 	if (m_spill == nullptr)
 	{
-		const std::string path = m_spillDir + "/history-spill.bin";
-		m_spill = std::fopen(path.c_str(), "w+b");
+		m_spillPath = m_spillDir + "/" + spillFileName();
+		m_spill = std::fopen(m_spillPath.c_str(), "w+b");
 		if (m_spill == nullptr) return false;
 		m_spillBytes = 0;
 	}
@@ -1117,8 +1203,57 @@ void StateHistory::evict()
 	}
 }
 
-bool StateHistory::restore(int64_t frame, std::string &error)
+/* A restore that fails part way is the worst thing this file can do quietly.
+ *
+ * The chain is an anchor and the deltas after it, applied to the live machine.
+ * Fail on the fourth of thirty and the machine is not frame N, and it is not
+ * the frame it was on before either - it is a machine that never existed, and
+ * the session carries on with it: frames are captured from it, a movie is
+ * recorded against it, and the desync surfaces somewhere else entirely. The
+ * old code returned false and left it exactly there.
+ *
+ * So a failure is CONTAINED. The anchor is loaded again - it was read once
+ * already, so this is the one step most likely to work - and the machine is
+ * then a machine that did exist, at the anchor's frame, which `landedOn`
+ * reports so the caller's idea of where it is can follow. The stretch that
+ * failed is dropped, because whatever is wrong with it will be wrong the next
+ * time somebody walks it; what that costs is replaying, which is what the
+ * history is allowed to cost. If even the anchor will not load, nothing here
+ * can help and `landedOn` stays -1: the caller must reload the machine.
+ */
+bool StateHistory::restoreFailed(const Segment *seg, std::string &error, int64_t *landedOn)
 {
+	const int64_t anchorFrame = seg->anchorFrame;
+	bool consistent = false;
+	if (!seg->spilled)
+	{
+		WbxReturn r{};
+		ByteSource anchor{ seg->anchor.data(), seg->anchor.size(), 0 };
+		m_host->wbx_load_state(m_obj, sourceRead, reinterpret_cast<uintptr_t>(&anchor), &r);
+		consistent = r.ok();
+	}
+	else
+	{
+		std::string ignored;
+		consistent = restoreSpilled(*seg, 0, ignored);
+	}
+	fprintf(stderr, "[history] the stored frames from %lld could not be walked (%s); "
+		"the machine is %s and those frames are given up\n",
+		(long long)anchorFrame, error.c_str(),
+		consistent ? "back on that anchor" : "NOT to be trusted - reload it");
+	fflush(stderr);
+	for (size_t i = 0; i < m_segments.size(); i++)
+	{
+		if (m_segments[i].anchorFrame == anchorFrame) { forgetSegment(i); break; }
+	}
+	if (landedOn != nullptr) *landedOn = consistent ? anchorFrame : -1;
+	m_epochOpen = false;
+	return false;
+}
+
+bool StateHistory::restore(int64_t frame, std::string &error, int64_t *landedOn)
+{
+	if (landedOn != nullptr) *landedOn = -1;
 	const Segment *seg = nullptr;
 	int64_t steps = -1;
 	for (const Segment &s : m_segments)
@@ -1129,13 +1264,13 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 	if (seg == nullptr)
 	{
 		error = "no stored state at that frame";
-		return false;
+		return false;   /* nothing was touched: the machine is where it was */
 	}
 
 	const double t0 = historyTrace() ? nowSeconds() : 0.0;
 	if (seg->spilled)
 	{
-		if (!restoreSpilled(*seg, steps, error)) return false;
+		if (!restoreSpilled(*seg, steps, error)) return restoreFailed(seg, error, landedOn);
 		if (historyTrace())
 		{
 			fprintf(stderr, "[history] restore %lld: from disk, anchor %lld + %lld deltas, %.0f ms\n",
@@ -1151,8 +1286,10 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 	m_host->wbx_load_state(m_obj, sourceRead, reinterpret_cast<uintptr_t>(&anchor), &r);
 	if (!r.ok())
 	{
+		/* the anchor itself: nothing was applied on top of it, so the machine is
+		 * whatever the failed load left - which only the caller can repair */
 		error = r.errorMessage;
-		return false;
+		return restoreFailed(seg, error, landedOn);
 	}
 	const double t1 = historyTrace() ? nowSeconds() : 0.0;
 	for (int64_t i = 0; i < steps; i++)
@@ -1163,7 +1300,7 @@ bool StateHistory::restore(int64_t frame, std::string &error)
 		if (!r.ok())
 		{
 			error = r.errorMessage;
-			return false;
+			return restoreFailed(seg, error, landedOn);
 		}
 	}
 	if (historyTrace())
@@ -1207,6 +1344,41 @@ const char *const kSuperseded[] = { "ChimeraHistory1", "ChimeraHistory2" };
 
 } // namespace
 
+/* `n` bytes from one file to another, through a small buffer. */
+static bool copyBytes(std::FILE *in, std::FILE *out, uint64_t n)
+{
+	std::vector<uint8_t> chunk(64 * 1024);
+	while (n != 0)
+	{
+		const size_t take = static_cast<size_t>(n < chunk.size() ? n : chunk.size());
+		if (!readAll(in, chunk.data(), take) || !writeAll(out, chunk.data(), take)) return false;
+		n -= take;
+	}
+	return true;
+}
+
+bool StateHistory::copySpilledBody(std::FILE *out, const Segment &seg)
+{
+	if (m_spill == nullptr || !seekTo(m_spill, seg.spillAt)) return false;
+	uint64_t anchorLen = 0, noteLen = 0, count = 0;
+	if (!readU64(m_spill, anchorLen) || anchorLen > seg.spillLength) return false;
+	if (!writeU64(out, anchorLen) || !copyBytes(m_spill, out, anchorLen)) return false;
+	if (!readU64(m_spill, noteLen) || noteLen > kMaxNote) return false;
+	if (!writeU64(out, noteLen) || !copyBytes(m_spill, out, noteLen)) return false;
+	if (!readU64(m_spill, count)) return false;
+	if (count > seg.links.size()) count = seg.links.size();
+	if (!writeU64(out, count)) return false;
+	for (uint64_t k = 0; k < count; k++)
+	{
+		uint64_t endFrame = 0, len = 0;
+		if (!readU64(m_spill, endFrame) || !readU64(m_spill, noteLen) || noteLen > kMaxNote) return false;
+		if (!writeU64(out, endFrame) || !writeU64(out, noteLen) || !copyBytes(m_spill, out, noteLen)) return false;
+		if (!readU64(m_spill, len) || len > seg.spillLength) return false;
+		if (!writeU64(out, len) || !copyBytes(m_spill, out, len)) return false;
+	}
+	return true;
+}
+
 bool StateHistory::saveTo(const char *path, const char *machineId, std::string &error)
 {
 	std::FILE *f = std::fopen(path, "wb");
@@ -1229,16 +1401,12 @@ bool StateHistory::saveTo(const char *path, const char *machineId, std::string &
 		{
 			/* A spilled segment is already in exactly this shape, minus the
 			 * frame just written, so it is copied rather than rebuilt - which
-			 * keeps the promise that nothing here is assembled in memory. */
-			ok = m_spill != nullptr && seekTo(m_spill, seg.spillAt);
-			uint64_t left = seg.spillLength;
-			std::vector<uint8_t> chunk(64 * 1024);
-			while (ok && left != 0)
-			{
-				const size_t n = static_cast<size_t>(left < chunk.size() ? left : chunk.size());
-				ok = readAll(m_spill, chunk.data(), n) && writeAll(f, chunk.data(), n);
-				left -= n;
-			}
+			 * keeps the promise that nothing here is assembled in memory. Link
+			 * by link, and only as many as the stretch still answers for: an
+			 * edit that truncated it left the old timeline's links in the file,
+			 * and copying the body whole put them in the saved history, where
+			 * a reopened project offered frames the movie no longer had. */
+			ok = copySpilledBody(f, seg);
 			continue;
 		}
 		ok = writeSegmentBody(f, seg);

@@ -1674,3 +1674,42 @@ already skips the untouched pages a word at a time, so the saving is a few
 per cent of memory on the biggest machines against a format every saved state
 and history file would have to keep reading. Left as it is, and written down so
 that it is not rediscovered as an easy win.
+
+## A test that cannot fail is not a test (user-asked, 2026-09-10)
+
+Asked to look for bugs and latent runtime failures across the state machinery,
+rather than only in the round just written. The method is worth keeping, because
+the bugs it found were not ones reading the code had suggested.
+
+**Two randomized differential tests, each against a model.** miniBox's drives
+the page tracker with random writes, maps, unmaps, protections and zeroings and
+asks whether an anchor plus its deltas reproduces the machine byte for byte,
+seeking backwards and continuing from where it lands. The engine's does the same
+to the history with random frames, restores, edits, pins, budgets, spills and
+save/load round trips. Deterministic per seed, so a failure names its seed and
+step and can be re-run.
+
+**Then every fix was checked by putting the bug back.** Eight mutations, one per
+fix: the test that was supposed to catch it had to fail, and the tree without it
+had to pass. Three of them did NOT fail, and that was the most useful part of
+the exercise - it showed two of the things being "fixed" were not reachable:
+- The protection run left unclosed when a delta apply fails only ever makes
+  pages LESS permissive, and the next epoch re-protects them anyway. Kept for
+  the single exit, but it is not a bug fix and is not written up as one.
+- The first version of the truncated-load test wrote through an epoch, and
+  `epoch_begin` re-protects everything mapped writable, so it healed the damage
+  before the test could see it. The exposure is a write BETWEEN the failed load
+  and the next epoch, which is exactly what a refused restore leaves the session
+  free to do. Written that way, it fails without the fix.
+
+The fuzz's own first failure was a bug in the fuzz: it modelled an input edit by
+changing the machine BEFORE opening the epoch, so the change sat in the epoch's
+baseline and never entered the delta. A real edit diverges the next frame's
+state, inside the epoch. Worth saying because the shape recurs - a model that
+does not do what the thing it models does will report the difference as the
+subject's fault.
+
+**What the tests are not.** They use a machine of sixty four cells and a merge
+of their own, so they say nothing about miniBox's composition or about a real
+core. That is what the synthetic witness, the ares gate and the rerecord suites
+are for, and all of them were run.

@@ -144,7 +144,10 @@ public:
 	/* Puts the machine back to `frame`, which must be one nearest() offered.
 	 * Restores that frame's segment anchor and walks its deltas forward.
 	 * False with `error` set. */
-	bool restore(int64_t frame, std::string &error);
+	/* Puts the machine on `frame`. On failure the machine is left on a frame it
+	 * CAN be trusted on rather than half way through a chain, and `landedOn`
+	 * (when given) says which - see the definition. */
+	bool restore(int64_t frame, std::string &error, int64_t *landedOn = nullptr);
 
 	/* Writes the history to a file, and reads one back.
 	 *
@@ -261,13 +264,23 @@ private:
 	 * False when there is nowhere to put it or the write failed, which is not
 	 * an error - the budget then falls back to dropping frames. */
 	static bool writeSegmentBody(std::FILE *f, const Segment &seg);
+	/* A spilled stretch into a saved history: the body, link by link, only
+	 * as far as the stretch still answers (an edit may have truncated it). */
+	bool copySpilledBody(std::FILE *out, const Segment &seg);
 	bool spill(Segment &seg);
 	void dropSpillFile();
+	/* Removes spill files in `dir` that are not this history's: what sessions
+	 * that died left behind. See its definition. */
+	void sweepStaleSpills(const std::string &dir);
 
 	/* Restores from a segment that is on disk, reading only as far along it as
 	 * the target frame needs. Nothing about the segment is assembled in memory:
 	 * the anchor and each link go straight from the file into the sandbox. */
 	bool restoreSpilled(const Segment &seg, int64_t steps, std::string &error);
+
+	/* Puts the machine somewhere trustworthy after a chain would not walk, and
+	 * gives up the stretch that would not walk. Always returns false. */
+	bool restoreFailed(const Segment *seg, std::string &error, int64_t *landedOn);
 
 	/* Thins the bands the newest frame has just pushed a landing out of. Runs
 	 * after every capture and does at most one merge per boundary, because the
@@ -303,6 +316,10 @@ private:
 	 * every frame rather than a stall. */
 	void settleSpilled(int64_t farFrame);
 	void finishSettling();
+	/* The stretch being settled, as it stands now, or nullptr if it has moved,
+	 * been rewritten, been dropped or been replaced by another with the same
+	 * anchor frame. */
+	Segment *settlingSegment();
 
 	const HostApi *m_host = nullptr;
 	void *m_obj = nullptr;
@@ -332,9 +349,16 @@ private:
 	struct Settling
 	{
 		bool active = false;
-		int64_t anchorFrame = -1;      /* which stretch, by anchor - indices move */
+		/* Which stretch this is. Not the anchor frame alone: an edit can end a
+		 * timeline and a new stretch can be spilled with the same anchor frame,
+		 * and reading the old body's offsets out of the new one would settle it
+		 * into nonsense. Where it lies in the file says which stretch it IS -
+		 * and a compaction that moves it mid-settle simply ends this attempt,
+		 * which costs the work and is asked again later. */
+		int64_t anchorFrame = -1;
+		uint64_t spillAt = 0, spillLength = 0;
 		uint64_t anchorLen = 0;        /* the cap on a composed link */
-		uint64_t fileAt = 0;           /* the next link record in the old body */
+		uint64_t bodyAt = 0;           /* the next link record, as an offset INTO the old body */
 		size_t linkIndex = 0, linkCount = 0;
 		bool hasAcc = false;
 		Link acc;                      /* the landing being composed into */
@@ -343,6 +367,7 @@ private:
 	};
 	Settling m_settle;
 	std::FILE *m_spill = nullptr;      /* one file, appended to, holes and all */
+	std::string m_spillPath;           /* its name: the process's and this instance's */
 	uint64_t m_spillBytes = 0;    /* how long the file is, dead prefix and all */
 	uint64_t m_spillLive = 0;     /* what the stretches still in it weigh */
 	uint64_t m_diskBudget = 0;    /* what may stay LIVE: half the file's budget.

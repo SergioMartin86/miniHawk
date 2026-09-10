@@ -764,6 +764,83 @@ the greenzone capture itself, and `messages` 0.35 ms is the piano roll
 repainting at the sixty services a second, which is what the person is
 watching.
 
+## What a bug hunt found, and what now holds it (user-asked, 2026-09-10)
+
+The round above made the history fast. This one went looking for what it, and
+everything around it, could get WRONG - by writing two randomized differential
+tests and then re-introducing each bug they found, to check the test really
+catches it. Both are in the gate.
+
+`tests/unit/test_fuzz.c` in miniBox drives the page tracker with random writes,
+maps, unmaps, protections and zeroings, and after every frame asks the only
+question that matters: does loading an anchor and applying the deltas since it
+reproduce the machine byte for byte, and the allocation map with it? It seeks
+backwards and continues from where it lands, as a rerecord does. Half a million
+checks a run.
+
+`source/engine/tests/test_state_history.cpp` does the same to the history:
+random frames, restores, edits, pins, budget changes, spills, and save/load
+round trips against a model of what every frame held, on sixteen seeds with
+small budgets and tight bands so that every path runs.
+
+What they found, all fixed:
+
+- **Two histories in one process shared a spill file.** The name was
+  `history-spill.bin` in the project's cache directory, so the same project open
+  twice - or reopened before the session that had it was gone - had the second
+  truncate the first's file, and every frame the first had on disk came back as
+  garbage. The name carries the process and the instance now, and a history
+  sweeps stale ones a dead session left behind, because they are gigabytes each
+  and nothing else would ever remove them.
+- **A saved history carried frames an edit had removed.** A spilled stretch is
+  copied into the saved file byte for byte, and the copy took the whole body -
+  including the links after the edit's cut, which are still lying there. A
+  reopened project then offered frames the movie no longer had. It is copied
+  link by link now, only as far as the stretch still answers for.
+- **A delta could be chained onto a spilled stretch.** An edit landing on the
+  last frame of one made the next capture a delta held in memory while every
+  restore reads the file, where the old timeline's links still are. A fresh
+  anchor starts a stretch of its own instead.
+- **Turning the greenzone on again kept the old spill file.** The disk budget
+  was then held against stretches that no longer existed, and the room never
+  came back.
+- **A stretch being settled was matched by anchor frame alone.** After an edit a
+  new stretch can be spilled with the same anchor frame, and the old body's
+  offsets would have been read out of the new one. It is matched by where it
+  lies in the file as well, and a compaction that moves it mid-settle simply
+  ends that attempt.
+- **A state load that failed part way left pages writable while calling them
+  clean.** The load puts a page back to its sealed content and holds it
+  read-only so the next write faults; returning early skipped applying that to
+  the pages it had already done. Until the next epoch - and the caller is under
+  no obligation to open one, since a refused restore leaves the session running
+  - writes to those pages were invisible: absent from the next delta and absent
+  from the next state. Both `mb_block_load_state` and `mb_block_delta_apply`
+  have one exit now, and a page a delta half wrote is marked dirty, because it
+  no longer holds what the baseline holds.
+- **A hot page could be left hot while clean.** `madvise` zeroes a page whose
+  sealed image was zero and calls it clean; a clean page is held for the
+  baseline's sake, and a hot page never faults, so it would have been written
+  without ever becoming dirty again and every anchor after would have omitted
+  it. Cooling is enforced wherever the dirty bit is written.
+
+### A restore that cannot be walked no longer leaves a machine that never existed
+
+The worst of them, and the one that is a change in behaviour rather than a fix.
+A restore is an anchor and the deltas after it, applied to the live machine.
+Fail on the fourth of thirty - a damaged spill file, a truncated history - and
+the machine is not the frame asked for, and not the frame it was on before
+either: it is a machine that never existed. The old code returned false and left
+it exactly there, and the session carried on. Frames are captured from it, a
+movie is recorded against it, and the desync surfaces somewhere else entirely.
+
+Now the failure is contained. The anchor is loaded again, so the machine is one
+that did exist, at that anchor's frame; the stretch that would not walk is given
+up, because whatever is wrong with it will be wrong next time; and the frame it
+landed on is reported, so the session and the frontend follow the machine rather
+than believing the number they had. If even the anchor will not load, nothing
+here can help and it says so: that machine has to be reloaded.
+
 ## Phasing
 
 Each phase is separately gated and separately landable.

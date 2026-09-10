@@ -861,7 +861,17 @@ void ce_session::greenzoneCapture()
  * ce_session_greenzone_restore, whose caller replays it itself. */
 bool ce_session::greenzoneRestore(int64_t to)
 {
-	if (!history.restore(to, error)) return false;
+	int64_t landed = -1;
+	if (!history.restore(to, error, &landed))
+	{
+		/* A restore that could not be walked leaves the machine on a frame it
+		 * CAN be trusted on (StateHistory::restoreFailed), which is not the one
+		 * asked for. Following it here is what keeps the session's idea of
+		 * where it is and the machine itself the same thing - a seek that
+		 * refuses is recoverable, a session that has quietly moved is not. */
+		if (landed >= 0) frame = landed;
+		return false;
+	}
 	if (traceSetEnabled != nullptr)
 	{
 		traceSetEnabled(traceDesired ? 1 : 0);
