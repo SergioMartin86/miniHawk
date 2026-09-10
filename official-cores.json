@@ -101,6 +101,13 @@
       "tested": ""
     },
     {
+      "id": "ares",
+      "name": "ares",
+      "systems": [ "N64", "NES", "GB", "GBC", "GEN", "SMS", "GG", "SG", "A26", "WS", "WSC", "ZXS", "MYV", "GBA", "CV", "MSX", "PS1", "A52", "NGP", "NGPC", "NG" ],
+      "repo": "ToolAssisted-run/chimera-core-ares",
+      "tested": ""
+    },
+    {
       "id": "ruffle",
       "name": "Ruffle",
       "systems": [ "Flash" ],

@@ -183,8 +183,8 @@ free - the generator keeps only `.chimeraCore` assets, and it carries none.
 **Why not the API.** It allows an unauthenticated address 60 requests an hour,
 one per core per question, and charges for a `304` exactly as for a `200`
 (measured 2026-09-07: three conditional requests, three off the allowance). With
-fifteen cores, one press of *Check for updates* costs fifteen - so four presses
-is the hour's whole budget. That is unusable for anybody developing, and the
+sixteen cores, one press of *Check for updates* costs sixteen - so under four
+presses is the hour's whole budget. That is unusable for anybody developing, and the
 limit is per IP, so a shared address can be exhausted on somebody else's behalf.
 A release asset costs nothing: a download redirects to
 `release-assets.githubusercontent.com`, which is not the API and not counted.
@@ -196,8 +196,8 @@ too.
 release is the job that records it, in the same repository, in the same run.
 There is nothing in between for the index to fall behind - no dispatch to miss,
 no aggregator to break, no cross-repository token. A core's index cannot go
-stale with respect to that core's releases. The cost is fifteen small requests
-instead of one, which is fifteen times nothing.
+stale with respect to that core's releases. The cost is one small
+request per core instead of one in total, which is a few times nothing.
 
 **Why no fallback to the API.** A fallback would hide the case this has to get
 right - a core whose index is missing - behind a path that works four times an
@@ -235,7 +235,7 @@ The store (`CoreStore.Path`) is per-user, not part of the bundle:
 
 A Chimera bundle is a zip somebody unpacks, and updating it means unpacking a
 newer one. Cores inside the bundle would have to be downloaded again every time
-the frontend moved, which for a fifteen-core install is unreasonable - so they
+the frontend moved, which for a full install is unreasonable - so they
 live outside it and outlive any number of Chimeras. `CHIMERA_DATA_HOME` is the
 escape hatch for a genuinely portable install that wants everything under one
 root; Chimera already uses that variable for the rest of its user data.
@@ -509,8 +509,8 @@ the job had never had a working engine and had never needed one to pass.
 Two things came out of that, and both are load-bearing:
 
 * the job **builds libchimera** like every other job that touches a package;
-* it **fails on an empty fetch**. All fifteen cores publish now, so nothing
-  fetched means the fetch broke, not that the cores are young.
+* it **fails on an empty fetch**. Every core publishes, so nothing fetched
+  means the fetch broke, not that the cores are young.
 
 The general lesson is worth keeping: *a skip is not a pass.* A suite whose
 fixtures are fetched at run time can report success for having no fixtures, and

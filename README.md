@@ -40,27 +40,44 @@ The officially maintained cores are:
 
 | System | Core |
 | --- | --- |
-| Nintendo Entertainment System | [quickerNES](https://github.com/ToolAssisted-run/chimera-core-quickernes) |
-| Nintendo Entertainment System | [QuickerNesHawk](https://github.com/ToolAssisted-run/chimera-core-neshawk) |
+| Nintendo Entertainment System / Famicom | [quickerNES](https://github.com/ToolAssisted-run/chimera-core-quickernes), [QuickerNesHawk](https://github.com/ToolAssisted-run/chimera-core-neshawk), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Famicom Disk System | [QuickerNesHawk](https://github.com/ToolAssisted-run/chimera-core-neshawk) |
 | Super Nintendo | [Snes9x](https://github.com/ToolAssisted-run/chimera-core-snes9x) |
+| Nintendo 64 | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | GameCube | [Dolphin](https://github.com/ToolAssisted-run/chimera-core-dolphin) |
 | Wii | [Dolphin](https://github.com/ToolAssisted-run/chimera-core-dolphin) |
-| Mega Drive / Genesis | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx) |
+| Game Boy / Game Boy Color | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Game Boy Advance | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Mega Drive / Genesis | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Sega CD / Mega CD | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx) |
-| Master System | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx) |
-| Game Gear | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx) |
-| SG-1000 | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx) |
+| Master System | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Game Gear | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| SG-1000 | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Dreamcast | [Flycast](https://github.com/ToolAssisted-run/chimera-core-flycast) |
+| PlayStation | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | PlayStation 2 | [PCSX2](https://github.com/ToolAssisted-run/chimera-core-pcsx2) |
 | PlayStation Portable | [PPSSPP](https://github.com/ToolAssisted-run/chimera-core-ppsspp) |
 | PlayStation 3 | [RPCS3](https://github.com/ToolAssisted-run/chimera-core-rpcs3) |
 | Xbox | [xemu](https://github.com/ToolAssisted-run/chimera-core-xemu) |
 | 3DO Interactive Multiplayer | [Opera](https://github.com/ToolAssisted-run/chimera-core-opera) |
-| Atari 2600 | [Stella](https://github.com/ToolAssisted-run/chimera-core-stella) |
+| Atari 2600 | [Stella](https://github.com/ToolAssisted-run/chimera-core-stella), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Atari 5200 | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| ColecoVision | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| MSX | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Neo Geo AES | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Neo Geo Pocket / Color | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| WonderSwan / WonderSwan Color | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | MS-DOS | [DOSBox-X](https://github.com/ToolAssisted-run/chimera-core-dosbox-x) |
 | Windows 3.1 / 95 / 98 | [DOSBox-X](https://github.com/ToolAssisted-run/chimera-core-dosbox-x) |
 | Flash | [Ruffle](https://github.com/ToolAssisted-run/chimera-core-ruffle) |
 | Symbian / Nokia N-Gage | [EKA2L1](https://github.com/ToolAssisted-run/chimera-core-eka2l1) |
+
+Where a system has more than one core, they are different emulators and not
+interchangeable: a movie names the package that recorded it, and two cores
+disagree about the machine in ways a run depends on. ares carries twenty-one
+machines in one package and its own README says which of them are proven, which
+have only been run against a commercial game off the record, and which are
+declared but not to be trusted yet.
 
 ## Getting a build
 

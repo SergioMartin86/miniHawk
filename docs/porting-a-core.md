@@ -1,6 +1,6 @@
 # Porting a core
 
-What one person learned building fifteen of them. This is the practical
+What one person learned building sixteen of them. This is the practical
 companion to [design-principles.md](design-principles.md) (why Chimera is the
 way it is) and [waterbox-analysis.md](waterbox-analysis.md) (what the sandbox
 is): the order the work actually goes in, and the traps that cost days.
@@ -230,8 +230,8 @@ official set is therefore four things:
    uploads it as an artifact named `<name>-${{ github.sha }}`. **This is the
    part to think about**, and it is a content problem before it is a CI
    problem: a gate needing a BIOS or a commercial rom cannot run there, so what
-   CI proves has to be designed around what may be distributed. The fifteen
-   split three ways, and it is worth checking which one you are in before
+   CI proves has to be designed around what may be distributed. The published
+   cores split three ways, and it is worth checking which one you are in before
    assuming the worst:
 
    - **the machine is its own content** - DOSBox-X boots to a DOS prompt with
