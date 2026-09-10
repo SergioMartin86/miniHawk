@@ -46,6 +46,14 @@ export XDG_DATA_HOME="$repo_root/build/tests/data-home"
 xvfb_pid=""
 cleanup() { [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null; }
 trap cleanup EXIT
+# A DISPLAY that is set but does not answer - an ssh session's forwarded
+# display with nothing behind it, which is what the WSL dev box has - would
+# fail every frontend leg with "Could not open display", fourteen times over.
+# Ask it first, and bring up an Xvfb if it says nothing.
+if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null && ! timeout 5 xdpyinfo >/dev/null 2>&1; then
+	echo "DISPLAY=$DISPLAY does not answer; starting an Xvfb instead" >&2
+	unset DISPLAY
+fi
 if [ -z "${DISPLAY:-}" ]; then
 	command -v Xvfb >/dev/null || { echo "Xvfb not found (apt install xvfb)" >&2; exit 1; }
 	for n in 80 81 82 83 84 85; do
