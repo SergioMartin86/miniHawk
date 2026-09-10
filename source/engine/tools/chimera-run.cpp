@@ -180,6 +180,7 @@ int main(int argc, char **argv)
 	 * same inputs and can pass with the edit path broken. */
 	int64_t playFrames = -1;
 	std::string editFrom, finalStatePath, finalShot, finalBuses;
+	std::vector<std::pair<std::string, std::string>> finalBusDumps;
 	std::vector<std::string> fileDirs;
 	bool allowCoreMismatch = false;
 	bool wantGpu = false;
@@ -194,6 +195,13 @@ int main(int argc, char **argv)
 		else if (arg == "--final-state" && i + 1 < argc) finalStatePath = argv[++i];
 		else if (arg == "--final-screenshot" && i + 1 < argc) finalShot = argv[++i];
 		else if (arg == "--final-buses" && i + 1 < argc) finalBuses = argv[++i];
+		else if (arg == "--final-bus" && i + 1 < argc)
+		{
+			std::string spec = argv[++i];
+			size_t eq = spec.find('=');
+			if (eq == std::string::npos) { std::fprintf(stderr, "--final-bus wants NAME=PATH\n"); return 2; }
+			finalBusDumps.emplace_back(spec.substr(0, eq), spec.substr(eq + 1));
+		}
 		else if (arg == "--bands" && i + 1 < argc) bands = argv[++i];
 		else if (arg == "--stop-at-seek") stopAtSeek = true;
 		else if (arg == "--record" && i + 1 < argc) recordPath = argv[++i];
@@ -784,6 +792,20 @@ int main(int argc, char **argv)
 		{
 			return fail(metaPath, "could not write " + finalBuses);
 		}
+	}
+
+	for (const auto &bd : finalBusDumps)
+	{
+		int32_t which = -1;
+		for (int32_t b = 0; b < ce_session_bus_count(session); b++)
+			if (bd.first == ce_session_bus_name(session, b)) { which = b; break; }
+		if (which < 0) return fail(metaPath, "no bus named " + bd.first);
+		int64_t size = ce_session_bus_size(session, which);
+		std::vector<uint8_t> bytes(static_cast<size_t>(size));
+		for (int64_t a = 0; a < size; a++)
+			bytes[static_cast<size_t>(a)] = (uint8_t)ce_session_bus_peek(session, which, (int32_t)a);
+		if (!writeWholeFile(bd.second, bytes.data(), bytes.size()))
+			return fail(metaPath, "could not write " + bd.second);
 	}
 
 	if (!finalStatePath.empty())
