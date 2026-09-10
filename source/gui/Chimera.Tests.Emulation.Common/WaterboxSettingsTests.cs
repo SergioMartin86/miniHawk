@@ -19,6 +19,57 @@ namespace Chimera.Tests.Emulation.Common
 		private static WaterboxConfig.SettingDecl Int(string name, int dflt, int? min = null, int? max = null)
 			=> new() { Name = name, Type = "int", Default = dflt, Min = min, Max = max };
 
+		/// <summary>
+		/// A multi-machine core's settings mostly belong to one machine each. A Game
+		/// Boy's DMG revision means nothing on a Mega Drive, and a Neo Geo's coin
+		/// slots mean nothing anywhere else - so a declaration says which machine it
+		/// is for, and the machine only ever sees its own.
+		/// </summary>
+		[TestMethod]
+		public void AMachineOnlySeesTheSettingsThatBelongToIt()
+		{
+			WaterboxConfig cfg = new()
+			{
+				MachineSetting = "machine",
+				Machines =
+				[
+					new() { Id = "GB", Label = "Game Boy", When = [ "gb" ] },
+					new() { Id = "NG", Label = "Neo Geo", When = [ "ng" ] },
+				],
+				Settings =
+				[
+					new() { Name = "machine", Type = "enum", Default = "gb", Options = [ "gb", "ng" ] },
+					new() { Name = "gb.fastBoot", Default = false, When = [ "gb" ] },
+					new() { Name = "ng.settingsMode", Default = false, When = [ "ng" ] },
+					new() { Name = "region", Type = "enum", Default = "ntsc", Options = [ "ntsc", "pal" ] },
+				],
+			};
+
+			var gb = cfg.SettingsFor(cfg.Machines[0]).Select(static d => d.Name).ToList();
+			CollectionAssert.Contains(gb, "gb.fastBoot");
+			CollectionAssert.DoesNotContain(gb, "ng.settingsMode", "a Game Boy has no coin slot");
+			CollectionAssert.Contains(gb, "region", "a setting that names no machine belongs to all of them");
+			CollectionAssert.Contains(gb, "machine");
+
+			var ng = cfg.SettingsFor(cfg.Machines[1]).Select(static d => d.Name).ToList();
+			CollectionAssert.Contains(ng, "ng.settingsMode");
+			CollectionAssert.DoesNotContain(ng, "gb.fastBoot");
+		}
+
+		[TestMethod]
+		public void ASettingThatNamesNoMachineAppliesToAnyOfThem()
+		{
+			WaterboxConfig.SettingDecl shared = new() { Name = "region" };
+			Assert.IsTrue(shared.AppliesTo("gb"));
+			Assert.IsTrue(shared.AppliesTo(null));
+
+			WaterboxConfig.SettingDecl scoped = new() { Name = "gb.fastBoot", When = [ "gb", "gbc" ] };
+			Assert.IsTrue(scoped.AppliesTo("gb"));
+			Assert.IsTrue(scoped.AppliesTo("GBC"), "the machine setting's value is not case sensitive");
+			Assert.IsFalse(scoped.AppliesTo("ng"));
+			Assert.IsFalse(scoped.AppliesTo(null));
+		}
+
 		[TestMethod]
 		public void TypeIsInferredWhenNotDeclared()
 		{

@@ -152,13 +152,17 @@ namespace Chimera.Emulation.Common.Waterbox
 		public IReadOnlyList<SettingDecl> SettingsFor(MachineConfig machine)
 		{
 			var decls = Settings ?? new List<SettingDecl>();
-			if (machine?.SettingOverrides is not { Count: > 0 }) return decls;
+			var scoped = decls.FindAll(d => d.When is not { Count: > 0 }
+				|| machine?.When is not { Count: > 0 }
+				|| machine.When.Exists(d.AppliesTo));
+			if (machine?.SettingOverrides is not { Count: > 0 }) return scoped;
 			// the SAME instances every time for a given machine: callers compare
 			// declaration lists by reference to tell whether anything changed
-			if (_narrowed.TryGetValue(machine.Id ?? "", out var cached)) return cached;
+			var key = (machine.Id ?? "") + "\u0000" + string.Join(",", machine.When ?? new List<string>());
+			if (_narrowed.TryGetValue(key, out var cached)) return cached;
 
-			List<SettingDecl> narrowed = new(decls.Count);
-			foreach (var decl in decls)
+			List<SettingDecl> narrowed = new(scoped.Count);
+			foreach (var decl in scoped)
 			{
 				if (!machine.SettingOverrides.TryGetValue(decl.Name ?? "", out var over) || over is null)
 				{
@@ -175,9 +179,10 @@ namespace Chimera.Emulation.Common.Waterbox
 					Default = over.Default ?? decl.Default,
 					Min = decl.Min,
 					Max = decl.Max,
+					When = decl.When,
 				});
 			}
-			_narrowed[machine.Id ?? ""] = narrowed;
+			_narrowed[key] = narrowed;
 			return narrowed;
 		}
 
@@ -278,6 +283,24 @@ namespace Chimera.Emulation.Common.Waterbox
 			public int? Min { get; set; }
 
 			public int? Max { get; set; }
+
+			/// <summary>
+			/// Values of the package's machine setting this belongs to, or empty for
+			/// one that belongs to all of them.
+			///
+			/// A multi-machine core's settings are mostly not shared: a Game Boy's
+			/// DMG revision means nothing on a Mega Drive, and a Neo Geo's coin
+			/// slots mean nothing anywhere else. Offering every machine's settings
+			/// at once would be a list nobody could read and a set of choices most
+			/// of which do nothing.
+			/// </summary>
+			public List<string> When { get; set; }
+
+			/// <summary>Whether this setting belongs to a machine selected by <paramref name="settingValue"/>.</summary>
+			public bool AppliesTo(string settingValue)
+				=> When is not { Count: > 0 }
+					|| (settingValue is not null
+						&& When.Exists(v => string.Equals(v, settingValue, StringComparison.OrdinalIgnoreCase)));
 
 
 			public string DisplayName => string.IsNullOrWhiteSpace(Display) ? Name : Display;
