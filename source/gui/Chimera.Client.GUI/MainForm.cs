@@ -742,14 +742,27 @@ namespace Chimera.Client.GUI
 
 			for (; ; )
 			{
+				// A seek is the same situation with a window attached. Its frames go
+				// by faster than anybody can look, and this loop was spending as much
+				// on each of them as the core did - the piano roll refreshed, the frame
+				// presented, the message pump run, per frame, on a core whose frame is
+				// three milliseconds. Measured with CHIMERA_LOOP_TRACE: a Game Boy seek
+				// at 5.9 ms a frame of which 3.0 was the machine. So a seek serves the
+				// host on the headless cadence too: sixty times a second the window is
+				// live, shows where the seek has got to and takes a click to stop it;
+				// the frames in between are emulated and nothing else. The destination
+				// frame is always drawn and always shown (StepRunLoop_Core).
 				bool serviceHost = true;
-				if (headless)
+				if (headless || IsSeeking)
 				{
 					var now = DateTime.UtcNow;
 					serviceHost = (now - lastHostServiceTime).TotalMilliseconds >= 16.0;
 					if (serviceHost) lastHostServiceTime = now;
 				}
+				_seekQuiet = IsSeeking && !serviceHost;
+				if (serviceHost) LoopTrace.Served();
 
+				long loopStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				if (serviceHost) Input.Instance.Update();
 
 				// handle events and dispatch as a hotkey action, or a hotkey button, or an input button
@@ -822,11 +835,20 @@ namespace Chimera.Client.GUI
 				{
 					Tools.LuaConsole.ResumeScripts(false);
 				}
+				LoopTrace.Add(LoopTrace.Top, loopStarted);
+				long phaseStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				StepRunLoop_Core();
+				LoopTrace.Add(LoopTrace.Core, phaseStarted);
+				phaseStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				if (serviceHost) Render();
+				LoopTrace.Add(LoopTrace.Render, phaseStarted);
+				phaseStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				StepRunLoop_Throttle();
+				LoopTrace.Add(LoopTrace.Throttle, phaseStarted);
 
+				phaseStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				if (serviceHost) CheckMessages();
+				LoopTrace.Add(LoopTrace.Messages, phaseStarted);
 
 				if (_exitRequestPending)
 				{
@@ -946,6 +968,14 @@ namespace Chimera.Client.GUI
 
 		public bool IsSeeking => PauseOnFrame.HasValue;
 		private bool IsTurboSeeking => PauseOnFrame.HasValue && Config.TurboSeek;
+
+		/// <summary>
+		/// A frame of a seek that nobody is going to see: the run loop is between
+		/// two services of the host (ProgramRunLoop), so the frame is not drawn, not
+		/// presented and the tools get their fast update only - exactly what a turbo
+		/// seek does to every frame on its way. Never true for the seek's last frame.
+		/// </summary>
+		private bool _seekQuiet;
 
 		// An encode runs as fast as the machine will go, and gets turbo's cheap tool
 		// updates for the same reason a turbo seek does: nobody is watching it.
@@ -2503,7 +2533,12 @@ namespace Chimera.Client.GUI
 			{
 				var isFastForwarding = IsFastForwarding;
 				var isFastForwardingOrRewinding = isFastForwarding || isRewinding || Config.Unthrottled;
-				bool atTurboSeekEnd = IsTurboSeeking && Emulator.Frame == PauseOnFrame.Value - 1;
+				bool atSeekEnd = IsSeeking && Emulator.Frame == PauseOnFrame.Value - 1;
+				bool atTurboSeekEnd = IsTurboSeeking && atSeekEnd;
+				// the frames a seek passes through get the turbo treatment whether or
+				// not it is a turbo seek; what turbo adds is that none of them is
+				// shown even when the host is served
+				bool quietFrame = (_seekQuiet || (IsTurboing && !atTurboSeekEnd)) && !atSeekEnd;
 
 				if (isFastForwardingOrRewinding != _lastFastForwardingOrRewinding)
 				{
@@ -2521,7 +2556,8 @@ namespace Chimera.Client.GUI
 				InputManager.ClickyVirtualPadController.FrameTick();
 				InputManager.ButtonOverrideAdapter.FrameTick();
 
-				if (IsTurboing && !atTurboSeekEnd)
+				long toolsStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
+				if (quietFrame)
 				{
 					Tools.FastUpdateBefore();
 				}
@@ -2529,6 +2565,7 @@ namespace Chimera.Client.GUI
 				{
 					Tools.UpdateToolsBefore();
 				}
+				LoopTrace.Add(LoopTrace.ToolsBefore, toolsStarted);
 
 				CaptureRewind(isRewinding);
 
@@ -2571,15 +2608,18 @@ namespace Chimera.Client.GUI
 				// a real saving rather than a skipped memcpy - most of a frame, on
 				// a console with a 3D chip in it.
 				//
-				// A turbo SEEK has a destination and draws it (atTurboSeekEnd);
-				// the frames on the way are nobody's business, so none of them are
-				// drawn. A held Turbo key is a different thing - the person is
-				// watching to see where they are, and the throttle's one-in-four is
-				// what they are watching.
-				bool render = (!_throttle.skipNextFrame && !(IsTurboSeeking && !atTurboSeekEnd))
+				// A SEEK has a destination and draws it (atSeekEnd). The frames on
+				// the way are drawn only when the host is about to be served, so
+				// that the window shows where the seek has got to - and a turbo seek
+				// does not draw even those. A held Turbo key is a different thing -
+				// the person is watching to see where they are, and the throttle's
+				// one-in-four is what they are watching.
+				bool render = (!_throttle.skipNextFrame && !(IsTurboSeeking && !atTurboSeekEnd) && !_seekQuiet)
 					|| _currAviWriter?.UsesVideo is true
-					|| atTurboSeekEnd;
+					|| atSeekEnd;
+				long advanceStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				bool newFrame = Emulator.FrameAdvance(InputManager.ControllerOutput, render, renderSound);
+				LoopTrace.Add(LoopTrace.Advance, advanceStarted);
 
 				// an encode reaching the end of the movie is the encode finishing, not
 				// the movie ending on the person - so it bypasses the end action too
@@ -2608,7 +2648,8 @@ namespace Chimera.Client.GUI
 
 				PressFrameAdvance = false;
 
-				if (IsTurboing && !atTurboSeekEnd)
+				toolsStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
+				if (quietFrame)
 				{
 					Tools.FastUpdateAfter();
 				}
@@ -2616,6 +2657,8 @@ namespace Chimera.Client.GUI
 				{
 					UpdateToolsAfter();
 				}
+				LoopTrace.Add(LoopTrace.ToolsAfter, toolsStarted);
+				if (newFrame) LoopTrace.Frame();
 
 				if (newFrame)
 				{
