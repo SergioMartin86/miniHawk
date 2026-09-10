@@ -180,6 +180,16 @@ private:
 		 * that is metadata, it is small, and answering "can you reach frame N"
 		 * must not touch a disk. */
 		bool spilled = false;
+
+		/* What this segment costs in MEMORY, which is what the budget is about
+		 * and is not the same as how big it is. A spilled segment is still as
+		 * big as it ever was - `bytes` describes the file - and costs nothing.
+		 * Every adjustment of m_bytes goes through this, because the one that
+		 * did not underflowed it: a spilled segment dropped by invalidateAfter
+		 * gave its bytes back a second time, m_bytes wrapped past zero, and
+		 * `m_bytes > m_budget` was true forever after - so the history spilled a
+		 * segment every frame for the rest of the session. */
+		uint64_t memoryBytes() const { return spilled ? 0 : bytes; }
 		uint64_t spillAt = 0;
 		uint64_t spillLength = 0;
 
@@ -198,6 +208,11 @@ private:
 	bool deltasAvailable() const;
 	bool composeAvailable() const;
 	void evict();
+
+	/* m_bytes -= n, and says so rather than wrapping if n is somehow more than
+	 * there is. Clamping keeps a mistake to one wrong number instead of a budget
+	 * that can never be met again. */
+	void releaseBytes(uint64_t n, const char *where);
 
 	/* Moves one segment out to the spill file, freeing what it held in memory.
 	 * False when there is nowhere to put it or the write failed, which is not

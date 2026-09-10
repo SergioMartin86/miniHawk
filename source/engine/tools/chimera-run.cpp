@@ -25,7 +25,9 @@
  *
  * --rerecord round-trips the whole machine through save/load state around
  * every frame, which must not change anything - that is the point.
- * --bands sets the history's density at each distance from the playhead
+ * --bands sets the history's density at each distance from the playhead;
+ * --greenzone <MB> its memory budget and --spill <dir> where the far band
+ * goes when that budget is full
  * (near frames, mid frames, mid stride, far stride, anchor spacing; 0 keeps a
  * default). Its use in a test is to make the bands narrow enough that the
  * history is constantly coarsening, which is what the defaults spend minutes
@@ -168,6 +170,8 @@ int main(int argc, char **argv)
 	int64_t seekFrame = -1;
 	bool stopAtSeek = false;
 	std::string bands;
+	std::string spillDir;
+	int64_t greenzoneMb = 256;
 	std::string recordPath;
 	std::string savedataDir;
 	std::string projectPath;
@@ -203,6 +207,8 @@ int main(int argc, char **argv)
 			finalBusDumps.emplace_back(spec.substr(0, eq), spec.substr(eq + 1));
 		}
 		else if (arg == "--bands" && i + 1 < argc) bands = argv[++i];
+		else if (arg == "--spill" && i + 1 < argc) spillDir = argv[++i];
+		else if (arg == "--greenzone" && i + 1 < argc) greenzoneMb = std::atoll(argv[++i]);
 		else if (arg == "--stop-at-seek") stopAtSeek = true;
 		else if (arg == "--record" && i + 1 < argc) recordPath = argv[++i];
 		else if (arg == "--settings" && i + 1 < argc) settings = argv[++i];
@@ -520,7 +526,12 @@ int main(int argc, char **argv)
 			}
 			ce_session_greenzone_bands(session, v[0], v[1], v[2], v[3], v[4]);
 		}
-		ce_session_greenzone_enable(session, 256ull << 20);
+		/* Where the far band goes when the budget is full. Without one the
+		 * history can only DROP, which is why the default here is nowhere: a
+		 * measurement of what the greenzone costs should not quietly become a
+		 * measurement of what the disk costs. */
+		if (!spillDir.empty()) ce_session_greenzone_spill(session, spillDir.c_str());
+		ce_session_greenzone_enable(session, (uint64_t)greenzoneMb << 20);
 	}
 	/* A history kept from a previous run, which is the thing a reopened project
 	 * lives on. The machine id is this tool's own convention; a frontend passes

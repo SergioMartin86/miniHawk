@@ -373,20 +373,40 @@ void StateHistory::capture(int64_t frame, const uint8_t *note, size_t noteLen)
 	evict();
 }
 
+void StateHistory::releaseBytes(uint64_t n, const char *where)
+{
+	if (n > m_bytes)
+	{
+		fprintf(stderr, "[history] %s gave back %llu bytes of the %llu held; "
+			"the count was wrong before this\n", where,
+			(unsigned long long)n, (unsigned long long)m_bytes);
+		fflush(stderr);
+		m_bytes = 0;
+		return;
+	}
+	m_bytes -= n;
+}
+
 void StateHistory::invalidateAfter(int64_t frame)
 {
 	while (!m_segments.empty() && m_segments.back().anchorFrame > frame)
 	{
-		m_bytes -= m_segments.back().bytes;
+		releaseBytes(m_segments.back().memoryBytes(), "invalidateAfter");
 		m_segments.pop_back();
 	}
 	if (m_segments.empty()) return;
 	Segment &s = m_segments.back();
 	while (s.lastFrame() > frame && !s.links.empty())
 	{
-		uint64_t n = s.links.back().bytes.size();
-		s.bytes -= n;
-		m_bytes -= n;
+		/* A spilled segment's links hold nothing here and its `bytes` describes
+		 * the file, so there is nothing to give back and nothing to correct.
+		 * What it can still answer shrinks, which is the point. */
+		if (!s.spilled)
+		{
+			const uint64_t n = s.links.back().bytes.size();
+			s.bytes -= n;
+			releaseBytes(n, "invalidateAfter");
+		}
 		s.links.pop_back();
 	}
 }
@@ -502,7 +522,7 @@ void StateHistory::tidy(int64_t frame, int64_t stride)
 
 		const uint64_t was = a.bytes.size() + b.bytes.size();
 		seg.bytes -= was;
-		m_bytes -= was;
+		releaseBytes(was, "tidy");
 		seg.bytes += merged.size();
 		m_bytes += merged.size();
 		if (historyTrace())
@@ -548,10 +568,12 @@ bool StateHistory::spill(Segment &seg)
 	}
 
 	if (!tellAt(m_spill, m_spillBytes)) return false;
+	/* Before the flag, not after: once it is set the segment costs no memory by
+	 * definition, and taking its bytes off the count afterwards takes nothing. */
+	releaseBytes(seg.memoryBytes(), "spill");
 	seg.spilled = true;
 	seg.spillAt = at;
 	seg.spillLength = m_spillBytes - at;
-	m_bytes -= seg.bytes;
 
 	/* What it held is now the file's; give the memory back for real. The notes
 	 * stay: they are metadata, like the landings, and answering what was stored
@@ -657,9 +679,21 @@ void StateHistory::evict()
 		}
 		if (moved) continue;
 
+		/* Thin the oldest stretch that still holds anything, and NEVER the
+		 * newest - it is where the playhead is, and its last link is the frame
+		 * that was captured a moment ago.
+		 *
+		 * Taking it was a loop: capture a delta, evict it again because the
+		 * budget was already unmeetable, then have nothing to chain to next
+		 * frame and write a whole anchor instead, spill that, and go round. Six
+		 * thousand Game Boy frames under a budget too small for them made two
+		 * thousand seven hundred anchors and five gigabytes of spill file. The
+		 * drop-a-whole-stretch path below has always spared the newest; this one
+		 * did not, and it is the one that runs first. */
 		Segment *victim = nullptr;
-		for (Segment &s : m_segments)
+		for (size_t i = 0; i + 1 < m_segments.size(); i++)
 		{
+			Segment &s = m_segments[i];
 			if (s.links.empty() || s.spilled) continue;
 			if (pinned(s.links.back().endFrame)) continue;   /* somebody wants that one */
 			victim = &s;
@@ -669,7 +703,7 @@ void StateHistory::evict()
 		{
 			uint64_t n = victim->links.back().bytes.size();
 			victim->bytes -= n;
-			m_bytes -= n;
+			releaseBytes(n, "evict");
 			victim->links.pop_back();
 			continue;
 		}
@@ -688,7 +722,7 @@ void StateHistory::evict()
 			break;
 		}
 		if (drop == 0) return;
-		m_bytes -= m_segments[drop].bytes;
+		releaseBytes(m_segments[drop].memoryBytes(), "evict");
 		m_segments.erase(m_segments.begin() + static_cast<std::ptrdiff_t>(drop));
 	}
 }
