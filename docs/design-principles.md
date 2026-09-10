@@ -1513,11 +1513,26 @@ can make it writable.
 memory is read-only-when-clean on Windows exactly as it is on Linux, and MAP_STACK
 is how a guest asks for a stack. ares' libco asks for its coroutine stacks with
 mmap now (patch 0015 in that core) instead of taking them from malloc. A stack
-page on Windows is then never protected and never clean: its baseline is captured
-when it is allocated and again at seal, and it goes into every savestate and every
-delta whether or not the frame touched it. Seven hundred frames of Game Boy cost
-268MB of history that way against 110MB on Linux - that is the price of not being
-able to see a stack write, and it is only paid by a core that has stacks.
+page on Windows is then never protected at all, and nothing reports its writes.
+
+**What a stack did is READ, not watched.** The first version of this called every
+stack page written whether or not it was, which is correct and costs everything:
+ares gives a Game Boy nineteen coroutines a stack of their own, 2.6MB of them,
+and all of it went into every delta. Seven hundred frames of history came to
+268MB where Linux made 110MB, and capturing a frame cost 74% of the run against
+Linux's 20%. Almost none of those pages had changed - almost none of a coroutine
+stack is ever touched.
+
+Nothing there can report a write to a stack, but anything can read one. Each
+stack page keeps a shadow of what it held when the last frame was described, and
+a delta asks memcmp which of them moved; "differs from the sealed image", which
+is what a savestate needs, is the same question against the baseline snapshot.
+Both are exact, and both are stricter than a fault bit, which stays set when a
+page is written and then put back. The same seven hundred frames now cost 107MB -
+SMALLER than Linux's 110MB, for exactly that reason - and 32% of the run against
+Linux's 19%. What is left is one 2.6MB comparison a frame, so the remaining
+difference is set by how much stack a core asks for, not by how big its machine
+is.
 
 **Two smaller things fell out of the same measurement.** An epoch marked a stack
 page eagerly and then dropped it from the set it re-examines, so a stack was
