@@ -1625,3 +1625,52 @@ itself - kept the delta's bytes as its sealed image, and every later return to a
 frame where the page was clean put those bytes back. In-process it could not
 happen, because every page in a delta had faulted on the recording run and had
 its copy already; a reopened project is exactly the case it could.
+
+## What was spilled early is settled, and the seek loop measured where it runs (2026-09-10)
+
+The three loose ends of the round above, taken in turn.
+
+**Density on disk is a temporary condition now.** A stretch spilled before the
+far band reached it kept every frame's delta on disk for good, because
+`coarsen()` skipped anything spilled - 1567MB of file for six thousand Game Boy
+frames under a 64MB budget, the state-manager doc's own example. Once the far
+boundary passes a spilled stretch it is now settled: its links are read back
+one at a time, composed down to the far grid under the same caps `tidy()` uses,
+and what is left is appended to the file; the old body is dead room and the
+compaction takes it back. Four links a call, so it is a little work every frame.
+The first version read the whole stretch into a working copy and refused any
+stretch bigger than the budget - which is every stretch that was spilled under a
+small budget, the only ones that need it. Streaming is the point, not an
+optimisation: what is held is one accumulating link, one just read, and the
+result, which is far-band sized. On a Game Boy under an 8MB budget with tight
+bands, each 61-frame stretch went from 9.5MB on disk to 1.9MB, and the file's
+live bytes from 112MB to 46MB.
+
+**The turbo-seek anomaly was Xvfb's.** Measured on the Windows box with the real
+GPU, driving `Chimera.exe --headless` through interop with the same project and
+Lua kicker: a plain Game Boy seek is 3.5 ms a frame and a turbo one 3.1, against
+2.7 for the machine alone. The several milliseconds a present and a message pump
+cost with no frame drawn were the software GL under Xvfb, and are not a Windows
+problem. Two more phases in the loop trace - movie and sound - showed where the
+rest of the client's time goes there: the movie's frame handling is the
+greenzone capture itself (0.22 ms, the history's share of a Game Boy frame), and
+the message pump at sixty services a second is the piano roll repainting, which
+is what the person is watching.
+
+**A DISPLAY that does not answer is asked first.** Both gate scripts start an
+Xvfb only when DISPLAY is unset, and the dev box has DISPLAY set to an ssh
+session's forwarded display with nothing behind it, so every frontend leg failed
+with "Could not open display" - fourteen legs and a hundred and two window
+tests, all saying the same thing. The scripts probe the display with xdpyinfo
+now and bring up their own when it does not answer. The rule stands that a
+caller's working display is used rather than a second one; what changed is that
+"set" is not taken for "working".
+
+**Not taken: the anchor's two bytes a page.** An anchor carries a status byte and
+a dirty byte for every page of the arena - 1.1MB on ares, some 21MB on rpcs3 -
+and packing them would be a savestate format change. The stream layout is fixed
+in miniBox's machine spec, anchors are one in six hundred frames, and the load
+already skips the untouched pages a word at a time, so the saving is a few
+per cent of memory on the biggest machines against a format every saved state
+and history file would have to keep reading. Left as it is, and written down so
+that it is not rediscovered as an easy win.

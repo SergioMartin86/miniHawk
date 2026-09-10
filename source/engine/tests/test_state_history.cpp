@@ -629,6 +629,66 @@ int main(void)
 			assert(note[0] == static_cast<uint8_t>(f & 0xFF) && note[1] == 0xA5);
 		}
 	}
+	{ // A stretch spilled before the far band reached it is settled onto the far
+	  // grid once the band does: read back, composed a few merges a frame, and
+	  // rewritten. The same run with a far stride of one - keep everything -
+	  // is the control: it offers more old frames and weighs more on disk.
+		const chimera::HostApi api = fakeHost();
+		auto run = [&](const char *dir, int64_t farStride, chimera::StateHistory &h,
+			std::vector<std::array<uint8_t, Machine::kCells>> &truth)
+		{
+			g_machine = Machine{};
+			std::filesystem::remove_all(dir);
+			std::filesystem::create_directories(dir);
+			h.configure(&api, nullptr, 512);
+			h.bands(2, 6, 3, farStride, 8);
+			h.spillTo(dir);
+			h.capture(0);
+			truth.assign(1, {});
+			for (int64_t f = 1; f <= 160; f++)
+			{
+				h.beforeAdvance();
+				advance(f);
+				h.capture(f);
+				std::array<uint8_t, Machine::kCells> at{};
+				std::memcpy(at.data(), g_machine.cell, Machine::kCells);
+				truth.push_back(at);
+			}
+		};
+		chimera::StateHistory settled, dense;
+		std::vector<std::array<uint8_t, Machine::kCells>> truthS, truthD;
+		run("work-history-settle", 12, settled, truthS);
+		run("work-history-settle-control", 1, dense, truthD);
+
+		/* the far band - everything older than near + mid - offers fewer frames
+		 * once settled, and the file is lighter for it */
+		int64_t offeredS = 0, offeredD = 0;
+		for (int64_t f = 8; f < 160 - 2 - 6 - 8; f++)
+		{
+			if (settled.nearest(f) == f) offeredS++;
+			if (dense.nearest(f) == f) offeredD++;
+		}
+		assert(offeredS > 0 && offeredS < offeredD);
+		assert(settled.diskBytes() < dense.diskBytes());
+
+		/* and every frame either still offers is exact, wherever it is kept */
+		for (int64_t f = 0; f <= 160; f++)
+		{
+			if (settled.nearest(f) == f)
+			{
+				assert(settled.restore(f, error));
+				assert(std::memcmp(g_machine.cell, truthS[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+			}
+			if (dense.nearest(f) == f)
+			{
+				assert(dense.restore(f, error));
+				assert(std::memcmp(g_machine.cell, truthD[static_cast<size_t>(f)].data(), Machine::kCells) == 0);
+			}
+		}
+	}
+	std::filesystem::remove_all("work-history-settle");
+	std::filesystem::remove_all("work-history-settle-control");
+
 	/* the spill file belongs to the history and goes with it */
 	assert(!std::filesystem::exists("work-history-spill/history-spill.bin"));
 	std::filesystem::remove_all("work-history-spill");

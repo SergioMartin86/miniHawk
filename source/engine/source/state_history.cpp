@@ -14,6 +14,9 @@ namespace chimera
 namespace
 {
 
+/* a note is a caller's few bytes about a frame; anything claiming more is damage */
+const uint64_t kMaxNote = 4096;
+
 /* the stream shims the host's callbacks want */
 struct ByteSink { std::vector<uint8_t> *out; };
 int32_t sinkWrite(uintptr_t ud, const void *data, uintptr_t len)
@@ -137,6 +140,8 @@ void StateHistory::clear()
 	m_segments.clear();
 	m_bytes = 0;
 	m_epochOpen = false;
+	m_newest = -1;
+	m_settle = Settling{};
 	dropSpillFile();
 }
 
@@ -486,6 +491,7 @@ void StateHistory::captureOnce(int64_t frame, const uint8_t *note, size_t noteLe
 {
 	std::vector<uint8_t> carried(note, note + (note != nullptr ? noteLen : 0));
 	if (!enabled()) return;
+	m_newest = frame;
 
 	/* A capture describes the frame we now stand on. Anything at or after it is
 	 * a timeline that no longer happens - which is what recording over an
@@ -633,6 +639,7 @@ void StateHistory::coarsen(int64_t newestFrame)
 	if (!composeAvailable()) return;   /* an older host: keep every link */
 	tidy(newestFrame - m_nearFrames, m_midStride);
 	tidy(newestFrame - m_nearFrames - m_midFrames, m_farStride);
+	settleSpilled(newestFrame - m_nearFrames - m_midFrames);
 }
 
 void StateHistory::tidy(int64_t frame, int64_t stride)
@@ -649,74 +656,261 @@ void StateHistory::tidy(int64_t frame, int64_t stride)
 		const int64_t steps = seg.stepsTo(frame);
 		if (steps <= 0) return;                      /* not a landing, or the anchor */
 		const size_t i = static_cast<size_t>(steps) - 1;
-		if (i + 1 >= seg.links.size()) return;       /* the last link has nothing to merge into */
-
-		/* A merge reads both links and writes their union, so it costs their
-		 * combined size - and coarsening merges into a neighbour that KEEPS the
-		 * span, so that neighbour accumulates and every later merge re-reads
-		 * all of it. Collapsing four hundred landings that way cost four and a
-		 * half seconds of pure composition on a machine whose frames overlap
-		 * ninety per cent, and thirteen seconds at seventy; measured per frame,
-		 * ten to thirty milliseconds spent reclaiming a few per cent.
-		 *
-		 * So a merge is capped at what fits in about a millisecond of memory
-		 * bandwidth. It costs almost nothing: the merges it refuses are the
-		 * handful of biggest ones, which are exactly the ones where the union
-		 * is closest to the sum and least is reclaimed - a tenth of a per cent
-		 * of the work buys back four to fourteen per cent of the memory.
-		 * Leaving the landing in place only makes the band denser than asked,
-		 * which is safe; the budget is what answers for the memory.
-		 *
-		 * The anchor is the outer bound on the same thought: a composed link
-		 * that already costs what a whole machine costs is not worth composing
-		 * further, because the band would be better served by the anchor it is
-		 * walking from. */
-		static constexpr uint64_t kMergeCap = 8u << 20;
-		Link &a = seg.links[i];
-		Link &b = seg.links[i + 1];
-		const uint64_t together = a.bytes.size() + b.bytes.size();
-		if (together > kMergeCap) return;
-		if (!seg.anchor.empty() && together > seg.anchor.size()) return;
-
-		std::vector<uint8_t> merged;
-		/* The merge of two sorted lists is at most both of them, and asking for
-		 * that up front is one allocation instead of a dozen doublings with a
-		 * copy each - on a delta of megabytes that is most of the write. */
-		merged.reserve(a.bytes.size() + b.bytes.size());
-		ByteSink sink{ &merged };
-		WbxReturn r{};
-		if (m_host->wbx_compose_delta_mem != nullptr)
-		{
-			/* Both are already contiguous here, so the host has no reason to
-			 * copy them into buffers of its own to look at them. */
-			m_host->wbx_compose_delta_mem(a.bytes.data(), a.bytes.size(), b.bytes.data(), b.bytes.size(),
-				sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
-		}
-		else
-		{
-			ByteSource sa{ a.bytes.data(), a.bytes.size(), 0 };
-			ByteSource sb{ b.bytes.data(), b.bytes.size(), 0 };
-			m_host->wbx_compose_delta(sourceRead, reinterpret_cast<uintptr_t>(&sa),
-				sourceRead, reinterpret_cast<uintptr_t>(&sb),
-				sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
-		}
-		if (!r.ok()) return;   /* a merge that will not happen costs memory, nothing else */
-
-		const uint64_t was = a.bytes.size() + b.bytes.size();
-		seg.bytes -= was;
-		releaseBytes(was, "tidy");
-		seg.bytes += merged.size();
-		m_bytes += merged.size();
-		if (historyTrace())
-		{
-			fprintf(stderr, "[history] merged the landing at %lld into %lld: %llu -> %zu bytes\n",
-				(long long)frame, (long long)b.endFrame, (unsigned long long)was, merged.size());
-			fflush(stderr);
-		}
-		b.bytes = std::move(merged);
-		seg.links.erase(seg.links.begin() + static_cast<std::ptrdiff_t>(i));
+		composeInto(seg, i);
 		return;
 	}
+}
+
+bool StateHistory::composePair(const Link &a, const Link &b, uint64_t anchorLen, std::vector<uint8_t> &merged)
+{
+	/* A merge reads both links and writes their union, so it costs their
+	 * combined size - and coarsening merges into a neighbour that KEEPS the
+	 * span, so that neighbour accumulates and every later merge re-reads
+	 * all of it. Collapsing four hundred landings that way cost four and a
+	 * half seconds of pure composition on a machine whose frames overlap
+	 * ninety per cent, and thirteen seconds at seventy; measured per frame,
+	 * ten to thirty milliseconds spent reclaiming a few per cent.
+	 *
+	 * So a merge is capped at what fits in about a millisecond of memory
+	 * bandwidth. It costs almost nothing: the merges it refuses are the
+	 * handful of biggest ones, which are exactly the ones where the union
+	 * is closest to the sum and least is reclaimed - a tenth of a per cent
+	 * of the work buys back four to fourteen per cent of the memory.
+	 * Leaving the landing in place only makes the band denser than asked,
+	 * which is safe; the budget is what answers for the memory.
+	 *
+	 * The anchor is the outer bound on the same thought: a composed link
+	 * that already costs what a whole machine costs is not worth composing
+	 * further, because the band would be better served by the anchor it is
+	 * walking from. */
+	static constexpr uint64_t kMergeCap = 8u << 20;
+	const uint64_t together = a.bytes.size() + b.bytes.size();
+	if (together > kMergeCap) return false;
+	if (anchorLen != 0 && together > anchorLen) return false;
+
+	merged.clear();
+	/* The merge of two sorted lists is at most both of them, and asking for
+	 * that up front is one allocation instead of a dozen doublings with a
+	 * copy each - on a delta of megabytes that is most of the write. */
+	merged.reserve(a.bytes.size() + b.bytes.size());
+	ByteSink sink{ &merged };
+	WbxReturn r{};
+	if (m_host->wbx_compose_delta_mem != nullptr)
+	{
+		/* Both are already contiguous here, so the host has no reason to
+		 * copy them into buffers of its own to look at them. */
+		m_host->wbx_compose_delta_mem(a.bytes.data(), a.bytes.size(), b.bytes.data(), b.bytes.size(),
+			sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
+	}
+	else
+	{
+		ByteSource sa{ a.bytes.data(), a.bytes.size(), 0 };
+		ByteSource sb{ b.bytes.data(), b.bytes.size(), 0 };
+		m_host->wbx_compose_delta(sourceRead, reinterpret_cast<uintptr_t>(&sa),
+			sourceRead, reinterpret_cast<uintptr_t>(&sb),
+			sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
+	}
+	return r.ok();   /* a merge that will not happen costs memory, nothing else */
+}
+
+bool StateHistory::composeInto(Segment &seg, size_t i)
+{
+	if (i + 1 >= seg.links.size()) return false;   /* the last link has nothing to merge into */
+	Link &a = seg.links[i];
+	Link &b = seg.links[i + 1];
+	std::vector<uint8_t> merged;
+	if (!composePair(a, b, seg.anchor.size(), merged)) return false;
+
+	const uint64_t was = a.bytes.size() + b.bytes.size();
+	seg.bytes -= was;
+	releaseBytes(was, "tidy");
+	seg.bytes += merged.size();
+	m_bytes += merged.size();
+	if (historyTrace())
+	{
+		fprintf(stderr, "[history] merged the landing at %lld into %lld: %llu -> %zu bytes\n",
+			(long long)a.endFrame, (long long)b.endFrame, (unsigned long long)was, merged.size());
+		fflush(stderr);
+	}
+	b.bytes = std::move(merged);
+	seg.links.erase(seg.links.begin() + static_cast<std::ptrdiff_t>(i));
+	return true;
+}
+
+/* ---- settling what was spilled too early ----
+ *
+ * The bands are kept by tidy(), which composes a landing into its neighbour as
+ * the playhead moves away from it - and skips a spilled stretch, whose bytes
+ * are on disk. So a stretch spilled out of the near or mid band, which a budget
+ * smaller than those bands does every time, kept every frame's delta on disk
+ * for good: six thousand Game Boy frames under a 64MB budget put 1567MB in the
+ * file. Once the far boundary has passed such a stretch its links are read
+ * back one at a time and composed down to the far grid - the same merge, under
+ * the same caps - and what is left is appended to the file; what it was
+ * becomes dead room and the compaction takes it back. A stretch already on the
+ * far grid when it was spilled is marked settled then and never read.
+ *
+ * Streamed on purpose. A stretch spilled under a small budget is one that did
+ * not fit in memory, so reading it back whole would be the very thing the
+ * budget forbids; what is held is one accumulating link, one just read, and
+ * the settled result, which is far-band sized.
+ */
+void StateHistory::settleSpilled(int64_t farFrame)
+{
+	/* a far stride of one keeps every landing, so there is nothing to settle */
+	if (!composeAvailable() || m_spill == nullptr || m_farStride <= 1) return;
+	Settling &st = m_settle;
+	if (!st.active)
+	{
+		for (size_t i = 0; i + 1 < m_segments.size(); i++)
+		{
+			Segment &seg = m_segments[i];
+			if (!seg.spilled || seg.settled || seg.lastFrame() >= farFrame) continue;
+			if (seg.links.size() <= 1) { seg.settled = true; continue; }   /* nothing to compose */
+			/* the head of the body: the anchor's length is the cap, the rest is stepped over */
+			uint64_t noteLen = 0, count = 0;
+			st = Settling{};
+			if (!seekTo(m_spill, seg.spillAt) || !readU64(m_spill, st.anchorLen) || !seekBy(m_spill, st.anchorLen)
+				|| !readU64(m_spill, noteLen) || !skipBy(m_spill, noteLen) || !readU64(m_spill, count)
+				|| !tellAt(m_spill, st.fileAt))
+			{
+				seg.settled = true;   /* unreadable: left as it is, and not asked again */
+				continue;
+			}
+			st.active = true;
+			st.anchorFrame = seg.anchorFrame;
+			/* what the stretch still answers for may be less than the file
+			 * holds - an edit truncated it - and the rest is not wanted back */
+			st.linkCount = count < seg.links.size() ? static_cast<size_t>(count) : seg.links.size();
+			break;
+		}
+		if (!st.active) return;
+	}
+
+	/* a few links, then the rest next frame - reading one back costs what
+	 * spilling it cost, and the far boundary moves one frame at a time */
+	static constexpr int kLinksPerFrame = 4;
+	for (int n = 0; n < kLinksPerFrame && st.linkIndex < st.linkCount; n++)
+	{
+		uint64_t endFrame = 0, noteLen = 0, len = 0;
+		Link next;
+		if (!seekTo(m_spill, st.fileAt) || !readU64(m_spill, endFrame)
+			|| !readU64(m_spill, noteLen) || noteLen > kMaxNote)
+		{
+			st.linkCount = 0;   /* unreadable: give up on this one below, without a rewrite */
+			st.merges = 0;
+			break;
+		}
+		next.note.resize(static_cast<size_t>(noteLen));
+		if (!readAll(m_spill, next.note.data(), next.note.size()) || !readU64(m_spill, len)
+			|| !tellAt(m_spill, st.fileAt))
+		{
+			st.linkCount = 0;
+			st.merges = 0;
+			break;
+		}
+		next.bytes.resize(static_cast<size_t>(len));
+		if (!readAll(m_spill, next.bytes.data(), next.bytes.size()))
+		{
+			st.linkCount = 0;
+			st.merges = 0;
+			break;
+		}
+		st.fileAt += len;
+		next.endFrame = static_cast<int64_t>(endFrame);
+		st.linkIndex++;
+
+		if (!st.hasAcc)
+		{
+			st.acc = std::move(next);
+			st.hasAcc = true;
+			continue;
+		}
+		std::vector<uint8_t> merged;
+		const bool keep = st.acc.endFrame % m_farStride == 0 || pinned(st.acc.endFrame)
+			|| !composePair(st.acc, next, st.anchorLen, merged);
+		if (keep)
+		{
+			/* the grid, a pin, or the caps: this landing stays */
+			st.out.push_back(std::move(st.acc));
+			st.acc = std::move(next);
+			continue;
+		}
+		st.acc.bytes = std::move(merged);
+		st.acc.endFrame = next.endFrame;
+		st.acc.note = std::move(next.note);
+		st.merges++;
+	}
+	if (st.linkIndex < st.linkCount) return;
+	if (st.hasAcc) st.out.push_back(std::move(st.acc));
+	finishSettling();
+}
+
+void StateHistory::finishSettling()
+{
+	Settling st = std::move(m_settle);
+	m_settle = Settling{};
+
+	Segment *seg = nullptr;
+	for (Segment &s : m_segments)
+	{
+		if (s.anchorFrame == st.anchorFrame) { seg = &s; break; }
+	}
+	/* gone meanwhile - dropped, or re-recorded over - or nothing was merged:
+	 * either way the file is right as it is */
+	if (seg == nullptr || !seg->spilled) return;
+	seg->settled = true;
+	if (st.merges == 0) return;
+
+	/* an edit may have shortened the stretch while this worked: keep only what
+	 * it still answers for. Composition never moves a landing, so the settled
+	 * frames are a subset of the ones it had. */
+	const int64_t last = seg->lastFrame();
+	while (!st.out.empty() && st.out.back().endFrame > last) st.out.pop_back();
+
+	/* the anchor comes across from the old body; it is one machine, which is
+	 * what capturing it held in memory in the first place */
+	Segment work;
+	work.anchorFrame = seg->anchorFrame;
+	work.anchorNote = seg->anchorNote;
+	work.anchor.resize(static_cast<size_t>(st.anchorLen));
+	if (!seekTo(m_spill, seg->spillAt + sizeof(uint64_t)) || !readAll(m_spill, work.anchor.data(), work.anchor.size())) return;
+	work.bytes = st.anchorLen;
+	for (Link &l : st.out) work.bytes += l.bytes.size();
+	work.links = std::move(st.out);
+
+	if (!seekEnd(m_spill)) return;
+	const uint64_t at = m_spillBytes;
+	const bool ok = writeSegmentBody(m_spill, work) && std::fflush(m_spill) == 0;
+	uint64_t end = 0;
+	if (!ok || !tellAt(m_spill, end))
+	{
+		m_spillBytes = at;   /* the half written tail is dead room; the old body stands */
+		return;
+	}
+	const uint64_t was = seg->spillLength;
+	m_spillBytes = end;
+	seg->spillAt = at;
+	seg->spillLength = end - at;
+	seg->bytes = work.bytes;
+	m_spillLive = m_spillLive - was + seg->spillLength;
+	/* the landings it now has: metadata only, as a spilled stretch keeps them */
+	seg->links.clear();
+	for (Link &l : work.links)
+	{
+		seg->links.push_back(Link{ std::vector<uint8_t>(), l.endFrame, std::move(l.note) });
+	}
+	if (historyTrace())
+	{
+		fprintf(stderr, "[history] settled frames %lld-%lld on disk: %llu -> %llu bytes, %d merges"
+			" (%llu live, file %llu)\n",
+			(long long)seg->anchorFrame, (long long)last, (unsigned long long)was,
+			(unsigned long long)seg->spillLength, st.merges,
+			(unsigned long long)m_spillLive, (unsigned long long)m_spillBytes);
+		fflush(stderr);
+	}
+	/* the old body is dead room now; take it back when it is the bigger half */
+	if (m_spillBytes - m_spillLive >= m_spillLive) compactSpill();
 }
 
 /* ---- spilling ----
@@ -754,6 +948,9 @@ bool StateHistory::spill(Segment &seg)
 	 * definition, and taking its bytes off the count afterwards takes nothing. */
 	releaseBytes(seg.memoryBytes(), "spill");
 	seg.spilled = true;
+	/* on the far grid already if the far boundary has passed it - tidy() did
+	 * that as it went - and then settleSpilled() has nothing to read back */
+	seg.settled = m_newest >= 0 && seg.lastFrame() < m_newest - m_nearFrames - m_midFrames;
 	seg.spillAt = at;
 	seg.spillLength = m_spillBytes - at;
 	m_spillLive += seg.spillLength;
@@ -1007,7 +1204,6 @@ const char *const kSuperseded[] = { "ChimeraHistory1", "ChimeraHistory2" };
  * because keeping them in a table of the caller's own would mean mirroring
  * every eviction this class does. It is not a place to keep things, and a file
  * claiming otherwise is damaged. */
-const uint64_t kMaxNote = 4096;
 
 } // namespace
 

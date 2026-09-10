@@ -197,6 +197,10 @@ private:
 		 * that is metadata, it is small, and answering "can you reach frame N"
 		 * must not touch a disk. */
 		bool spilled = false;
+		/* Spilled AND on the far band's grid already, or past helping: nothing
+		 * settleSpilled() would do to it. Set when a stretch is spilled after
+		 * the far boundary has passed it, or once it has been rewritten. */
+		bool settled = false;
 
 		/* What this segment costs in MEMORY, which is what the budget is about
 		 * and is not the same as how big it is. A spilled segment is still as
@@ -279,6 +283,27 @@ private:
 	 * and the result independent of the order frames arrive in. */
 	void tidy(int64_t frame, int64_t stride);
 
+	/* The union of two links, if the caps allow: together they must fit the
+	 * merge cap and the anchor they walk from. True when `merged` holds it. */
+	bool composePair(const Link &a, const Link &b, uint64_t anchorLen, std::vector<uint8_t> &merged);
+
+	/* Composes the link at `i` into the one after it, if the caps allow. True
+	 * when it did. */
+	bool composeInto(Segment &seg, size_t i);
+
+	/* A stretch that was spilled before the far band reached it keeps the
+	 * density it had when it went - which used to be forever. Once the far
+	 * boundary has passed a spilled stretch, this reads its links back one at
+	 * a time, composes them down to the far grid, and writes what is left to
+	 * the end of the file; the old body becomes dead room the compaction
+	 * reclaims. Streamed, because a stretch spilled under a small budget is by
+	 * definition one that does not fit in memory: what is held at once is the
+	 * link being accumulated, the link just read, and the settled result,
+	 * which is far-band sized. A few links per call, so it is a little work
+	 * every frame rather than a stall. */
+	void settleSpilled(int64_t farFrame);
+	void finishSettling();
+
 	const HostApi *m_host = nullptr;
 	void *m_obj = nullptr;
 	uint64_t m_budget = 0;
@@ -301,6 +326,22 @@ private:
 	std::set<int64_t> m_pinned;
 
 	std::string m_spillDir;
+	int64_t m_newest = -1;             /* the last frame captured: where the bands are measured from */
+
+	/* the stretch being settled, if any (see settleSpilled) */
+	struct Settling
+	{
+		bool active = false;
+		int64_t anchorFrame = -1;      /* which stretch, by anchor - indices move */
+		uint64_t anchorLen = 0;        /* the cap on a composed link */
+		uint64_t fileAt = 0;           /* the next link record in the old body */
+		size_t linkIndex = 0, linkCount = 0;
+		bool hasAcc = false;
+		Link acc;                      /* the landing being composed into */
+		std::vector<Link> out;         /* the settled landings so far */
+		int merges = 0;                /* none at the end means nothing to rewrite */
+	};
+	Settling m_settle;
 	std::FILE *m_spill = nullptr;      /* one file, appended to, holes and all */
 	uint64_t m_spillBytes = 0;    /* how long the file is, dead prefix and all */
 	uint64_t m_spillLive = 0;     /* what the stretches still in it weigh */

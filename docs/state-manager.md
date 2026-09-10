@@ -429,21 +429,30 @@ The halved figure is **not written back to the settings**. What a machine can
 spare this afternoon is not a decision somebody made, and it must not silently
 become one.
 
-### What is on disk is never thinned
+### What is on disk is settled into the far band (2026-09-10)
 
 The disk budget drops the oldest stretches in the file, which is the rule the
-memory side has always had. What it does NOT do is thin them: `coarsen()` skips
-a spilled stretch, so what lands on disk keeps whatever density it had when it
-went. Six thousand Game Boy frames under a 64MB memory budget put 1567MB in the
-file with no disk limit, and that is close to every frame's delta, because a
-stretch spilled out of the near band is never coarsened afterwards.
+memory side has always had. For a while it did not thin them: `coarsen()`
+skipped a spilled stretch, so what landed on disk kept whatever density it had
+when it went. Six thousand Game Boy frames under a 64MB memory budget put
+1567MB in the file with no disk limit, close to every frame's delta, because a
+stretch spilled out of the near band was never coarsened afterwards.
 
-So the disk budget bounds the damage and does not remove the waste. The other
-half of the fix is to **spill what is already coarse**: the paragraph above says
-the budget decides what happens to the far band, and the code spills the oldest
-stretch whichever band it is in, so a near-band stretch at full density can land
-on disk. Doing that would make the file a fraction of the size on its own, and
-is not written.
+Now a spilled stretch is SETTLED once the far boundary has passed it: read back
+from the file, its landings composed down to the far grid - the same merge
+tidy() makes, under the same caps, a few merges per frame so that it is a
+little work every frame rather than a stall - and the result appended to the
+file. The old body becomes dead room, which the compaction takes back when the
+dead half is the bigger half, as it always did. A stretch that was already past
+the far boundary when it was spilled is marked settled then and never read
+back; one bigger than the memory budget is left as it is, because the working
+copy would not fit. An edit that truncates a stretch while it is being settled
+is honoured: the rewritten body keeps only what the stretch still answers for.
+
+The spill order is unchanged - the oldest stretch goes first, whatever band it
+is in - because under a budget smaller than the near and mid bands that IS the
+right stretch to move, and density on disk is now a temporary condition, not a
+permanent one.
 
 The cache manager bounds the directory the file lives in, but it will never take
 what is open (docs/cache-manager.md) - correctly, because the history is reading
@@ -745,10 +754,15 @@ a software GL.
 Two things to know. The frames a seek passes through get the fast update
 whether or not it is a turbo seek, so a Lua script that counts frames during a
 seek wants "Run Lua during turbo", as it already did for a turbo one. And on
-this Xvfb box a TURBO seek is slower than a plain one - the present and the
-message pump cost several milliseconds each with no frame drawn - which is not
-understood, is bounded to sixty a second now, and has not been measured on the
-GPU box.
+the Xvfb box a TURBO seek measured slower than a plain one - the present and
+the message pump cost several milliseconds each with no frame drawn. That is
+the software GL, not the client: the same seek on the Windows box with the real
+GPU (`Chimera.exe --headless` driven through interop, the same project and Lua
+kicker) is 3.5 ms a frame plain and 3.1 turbo against 2.7 for the machine, and
+the trace's two later phases say where the rest goes there - `movie` 0.22 ms is
+the greenzone capture itself, and `messages` 0.35 ms is the piano roll
+repainting at the sixty services a second, which is what the person is
+watching.
 
 ## Phasing
 
