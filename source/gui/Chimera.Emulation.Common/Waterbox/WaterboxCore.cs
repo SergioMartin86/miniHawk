@@ -468,7 +468,17 @@ namespace Chimera.Emulation.Common.Waterbox
 		public bool RestoreTo(int frame)
 		{
 			CheckDisposed();
-			if (!_session.GreenzoneRestore(frame)) return false;
+			if (!_session.GreenzoneRestore(frame))
+			{
+				// A restore that could not be walked does not leave the machine
+				// where it was: the engine puts it back on a frame that did exist
+				// - the anchor it was walking from - rather than leave it half way
+				// along a chain. Following that here is what keeps this object's
+				// idea of the frame and the machine the same thing; believing the
+				// old number would record the next input against the wrong row.
+				Frame = checked((int)_session.Frame);
+				return false;
+			}
 			Frame = frame;
 			var note = _session.GreenzoneNote(frame);
 			// A frame with no note is one stored before this machine had a lag

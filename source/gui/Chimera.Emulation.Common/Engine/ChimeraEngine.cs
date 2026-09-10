@@ -608,6 +608,9 @@ namespace Chimera.Emulation.Common.Engine
 		public abstract long ce_session_greenzone_count(IntPtr session);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract long ce_session_frame(IntPtr session);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract long ce_session_greenzone_nearest(IntPtr session, long frame);
 
 		[ChimeraImport(CallingConvention.Cdecl)]
@@ -1741,6 +1744,15 @@ namespace Chimera.Emulation.Common.Engine
 		public void GreenzoneUnpinAll() => E.ce_session_greenzone_unpin_all(_session);
 
 		public long GreenzoneCount => E.ce_session_greenzone_count(_session);
+
+		/// <summary>
+		/// Which frame the engine believes the machine is on. Normally the
+		/// frontend's own count says the same thing; after a restore that could
+		/// not be walked it does not, because the engine puts the machine back on
+		/// a frame that did exist rather than leave it half way along a chain
+		/// (docs/state-manager.md). This is how the frontend follows it.
+		/// </summary>
+		public long Frame => E.ce_session_frame(_session);
 
 		/// <summary>The greatest stored frame at or before this one, or -1.</summary>
 		public long GreenzoneNearest(long frame) => E.ce_session_greenzone_nearest(_session, frame);

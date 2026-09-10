@@ -2538,7 +2538,9 @@ namespace Chimera.Client.GUI
 				// the frames a seek passes through get the turbo treatment whether or
 				// not it is a turbo seek; what turbo adds is that none of them is
 				// shown even when the host is served
-				bool quietFrame = (_seekQuiet || (IsTurboing && !atTurboSeekEnd)) && !atSeekEnd;
+				// IsSeeking again, not the flag alone: this runs from outside the loop
+				// too (a tool's frame advance), and the flag is the loop's last word
+				bool quietFrame = ((IsSeeking && _seekQuiet) || (IsTurboing && !atTurboSeekEnd)) && !atSeekEnd;
 
 				if (isFastForwardingOrRewinding != _lastFastForwardingOrRewinding)
 				{
@@ -2616,7 +2618,7 @@ namespace Chimera.Client.GUI
 				// does not draw even those. A held Turbo key is a different thing -
 				// the person is watching to see where they are, and the throttle's
 				// one-in-four is what they are watching.
-				bool render = (!_throttle.skipNextFrame && !(IsTurboSeeking && !atTurboSeekEnd) && !_seekQuiet)
+				bool render = (!_throttle.skipNextFrame && !(IsTurboSeeking && !atTurboSeekEnd) && !(IsSeeking && _seekQuiet))
 					|| _currAviWriter?.UsesVideo is true
 					|| atSeekEnd;
 				long advanceStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
