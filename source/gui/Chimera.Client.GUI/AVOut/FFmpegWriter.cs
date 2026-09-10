@@ -54,6 +54,17 @@ namespace Chimera.Client.GUI
 		private NutMuxer _muxer;
 
 		/// <summary>
+		/// Sound that arrived before the first frame did, waiting for the file to
+		/// be opened. See <see cref="AddFrame"/>.
+		/// </summary>
+		private List<short[]> _samplesBeforeFirstFrame;
+
+		/// <summary>a second of stereo 44.1kHz, which is far more than the wait can be</summary>
+		private const int MaxSamplesBeforeFirstFrame = 44100 * 2;
+
+		private int _samplesBuffered;
+
+		/// <summary>
 		/// codec token in use
 		/// </summary>
 		private FFmpegWriterForm.FormatPreset _token;
@@ -69,13 +80,16 @@ namespace Chimera.Client.GUI
 		{
 		}
 
+		/// <summary>
+		/// Names the file. It is not created until the first frame arrives - see
+		/// <see cref="AddFrame"/> for why.
+		/// </summary>
 		public void OpenFile(string baseName)
 		{
 			var (dir, fileNoExt, ext) = baseName.SplitPathToDirFileAndExt();
 			_baseName = Path.Combine(dir!, fileNoExt);
 			_ext = ext;
 			_segment = 0;
-			OpenFileSegment();
 		}
 
 		/// <summary>
@@ -153,8 +167,25 @@ namespace Chimera.Client.GUI
 
 		public void CloseFile()
 		{
-			CloseFileSegment();
+			/* A recording that was asked for and stopped before the machine drew
+			 * anything never opened a file, and there is nothing to close. */
+			if (_ffmpeg != null) CloseFileSegment();
+			_samplesBeforeFirstFrame = null;
+			_samplesBuffered = 0;
 			_baseName = null;
+		}
+
+		/// <summary>
+		/// Writes out whatever sound arrived while the file was still waiting for
+		/// its first frame.
+		/// </summary>
+		private void FlushSamplesBeforeFirstFrame()
+		{
+			if (_samplesBeforeFirstFrame == null) return;
+			var pending = _samplesBeforeFirstFrame;
+			_samplesBeforeFirstFrame = null;
+			_samplesBuffered = 0;
+			foreach (var s in pending) AddSamples(s);
 		}
 
 		/// <summary>
@@ -182,7 +213,26 @@ namespace Chimera.Client.GUI
 		/// <exception cref="Exception">FFmpeg call failed</exception>
 		public void AddFrame(IVideoProvider source)
 		{
-			if (source.BufferWidth != _width || source.BufferHeight != _height)
+			if (_ffmpeg == null)
+			{
+				/* The first frame is the first moment anybody knows how big the
+				 * picture is.
+				 *
+				 * A core that has not run a frame yet reports the CAPACITY of its
+				 * video buffer, because that is all it has to report - the ares
+				 * core declares 1280x576 so that a Nintendo 64 fits, and a Game
+				 * Boy in it draws 160x144. Opening the file when recording starts
+				 * therefore wrote a header for a picture no machine was going to
+				 * draw, and the first real frame then had to start a second
+				 * segment: every recording came out as an empty foo.avi plus the
+				 * actual foo_1.avi, and the name the person asked for was the
+				 * useless one. */
+				_width = source.BufferWidth;
+				_height = source.BufferHeight;
+				OpenFileSegment();
+				FlushSamplesBeforeFirstFrame();
+			}
+			else if (source.BufferWidth != _width || source.BufferHeight != _height)
 			{
 				SetVideoParameters(source.BufferWidth, source.BufferHeight);
 			}
@@ -275,6 +325,24 @@ namespace Chimera.Client.GUI
 		/// <exception cref="Exception">FFmpeg call failed</exception>
 		public void AddSamples(short[] samples)
 		{
+			if (_ffmpeg == null)
+			{
+				/* Sound before the first frame: the writer's A/V sync drops a
+				 * video frame when too little sound came with it, and a machine
+				 * whose audio starts slowly (the Nintendo 64 runs at half rate
+				 * until the game programs its DAC) can drop several before the
+				 * first one is kept. That sound is still part of the recording,
+				 * so it waits here rather than being thrown away.
+				 *
+				 * The caller owns its array and reuses it, so this keeps a copy. */
+				if (_baseName == null || samples.Length == 0) return;
+				if (_samplesBuffered + samples.Length > MaxSamplesBeforeFirstFrame) return;
+				_samplesBeforeFirstFrame ??= new List<short[]>();
+				_samplesBeforeFirstFrame.Add((short[]) samples.Clone());
+				_samplesBuffered += samples.Length;
+				return;
+			}
+
 			if (_ffmpeg.HasExited)
 			{
 				throw new Exception($"unexpected ffmpeg death:\n{FfmpegGetError()}");
