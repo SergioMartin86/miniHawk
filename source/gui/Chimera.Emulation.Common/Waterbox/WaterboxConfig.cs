@@ -152,14 +152,20 @@ namespace Chimera.Emulation.Common.Waterbox
 		public IReadOnlyList<SettingDecl> SettingsFor(MachineConfig machine)
 		{
 			var decls = Settings ?? new List<SettingDecl>();
-			var scoped = decls.FindAll(d => d.When is not { Count: > 0 }
-				|| machine?.When is not { Count: > 0 }
-				|| machine.When.Exists(d.AppliesTo));
-			if (machine?.SettingOverrides is not { Count: > 0 }) return scoped;
-			// the SAME instances every time for a given machine: callers compare
-			// declaration lists by reference to tell whether anything changed
+			var scopes = machine?.When is { Count: > 0 } && decls.Exists(static d => d.When is { Count: > 0 });
+			var overrides = machine?.SettingOverrides is { Count: > 0 };
+			// The SAME list every time, for the same machine: callers compare
+			// declaration lists by reference to tell whether the exposed set
+			// changed, and a fresh list every call redraws forever. A package
+			// with nothing to scope and nothing to narrow answers with its own.
+			if (!scopes && !overrides) return decls;
 			var key = (machine.Id ?? "") + "\u0000" + string.Join(",", machine.When ?? new List<string>());
 			if (_narrowed.TryGetValue(key, out var cached)) return cached;
+
+			var scoped = scopes
+				? decls.FindAll(d => d.When is not { Count: > 0 } || machine.When.Exists(d.AppliesTo))
+				: decls;
+			if (!overrides) { _narrowed[key] = scoped; return scoped; }
 
 			List<SettingDecl> narrowed = new(scoped.Count);
 			foreach (var decl in scoped)
