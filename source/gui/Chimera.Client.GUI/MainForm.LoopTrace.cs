@@ -20,8 +20,8 @@ namespace Chimera.Client.GUI
 		{
 			public static readonly bool Enabled = Environment.GetEnvironmentVariable("CHIMERA_LOOP_TRACE") is "1";
 
-			public const int Top = 0, Core = 1, ToolsBefore = 2, Advance = 3, ToolsAfter = 4, Render = 5, Throttle = 6, Messages = 7;
-			private static readonly string[] Names = { "top", "core", "tools-before", "advance", "tools-after", "render", "throttle", "messages" };
+			public const int Top = 0, Core = 1, ToolsBefore = 2, Advance = 3, ToolsAfter = 4, Render = 5, Throttle = 6, Messages = 7, Movie = 8, Sound = 9;
+			private static readonly string[] Names = { "top", "core", "tools-before", "advance", "tools-after", "render", "throttle", "messages", "movie", "sound" };
 			private const int Every = 300;
 
 			private static readonly long[] Ticks = new long[Names.Length];

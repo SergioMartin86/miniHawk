@@ -2593,7 +2593,9 @@ namespace Chimera.Client.GUI
 					}
 				}
 
+				long movieStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				MovieSession.HandleFrameBefore();
+				LoopTrace.Add(LoopTrace.Movie, movieStarted);
 
 				// why not skip audio if the user doesn't want sound
 				bool renderSound = (Config.SoundEnabled && !IsTurboing)
@@ -2623,7 +2625,9 @@ namespace Chimera.Client.GUI
 
 				// an encode reaching the end of the movie is the encode finishing, not
 				// the movie ending on the person - so it bypasses the end action too
+				movieStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				MovieSession.HandleFrameAfter(ToolBypassingMovieEndAction is not null || IsEncodingVideo);
+				LoopTrace.Add(LoopTrace.Movie, movieStarted);
 
 				if (returnToRecording)
 				{
@@ -2714,7 +2718,9 @@ namespace Chimera.Client.GUI
 				UpdateToolsAfter();
 			}
 
+			long soundStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 			Sound.UpdateSound(atten, DisableSecondaryThrottling);
+			LoopTrace.Add(LoopTrace.Sound, soundStarted);
 		}
 
 		private void CalcFramerateAndUpdateDisplay(long currentTimestamp, bool isRewinding, bool isFastForwarding)
