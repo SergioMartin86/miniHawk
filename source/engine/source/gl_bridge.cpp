@@ -312,11 +312,45 @@ void return_current()
  * path of every single GL call a renderer makes, so it is a bool. */
 static bool g_borrowed;
 
+/* The two diagnostics below are read ONCE.
+ *
+ * They used to be a getenv apiece on every crossing, on the reasoning that a
+ * getenv is nothing beside a GL call. It is not nothing: getenv walks the
+ * environment comparing strings, and a renderer crossing this bridge does so
+ * thousands of times a frame - Ruffle's wgpu backend makes tens of thousands -
+ * so the walk was being paid tens of thousands of times a frame to answer a
+ * question whose answer cannot change while the process runs. */
+static bool glTrace()
+{
+	static const bool on = getenv("CHIMERA_GL_TRACE") != nullptr;
+	return on;
+}
+
+static bool glCheck()
+{
+	static const bool on = getenv("CHIMERA_GL_CHECK") != nullptr;
+	return on;
+}
+
+/* How many calls crossed, and how many frames they were spread over: the two
+ * numbers that say whether a core's renderer is chatty. Printed by
+ * ce_gl_release under CHIMERA_GL_TRACE, which is once a frame. */
+static uint64_t g_calls, g_callsAtFrame, g_frames;
+
 extern "C" void ce_gl_release(void)
 {
 	if (!g_borrowed) return;
 	return_current();
 	g_borrowed = false;
+	if (glTrace())
+	{
+		g_frames++;
+		fprintf(stderr, "[ce-gl] frame %llu: %llu calls (%llu so far, %.0f a frame)\n",
+			(unsigned long long)g_frames, (unsigned long long)(g_calls - g_callsAtFrame),
+			(unsigned long long)g_calls, (double)g_calls / (double)g_frames);
+		fflush(stderr);
+	}
+	g_callsAtFrame = g_calls;
 }
 
 static uintptr_t ce_gl_dispatch_one(uintptr_t op, uintptr_t a, uintptr_t b,
@@ -326,6 +360,7 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
                                                uintptr_t c, uintptr_t d, uintptr_t e)
 {
 	(void)d; (void)e;
+	g_calls++;
 
 	/* The first GL call of a frame takes the context; ce_gl_release gives it
 	 * back when the frame is over. Two calls per frame, not two per GL call. */
@@ -334,7 +369,7 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 		save_current();
 		bind_ours();
 		g_borrowed = true;
-		if (getenv("CHIMERA_GL_TRACE"))
+		if (glTrace())
 			fprintf(stderr, "[ce-gl] borrowed the context (GL_VERSION now %s)\n",
 				glGetString(GL_VERSION) ? (const char *)glGetString(GL_VERSION) : "(null)");
 	}
@@ -345,7 +380,7 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 	 * is how a whole class of bridge bugs hides, and this is how they are
 	 * found. Off unless asked for; a getenv per call is nothing beside a GL
 	 * call. */
-	if (getenv("CHIMERA_GL_CHECK"))
+	if (glCheck())
 	{
 		while (glGetError() != GL_NO_ERROR) { }
 		const uintptr_t rv = ce_gl_dispatch_one(op, a, b, c, d, e);

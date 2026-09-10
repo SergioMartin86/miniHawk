@@ -1755,3 +1755,31 @@ from power-on and replay - it starts from wherever the emulator is. Frame zero
 being kept means that case does not arise while a session is running, but a
 project reopened with no usable history has only the frames it captures from
 there. Rebooting the core and replaying the movie is the missing piece.
+
+## A getenv is not free when a renderer makes fifty thousand calls a frame (user-reported, 2026-09-10)
+
+Reported from use: Flash under Ruffle is slow in Chimera and not in vanilla
+Ruffle. Measured rather than guessed, and it was two things of about the same
+size.
+
+**The GPU bridge asked the environment a question on every crossing.**
+`ce_gl_dispatch` called `getenv("CHIMERA_GL_CHECK")` per GL call, on the
+reasoning - written down in the code - that a getenv is nothing beside a GL
+call. Ruffle's wgpu backend makes SIX THOUSAND GL calls in an average frame and
+fifty thousand in a heavy one, so the walk through the environment was being
+paid fifty thousand times a frame to answer a question whose answer cannot
+change while the process runs. Read once, as everything else in this codebase
+that reads an environment variable already does, the machine's own frame went
+from 58.8 ms to 32.9.
+
+The lesson is not "getenv is slow". It is that "nothing beside X" is an estimate
+of a ratio, and a ratio is only an argument when the count is known. The count
+here is now printed by `CHIMERA_GL_TRACE`, per frame, precisely so the next such
+claim can be checked rather than believed.
+
+**And the greenzone was capturing twenty megabytes a frame** because the near
+band kept every frame whatever it cost. That half is in docs/state-manager.md.
+
+Together: 112 ms a frame to 48, which is nine frames a second to twenty-one.
+What remains is the six thousand crossings themselves - each one a call out of
+the sandbox - and that is a batching problem, not a constant-factor one.

@@ -167,6 +167,11 @@ void StateHistory::clear()
 	m_bytes = 0;
 	m_epochOpen = false;
 	m_newest = -1;
+	m_nearStride = 1;
+	m_captureSeconds = 0;
+	m_wallSeconds = 0;
+	m_lastCaptureEnded = 0;
+	m_capturesSinceTuned = 0;
 	dropSpillFile();
 }
 
@@ -514,16 +519,67 @@ int64_t StateHistory::nearest(int64_t frame) const
 
 void StateHistory::beforeAdvance()
 {
-	m_epochOpen = false;
-	if (!enabled() || !deltasAvailable()) return;
+	if (!enabled() || !deltasAvailable()) { m_epochOpen = false; return; }
 	/* A delta continues the newest segment, and only while there is one with
 	 * room. Otherwise the coming capture is an anchor and needs no epoch. */
-	if (m_segments.empty()) return;
+	if (m_segments.empty()) { m_epochOpen = false; return; }
 	const Segment &seg = m_segments.back();
-	if (seg.lastFrame() - seg.anchorFrame >= m_anchorSpacing) return;
+	if (seg.lastFrame() - seg.anchorFrame >= m_anchorSpacing) { m_epochOpen = false; return; }
+	/* An epoch left open by a frame the near band's stride skipped: it is
+	 * measuring from the last landing and must go on doing so, or what those
+	 * frames did is lost. Opening a new one here would forget it. */
+	if (m_epochOpen) return;
 	WbxReturn r{};
 	m_host->wbx_epoch_begin(m_obj, &r);
 	m_epochOpen = r.ok();
+}
+
+/* The near band's stride, from what capture is costing against what the run is.
+ *
+ * Moved gently and only every so often: a stride that chases one expensive
+ * frame would thrash, and the thing being measured is noisy by nature - one
+ * frame loads a level, the next draws a menu. */
+void StateHistory::tuneStride(double captureSeconds, double wallSeconds)
+{
+	if (wallSeconds <= 0 || captureSeconds < 0) return;
+	const double a = 0.05;   /* the mean follows a couple of hundred frames */
+	m_captureSeconds = m_captureSeconds == 0 ? captureSeconds : m_captureSeconds * (1 - a) + captureSeconds * a;
+	m_wallSeconds = m_wallSeconds == 0 ? wallSeconds : m_wallSeconds * (1 - a) + wallSeconds * a;
+	if (++m_capturesSinceTuned < 30) return;
+	m_capturesSinceTuned = 0;
+	if (m_wallSeconds <= 0) return;
+
+	/* A capture that is quick in absolute terms is never worth thinning for,
+	 * whatever share of the run it is. A machine that costs a millisecond a
+	 * frame and a tenth of that to store is not a machine anybody is waiting
+	 * for, and the near band's promise - every frame, where the work is - is
+	 * worth more than the tenth. Only a capture measured in milliseconds can
+	 * move the stride up. */
+	static constexpr double kWorthThinning = 0.002;
+	const double share = m_captureSeconds / m_wallSeconds;
+	int64_t want = m_nearStride;
+	if (share > kCostShare && m_captureSeconds > kWorthThinning)
+	{
+		want = static_cast<int64_t>(m_nearStride * (share / kCostShare) + 0.5);
+	}
+	else if ((share < kCostShare / 3 || m_captureSeconds <= kWorthThinning) && m_nearStride > 1)
+	{
+		want = m_nearStride - 1;
+	}
+	if (want < 1) want = 1;
+	if (want > 32) want = 32;          /* past this the replay is the cost */
+	if (want == m_nearStride) return;
+	if (historyTrace())
+	{
+		fprintf(stderr, "[history] capture is %.0f%% of the run: the near band keeps"
+			" one frame in %lld rather than one in %lld\n",
+			share * 100, (long long)want, (long long)m_nearStride);
+		fflush(stderr);
+	}
+	m_nearStride = want;
+	/* what was measured describes the old stride */
+	m_captureSeconds = 0;
+	m_wallSeconds = 0;
 }
 
 /* A capture allocates - a whole machine for an anchor, a frame's churn for a
@@ -595,10 +651,48 @@ void StateHistory::captureOnce(int64_t frame, const uint8_t *note, size_t noteLe
 	 * restore reads the file - where the old timeline's links still are at
 	 * those positions. The frames after the edit would come back as the
 	 * frames before it. A fresh anchor starts a stretch of its own instead. */
+	/* A frame the near band's stride skips is not stored at all: the epoch
+	 * stays open and the next delta describes this frame along with it. The
+	 * invalidation above has already happened, which is what matters - a
+	 * timeline that no longer happens must go whether or not this frame is
+	 * kept. */
+	if (m_epochOpen && m_nearStride > 1 && !m_segments.empty()
+		&& !m_segments.back().spilled
+		&& m_segments.back().lastFrame() < frame
+		&& frame - m_segments.back().lastFrame() < m_nearStride
+		&& m_segments.back().lastFrame() - m_segments.back().anchorFrame < m_anchorSpacing)
+	{
+		m_newest = frame;
+		return;
+	}
+
+	const double tCapture0 = nowSeconds();
+
+	/* Room for the delta before it is written, not while.
+	 *
+	 * The sink appends each page as the sandbox hands it over, and a vector
+	 * that grows by doubling copies everything it already holds each time it
+	 * does - so a twenty megabyte delta was written once and copied about as
+	 * much again, in pieces, on the way. The sandbox knows how many pages the
+	 * frame touched before any of them are read, so the room is asked for
+	 * once: an index and a page each, and a little for the header and the
+	 * status list. Asking for slightly too much costs a moment's memory;
+	 * asking for nothing cost a second copy of every delta. */
+	if (m_epochOpen && m_host->wbx_get_epoch_page_count != nullptr)
+	{
+		WbxReturn pr{};
+		m_host->wbx_get_epoch_page_count(m_obj, &pr);
+		if (pr.ok())
+		{
+			const uint64_t pages = static_cast<uint64_t>(pr.data);
+			if (pages > 0 && pages < (1ull << 32)) bytes.reserve(pages * (4096 + 8) + 4096);
+		}
+	}
+
 	const bool wantDelta = m_epochOpen
 		&& !m_segments.empty()
 		&& !m_segments.back().spilled
-		&& m_segments.back().lastFrame() == frame - 1
+		&& m_segments.back().lastFrame() < frame
 		&& m_segments.back().lastFrame() - m_segments.back().anchorFrame < m_anchorSpacing;
 	m_epochOpen = false;
 
@@ -622,13 +716,20 @@ void StateHistory::captureOnce(int64_t frame, const uint8_t *note, size_t noteLe
 			}
 			coarsen(frame);
 			evict();
+			const double now = nowSeconds();
+			tuneStride(now - tCapture0, m_lastCaptureEnded > 0 ? now - m_lastCaptureEnded : 0);
+			m_lastCaptureEnded = now;
 			return;
 		}
 		bytes.clear();   /* fall through to a whole state rather than lose the frame */
 	}
 
+	/* The same for a whole machine: an anchor is the same size every time it is
+	 * taken, so the one before it is the measure. */
+	if (m_lastAnchorBytes != 0) bytes.reserve(m_lastAnchorBytes + (m_lastAnchorBytes >> 4));
 	m_host->wbx_save_state(m_obj, sinkWrite, reinterpret_cast<uintptr_t>(&sink), &r);
 	if (!r.ok()) return;   /* a missed capture only costs a longer replay later */
+	m_lastAnchorBytes = bytes.size();
 	Segment seg;
 	seg.anchorFrame = frame;
 	seg.bytes = bytes.size();
@@ -646,6 +747,9 @@ void StateHistory::captureOnce(int64_t frame, const uint8_t *note, size_t noteLe
 	coarsen(frame);
 	evict();
 	evictDisk();
+	const double now = nowSeconds();
+	tuneStride(now - tCapture0, m_lastCaptureEnded > 0 ? now - m_lastCaptureEnded : 0);
+	m_lastCaptureEnded = now;
 }
 
 /* Drops one stretch and gives back whatever it was holding - memory, room in

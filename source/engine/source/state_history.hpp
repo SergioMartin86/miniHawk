@@ -296,6 +296,10 @@ private:
 	 * frame rather than a stall when the budget fills. */
 	void coarsen(int64_t newestFrame);
 
+	/* Watches what a capture costs against what the run costs and moves the
+	 * near band's stride to keep the first a bounded share of the second. */
+	void tuneStride(double captureSeconds, double wallSeconds);
+
 	/* Drops the landing at `frame` if the band it has fallen into does not want
 	 * one there, by composing its link into the one after it. The landings a
 	 * band keeps are the multiples of its stride, which makes this idempotent
@@ -350,6 +354,36 @@ private:
 
 	std::string m_spillDir;
 	int64_t m_newest = -1;             /* the last frame captured: where the bands are measured from */
+
+	/* ---- how much of the run the history is allowed to cost ----
+	 *
+	 * The near band used to keep EVERY frame, whatever a frame cost to keep.
+	 * On a light machine that is right: a Game Boy's frame is 300KB and taking
+	 * it is a fraction of a millisecond against three milliseconds of
+	 * emulation. On a heavy one it is not: Ruffle rewrites twenty megabytes a
+	 * frame, and storing that took as long again as running the frame - the
+	 * greenzone doubled the cost of playing, which is exactly the complaint
+	 * that prompted this.
+	 *
+	 * So the history measures what it costs and spends a bounded share of the
+	 * run. When capture is taking more than kCostShare of wall time, the near
+	 * band gets a STRIDE: frames between landings are not stored, and the epoch
+	 * simply stays open across them, so the next delta describes all of them at
+	 * once. Reaching a frame that was not stored costs replaying at most a
+	 * stride of frames - which the bands already do further back, and which is
+	 * cheap precisely because the machine is fast to run.
+	 *
+	 * It is a ratio rather than a byte count because the trade is between two
+	 * costs, not between bytes and anything: a delta worth 20MB is dear on a
+	 * core whose frame is three milliseconds and cheap on one whose frame is a
+	 * tenth of a second. */
+	static constexpr double kCostShare = 0.15;
+	int64_t m_nearStride = 1;
+	double m_captureSeconds = 0;       /* exponential means, in seconds */
+	double m_wallSeconds = 0;
+	double m_lastCaptureEnded = 0;
+	int64_t m_capturesSinceTuned = 0;
+	uint64_t m_lastAnchorBytes = 0;    /* what to ask for before taking the next one */
 
 	/* the stretch being settled, if any (see settleSpilled) */
 	struct Settling

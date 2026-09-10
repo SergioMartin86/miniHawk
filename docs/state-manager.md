@@ -874,6 +874,49 @@ landed on is reported, so the session and the frontend follow the machine rather
 than believing the number they had. If even the anchor will not load, nothing
 here can help and it says so: that machine has to be reloaded.
 
+## What the history is allowed to cost (user-reported, 2026-09-10)
+
+Reported from use: Flash under Ruffle runs slowly in Chimera while vanilla
+Ruffle does not. Measured on the GPU box with `CHIMERA_LOOP_TRACE=1`, playing
+New Star Soccer, milliseconds per frame:
+
+| | before | after |
+|---|---|---|
+| the machine (`advance`) | 58.8 | 32.9 |
+| the greenzone (`movie`) | 52.4 | 14.8 |
+| the whole frame | 112.0 | 48.4 |
+
+Two separate causes, and the second is this file's.
+
+**The history was capturing twenty megabytes a frame.** Ruffle rewrites its
+working set every frame - `MB_TRACE_DELTA` says only three per cent of those
+pages are allocator churn and three quarters are hot, so it is real writing and
+no tracking cleverness helps. Storing it took as long again as running the
+frame, and six hundred frames came to twelve gigabytes.
+
+The near band used to keep EVERY frame, whatever a frame cost to keep. That is
+right on a light machine - a Game Boy's delta is 300KB and taking it is a
+fraction of a millisecond against three of emulation - and wrong on a heavy one.
+So the history now measures what capture costs against what the run costs and
+gives the near band a STRIDE when capture passes 15% of wall time: the frames
+between landings are not stored, the epoch stays open across them, and the next
+delta describes them all at once. Reaching a frame that was not stored costs
+replaying at most a stride of them, which is what the further bands have always
+done.
+
+Two guards keep it from thinning where it should not. A capture that is quick in
+absolute terms - under two milliseconds - never moves the stride however large
+its share, because a machine nobody is waiting for should keep the near band's
+promise. And the stride is re-examined only every thirty captures and moved one
+step at a time, because the thing measured is noisy by nature: one frame loads a
+level, the next draws a menu.
+
+**And the delta was being copied twice.** The sink appended each page as the
+sandbox handed it over, so a vector growing by doubling copied everything it
+already held, repeatedly, inside every capture. The sandbox knows how many pages
+the frame touched before any of them are read (`wbx_get_epoch_page_count`), so
+the room is asked for once; an anchor asks for what the last anchor took.
+
 ## Phasing
 
 Each phase is separately gated and separately landable.
