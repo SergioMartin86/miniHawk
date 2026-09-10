@@ -272,6 +272,42 @@ static bool holdsPinned(const std::set<int64_t> &pins, int64_t from, int64_t to)
 	return it != pins.end() && *it <= to;
 }
 
+/* Which stretch to give up, when one has to go.
+ *
+ * Two rules, and the first is not negotiable: the stretch holding the earliest
+ * frames NEVER goes. Going back to a frame the greenzone no longer covers means
+ * starting from the beginning and replaying to it, and that is only possible
+ * while the beginning is still there. The disk budget used to drop the oldest
+ * stretch in the file whichever it was - the first one included - and once it
+ * had, nothing could reach the early movie at all: the piano roll would try,
+ * find no state at or before the target, and seek forward forever. The newest
+ * never goes either; it is where the work is.
+ *
+ * The second rule is what is left AFTER the budget has taken its share:
+ * breadcrumbs. Dropping the oldest every time empties the far past first, so a
+ * long session ends up with everything huddled around the playhead and a return
+ * to the middle costs a replay from zero. Instead the stretch that goes is the
+ * one whose absence widens the gap between its neighbours least - which, applied
+ * repeatedly, thins the run evenly and leaves anchors spread across the whole
+ * movie. Getting back to any frame then costs one anchor and a bounded replay.
+ *
+ * A stretch somebody pinned a frame in is not a candidate at all: a pin is a
+ * promise that frame can still be reached. */
+size_t StateHistory::chooseVictim(bool spilled) const
+{
+	size_t best = m_segments.size();
+	int64_t bestGap = 0;
+	for (size_t i = 1; i + 1 < m_segments.size(); i++)
+	{
+		const Segment &s = m_segments[i];
+		if (s.spilled != spilled) continue;
+		if (holdsPinned(m_pinned, s.anchorFrame, s.lastFrame())) continue;
+		const int64_t gap = m_segments[i + 1].anchorFrame - m_segments[i - 1].anchorFrame;
+		if (best == m_segments.size() || gap < bestGap) { best = i; bestGap = gap; }
+	}
+	return best;
+}
+
 /* The number given is what the FILE may weigh, because that is the number
  * somebody watching a disk fill up cares about and the only one they can check.
  *
@@ -299,14 +335,7 @@ void StateHistory::evictDisk()
 	bool dropped = false;
 	while (m_spillLive > m_diskBudget)
 	{
-		size_t victim = m_segments.size();
-		for (size_t i = 0; i + 1 < m_segments.size(); i++)
-		{
-			if (!m_segments[i].spilled) continue;
-			if (holdsPinned(m_pinned, m_segments[i].anchorFrame, m_segments[i].lastFrame())) continue;
-			victim = i;
-			break;
-		}
+		const size_t victim = chooseVictim(true);
 		if (victim == m_segments.size()) break;   /* nothing left that may go */
 		forgetSegment(victim);
 		dropped = true;
@@ -1184,21 +1213,14 @@ void StateHistory::evict()
 			victim->links.pop_back();
 			continue;
 		}
-		/* nothing left to thin: drop the oldest that is neither the first nor
-		 * the newest, and give up when only those remain. A spilled segment
-		 * costs nothing in memory, so dropping one would not help. */
-		size_t drop = 0;
-		for (size_t i = 1; i + 1 < m_segments.size(); i++)
-		{
-			if (m_segments[i].spilled) continue;
-			/* a stretch somebody pinned a frame in is spilled, never dropped -
-			 * and if it could not be spilled it stays, and the budget is missed
-			 * rather than the promise */
-			if (holdsPinned(m_pinned, m_segments[i].anchorFrame, m_segments[i].lastFrame())) continue;
-			drop = i;
-			break;
-		}
-		if (drop == 0) return;
+		/* Nothing left to thin: give a whole stretch up, chosen to keep what
+		 * remains spread over the run (chooseVictim), and stop when there is
+		 * nothing that may go. A spilled segment costs nothing in memory, so
+		 * dropping one would not help - and a stretch somebody pinned a frame in
+		 * is spilled, never dropped: if it could not be spilled it stays, and
+		 * the budget is missed rather than the promise. */
+		const size_t drop = chooseVictim(false);
+		if (drop == m_segments.size()) return;
 		forgetSegment(drop);
 	}
 }

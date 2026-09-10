@@ -532,6 +532,11 @@ namespace Chimera.Client.GUI
 			GoToFrame(0);
 			int lastState = 0;
 			int goToFrame = CurrentTasMovie.States.Nearest(int.MaxValue);
+			if (goToFrame <= 0)
+			{
+				DialogController.ShowMessageBox("The state history holds nothing to check yet.", "Integrity Check");
+				return;
+			}
 			do
 			{
 				MainForm.FrameAdvance();

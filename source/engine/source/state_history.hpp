@@ -252,6 +252,12 @@ private:
 	void evictDisk();
 	bool compactSpill();
 
+	/* Which stretch to give up: never the first (the movie's beginning has to
+	 * stay reachable) nor the newest nor one holding a pin, and among the rest
+	 * the one whose absence widens the gap between its neighbours least. See
+	 * its definition. m_segments.size() when nothing may go. */
+	size_t chooseVictim(bool spilled) const;
+
 	/* m_bytes -= n, and says so rather than wrapping if n is somehow more than
 	 * there is. Clamping keeps a mistake to one wrong number instead of a budget
 	 * that can never be met again. */

@@ -810,6 +810,46 @@ int main(void)
 		g_refuseDeltaLoadIn = -1;
 	}
 
+	{ // Frame zero is always reachable, whatever the budgets do. Going back to a
+	  // frame the greenzone no longer covers means starting from the beginning
+	  // and replaying, and that is only possible if the beginning is still
+	  // there; the encode path says so in as many words. The disk budget used to
+	  // drop the oldest stretch in the file whichever it was, the first one
+	  // included, and then nothing could reach the early movie at all.
+		const chimera::HostApi api = fakeHost();
+		g_machine = Machine{};
+		std::filesystem::remove_all("work-history-zero");
+		std::filesystem::create_directories("work-history-zero");
+		chimera::StateHistory h;
+		h.configure(&api, nullptr, 256);            /* tiny: it must spill at once */
+		h.bands(2, 6, 3, 12, 6);
+		h.spillTo("work-history-zero");
+		h.diskBudget(4096);                          /* and the file must overflow too */
+		std::array<uint8_t, Machine::kCells> atZero{};
+		std::memcpy(atZero.data(), g_machine.cell, Machine::kCells);
+		h.capture(0);
+		for (int64_t f = 1; f <= 400; f++)
+		{
+			h.beforeAdvance();
+			advance(f);
+			h.capture(f);
+			assert(h.nearest(0) == 0);           /* at every step, not just the end */
+		}
+		assert(h.restore(0, error));
+		assert(std::memcmp(g_machine.cell, atZero.data(), Machine::kCells) == 0);
+
+		/* and the frames it does keep are spread over the run rather than all
+		 * huddled at the end: going back to the middle must not mean replaying
+		 * everything from zero */
+		int64_t covered = 0;
+		for (int64_t f = 0; f <= 400; f += 20)
+		{
+			if (h.nearest(f) >= 0 && f - h.nearest(f) <= 100) covered++;
+		}
+		assert(covered >= 12);
+	}
+	std::filesystem::remove_all("work-history-zero");
+
 	{ // Spill files a dead session left behind are swept when a history is
 	  // pointed at the directory: they are named for the process that made
 	  // them, so nothing else would ever remove them, and they are gigabytes.

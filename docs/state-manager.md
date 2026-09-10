@@ -824,6 +824,39 @@ What they found, all fixed:
   without ever becoming dirty again and every anchor after would have omitted
   it. Cooling is enforced wherever the dirty bit is written.
 
+### The beginning of the run is never given up, and what survives is spread (user-reported, 2026-09-10)
+
+Reported from use: a rewind to a part of the movie the greenzone no longer
+covered simply did not happen, and something crashed along the way.
+
+**The beginning was being dropped.** The disk budget gave up the oldest stretch
+in the file whichever one it was, the first one included. Once frame zero was
+gone, `nearest()` answered -1 for every early frame, and the piano roll's
+`GoToFrame` - finding nothing to load - unpaused and seeked FORWARD from a frame
+already past the target, which arrives nowhere. That is the whole symptom: a
+rewind that does nothing and says nothing. The encode path had been relying on
+the same invariant in as many words ("Frame zero always has a state"), so it
+would have thrown instead.
+
+The first stretch is now never a candidate for eviction, on disk as in memory.
+Going back to a frame nothing covers means starting from the beginning and
+replaying to it, and that is only possible while the beginning is there.
+
+**And what survives is spread over the run, not huddled at the playhead.**
+Dropping the oldest every time empties the far past first, so a long session
+ends with everything near the present and a return to the middle costs a replay
+from zero. The stretch that goes is now the one whose absence widens the gap
+between its neighbours least, which applied repeatedly thins the run evenly and
+leaves anchors - breadcrumbs - across the whole movie. Measured on a Game Boy
+under a 64MB memory budget and a 64MB disk budget, jumping 4000 frames back
+repeatedly through 9000 frames: every jump landed within a few hundred frames of
+its target, and the run survived.
+
+The piano roll also refuses a backward seek it cannot serve rather than starting
+one that cannot end, and says why. With the invariant above that should be
+unreachable; a seek that silently never arrives is not a thing to leave possible
+on the strength of an invariant somewhere else.
+
 ### A restore that cannot be walked no longer leaves a machine that never existed
 
 The worst of them, and the one that is a change in behaviour rather than a fix.

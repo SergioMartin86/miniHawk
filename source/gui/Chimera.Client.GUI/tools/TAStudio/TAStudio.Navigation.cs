@@ -29,6 +29,20 @@ namespace Chimera.Client.GUI
 			// Asking where the history would land is free and does not move the
 			// machine, so the decision to load happens before anything is loaded.
 			var closestState = PriorStateForFramebuffer(frame);
+			if (closestState < 0 && frame < Emulator.Frame)
+			{
+				// Backwards, with nothing stored at or before the target. The
+				// seek below would unpause and play FORWARD, at a frame already
+				// past the one asked for, and arrive nowhere - which reads as the
+				// piano roll refusing to rewind and never saying why. The history
+				// keeps the beginning of the run precisely so this cannot happen
+				// (docs/state-manager.md), so if it ever does, say so and stay put
+				// rather than start a seek that cannot end.
+				StopSeeking();
+				MessageStatusLabel.Text = $"Cannot go back to frame {frame}: the state history has nothing at or before it.";
+				MainForm.AddOnScreenMessage($"Nothing stored at or before frame {frame}");
+				return;
+			}
 			if (closestState >= 0 && (frame < Emulator.Frame || (closestState > Emulator.Frame && !skipLoadState)))
 			{
 				LoadStateAt(closestState);

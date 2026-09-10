@@ -1713,3 +1713,45 @@ subject's fault.
 of their own, so they say nothing about miniBox's composition or about a real
 core. That is what the synthetic witness, the ares gate and the rerecord suites
 are for, and all of them were run.
+
+## Going back has to be possible even where the greenzone gave up (user-reported, 2026-09-10)
+
+Reported from use: a rewind to a part of the movie the greenzone no longer
+covered did nothing at all, and something crashed at some point.
+
+The cause was one line of policy. The disk budget dropped the oldest stretch in
+the spill file whichever one it was, so the stretch holding frame zero went like
+any other; and with nothing stored at or before the target, the piano roll's
+GoToFrame loaded nothing and then unpaused to seek forward from a frame already
+past the one asked for. It cannot arrive. From the outside that is a rewind that
+does nothing, with no message.
+
+Three things follow, and the order matters.
+
+**The beginning of the run is not a cache entry.** Everything else the history
+holds is an optimisation - lose it and you replay - but frame zero is what makes
+replaying possible at all. It is never evicted now, in memory or on disk. The
+encode path had already written the invariant down ("Frame zero always has a
+state") and would have thrown; the piano roll trusted it silently.
+
+**What survives should be spread, not recent.** Keeping the newest and dropping
+the oldest is the obvious policy and it is wrong for a TAS: it empties the far
+past first, so the further back you want to go the less there is to go on, until
+the middle of a long movie costs a replay from zero. The stretch given up is now
+the one whose absence widens the gap between its neighbours least. Applied
+repeatedly that thins the whole run evenly and leaves anchors across it - the
+breadcrumbs the report asked for - so any frame costs one anchor load and a
+bounded replay. It is the same thought the bands already apply to landings,
+applied to whole stretches.
+
+**A seek that cannot arrive is not started.** The guard above should make it
+unreachable, but "unreachable because of an invariant elsewhere" is how this got
+shipped in the first place, so the piano roll now says what is wrong and stays
+where it is.
+
+What is NOT done, and is the honest limit: if a project's history is lost or
+belongs to another machine, the frontend still has no way to rebuild the machine
+from power-on and replay - it starts from wherever the emulator is. Frame zero
+being kept means that case does not arise while a session is running, but a
+project reopened with no usable history has only the frames it captures from
+there. Rebooting the core and replaying the movie is the missing piece.
