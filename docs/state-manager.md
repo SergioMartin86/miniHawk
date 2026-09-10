@@ -211,6 +211,24 @@ The legs that have to exist:
   user's crash and the empty greenzone would both have failed.
 - **Eviction keeps every frame reachable.** Under budget pressure the history
   coarsens; no frame may become unreachable, and the anchor never goes.
+- **An edit replayed is an edit typed.** Play to X, seek back to X-n, put
+  DIFFERENT input in from there, and carry on past X to X+Y: the machine at
+  X+Y must be the machine a straight run of the edited movie reaches. This is
+  the promise a tool-assisted run actually rests on, and it is the one leg
+  `--seek` cannot stand in for - a seek replays the SAME inputs, so it passes
+  with the edit path broken.
+
+  Two things it needs to be worth running. The comparison must be the
+  MACHINE - the buses the core publishes, and the picture - and not the
+  sandbox's arena state: the arena carries the guest heap as well, and two
+  identical runs already differ there, so comparing it proves nothing in either
+  direction. And the edit has to matter: an edit whose input the game ignores
+  makes the whole comparison vacuous, so the input is calibrated per game
+  (press what the game notices, measured, not assumed) and the run is rejected
+  when the edited movie and the plain one reach the same machine anyway.
+
+  `chimera-run --play <n> --seek <f> --edit-from <movie> --final-buses <file>`
+  is the shape.
 
 ## What the first phase measured
 

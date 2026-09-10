@@ -7,7 +7,7 @@
  * the managed frontend produces.
  *
  *   chimera-run <package> <rom> <movie.txt>
- *       [--rerecord] [--seek <frame>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>]
+ *       [--rerecord] [--seek <frame>] [--play <n>] [--edit-from <movie>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>]
  *       [--settings <json>]
  *       [--dump <domain>=<path>]... [--export-savedata <dir>] [--meta <path>]
  *   chimera-run --project <p.chimeraProject> <package>
@@ -172,6 +172,14 @@ int main(int argc, char **argv)
 	std::string savedataDir;
 	std::string projectPath;
 	std::string historyIn, historyOut;
+	/* --play/--edit-from/--final-state: the re-recording shape. Play a while,
+	 * seek back, put a DIFFERENT movie in from that frame on, and carry on past
+	 * where the first pass reached. What comes out has to be what a straight run
+	 * of the edited movie produces - that is the whole promise a tool-assisted
+	 * run rests on, and nothing else here tests it, because --seek replays the
+	 * same inputs and can pass with the edit path broken. */
+	int64_t playFrames = -1;
+	std::string editFrom, finalStatePath, finalShot, finalBuses;
 	std::vector<std::string> fileDirs;
 	bool allowCoreMismatch = false;
 	bool wantGpu = false;
@@ -181,6 +189,11 @@ int main(int argc, char **argv)
 		std::string arg = argv[i];
 		if (arg == "--rerecord") rerecord = true;
 		else if (arg == "--seek" && i + 1 < argc) seekFrame = std::atoll(argv[++i]);
+		else if (arg == "--play" && i + 1 < argc) playFrames = std::atoll(argv[++i]);
+		else if (arg == "--edit-from" && i + 1 < argc) editFrom = argv[++i];
+		else if (arg == "--final-state" && i + 1 < argc) finalStatePath = argv[++i];
+		else if (arg == "--final-screenshot" && i + 1 < argc) finalShot = argv[++i];
+		else if (arg == "--final-buses" && i + 1 < argc) finalBuses = argv[++i];
 		else if (arg == "--bands" && i + 1 < argc) bands = argv[++i];
 		else if (arg == "--stop-at-seek") stopAtSeek = true;
 		else if (arg == "--record" && i + 1 < argc) recordPath = argv[++i];
@@ -231,7 +244,7 @@ int main(int argc, char **argv)
 	bool projectMode = !projectPath.empty();
 	if (projectMode ? packagePath == nullptr : moviePath == nullptr)
 	{
-		std::fprintf(stderr, "usage: chimera-run <package> <rom> <movie.txt> [--rerecord] [--seek <frame>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>] [--settings <json>] [--dump <domain>=<path>]... [--firmware <id>=<path>]... [--state <path>] [--frames <n>] [--save-state <frame>=<path>]... [--screenshot <frame>=<path>]... [--export-savedata <dir>] [--meta <path>] [--gpu]\n"
+		std::fprintf(stderr, "usage: chimera-run <package> <rom> <movie.txt> [--rerecord] [--seek <frame>] [--play <n>] [--edit-from <movie>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>] [--settings <json>] [--dump <domain>=<path>]... [--firmware <id>=<path>]... [--state <path>] [--frames <n>] [--save-state <frame>=<path>]... [--screenshot <frame>=<path>]... [--export-savedata <dir>] [--meta <path>] [--gpu]\n"
 			"       chimera-run --project <p.chimeraProject> <package> [--files <dir>]... [--allow-core-mismatch] [the same run flags]\n");
 		return 1;
 	}
@@ -566,7 +579,8 @@ int main(int argc, char **argv)
 		state.assign(p, p + len);
 	}
 
-	for (int64_t i = 0; i < frames; i++)
+	const int64_t firstPass = playFrames >= 0 && playFrames < frames ? playFrames : frames;
+	for (int64_t i = 0; i < firstPass; i++)
 	{
 		if (rerecord && ce_session_load_state(session, state.data(), state.size()) != 0)
 		{
@@ -628,6 +642,34 @@ int main(int argc, char **argv)
 		 * the history actually holds frame N - and a core whose ending is
 		 * decided by its inputs answers the first question yes either way. */
 		if (stopAtSeek) frames = seekFrame;
+		/* The edit itself. A frontend changes the entries a person retyped and
+		 * throws away everything the old ones produced; this puts the whole
+		 * edited movie in, which is the same thing said in one go. The
+		 * invalidate is what makes the forward seek REPLAY rather than restore
+		 * the ending it already had. */
+		if (!editFrom.empty())
+		{
+			std::vector<uint8_t> editText;
+			if (!readWholeFile(editFrom.c_str(), editText))
+			{
+				return fail(metaPath, "could not read " + editFrom);
+			}
+			ce_movie_log *edited = ce_movie_log_new();
+			if (ce_movie_log_parse(edited, reinterpret_cast<const char *>(editText.data()),
+					editText.size()) != 0)
+			{
+				return fail(metaPath, std::string("edit movie: ") + ce_movie_log_last_error(edited));
+			}
+			if (ce_movie_log_count(edited) < frames)
+			{
+				return fail(metaPath, "the edit movie is shorter than the run");
+			}
+			if (ce_session_movie_load(session, edited) != 0)
+			{
+				return fail(metaPath, "could not load the edited movie");
+			}
+			ce_movie_log_free(edited);
+		}
 		ce_session_greenzone_invalidate(session, seekFrame);
 		if (!stopAtSeek)
 		{
@@ -707,6 +749,54 @@ int main(int argc, char **argv)
 			if (!ok) return fail(metaPath, "could not write " + path);
 		}
 		std::printf("savedata=%d\n", files);
+	}
+
+	if (!finalShot.empty()
+		&& !writeTga(finalShot, ce_session_video(session),
+			ce_session_video_width(session), ce_session_video_height(session)))
+	{
+		return fail(metaPath, "could not write " + finalShot);
+	}
+
+	if (!finalBuses.empty())
+	{
+		/* Every bus the core publishes, end to end, where the run finished.
+		 * This is the machine's own memory rather than the sandbox's arena -
+		 * two runs that reach the same machine agree here byte for byte, which
+		 * the arena does not promise. */
+		std::string text;
+		for (int32_t b = 0; b < ce_session_bus_count(session); b++)
+		{
+			int64_t size = ce_session_bus_size(session, b);
+			text += ce_session_bus_name(session, b);
+			text += ' ';
+			uint64_t h = 1469598103934665603ull;
+			for (int64_t a = 0; a < size; a++)
+			{
+				h ^= (uint64_t)(uint8_t)ce_session_bus_peek(session, b, (int32_t)a);
+				h *= 1099511628211ull;
+			}
+			char line[64];
+			std::snprintf(line, sizeof line, "%016llx %lld\n", (unsigned long long)h, (long long)size);
+			text += line;
+		}
+		if (!writeWholeFile(finalBuses, reinterpret_cast<const uint8_t *>(text.data()), text.size()))
+		{
+			return fail(metaPath, "could not write " + finalBuses);
+		}
+	}
+
+	if (!finalStatePath.empty())
+	{
+		/* The whole machine where the run actually ended - after any seek and
+		 * replay, which is where --save-state cannot reach. */
+		uint64_t len = 0;
+		const uint8_t *p = ce_session_save_state(session, &len);
+		if (p == nullptr) return fail(metaPath, ce_session_last_error(session));
+		if (!writeWholeFile(finalStatePath, p, static_cast<size_t>(len)))
+		{
+			return fail(metaPath, "could not write " + finalStatePath);
+		}
 	}
 
 	if (!historyOut.empty() && ce_session_history_save(session, historyOut.c_str(), "chimera-run") != 0)
