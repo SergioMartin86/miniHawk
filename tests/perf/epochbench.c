@@ -32,7 +32,9 @@ int main(int argc, char **argv) {
 	uintptr_t mb = argc > 1 ? (uintptr_t)atoi(argv[1]) : 512;
 	size_t touch = argc > 2 ? (size_t)atoi(argv[2]) : 256;
 	int frames = argc > 3 ? atoi(argv[3]) : 200;
-	(void)argc;
+	/* pages written EVERY frame, at fixed places: the framebuffer and the
+	 * audio ring of a real machine, which the hot-page path exists for */
+	size_t hot = argc > 4 ? (size_t)atoi(argv[4]) : 0;
 
 	uintptr_t size = mb << 20;
 	mb_range a = { 0x36f00000000ull, size };
@@ -58,6 +60,10 @@ int main(int argc, char **argv) {
 			uintptr_t page = ((i * spread) + (size_t)f) % (size / MB_PAGESIZE);
 			((volatile uint8_t *)(b->addr.start + (page << MB_PAGESHIFT)))[0] = (uint8_t)f;
 		}
+		for (size_t i = 0; i < hot; i++) {
+			uintptr_t page = (i * spread + spread / 2) % (size / MB_PAGESIZE);
+			((volatile uint8_t *)(b->addr.start + (page << MB_PAGESHIFT)))[1] = (uint8_t)f;
+		}
 		double t2 = now();
 		g_written = 0;
 		mb_block_delta_save(b, true, sink, 0);
@@ -66,9 +72,9 @@ int main(int argc, char **argv) {
 		tWrite += t2 - t1;
 		tDelta += t3 - t2;
 	}
-	printf("%5lu MB arena, %6zu pages, %4zu written/frame:"
+	printf("%5lu MB arena, %6zu pages, %4zu written/frame, %4zu every frame:"
 		" open %6.3f ms  faults %6.3f ms  delta %6.3f ms  => %6.3f ms/frame\n",
-		(unsigned long)mb, (size_t)(size / MB_PAGESIZE), touch,
+		(unsigned long)mb, (size_t)(size / MB_PAGESIZE), touch, hot,
 		tBegin / frames * 1e3, tWrite / frames * 1e3, tDelta / frames * 1e3,
 		(tBegin + tWrite + tDelta) / frames * 1e3);
 	mb_block_free(b);

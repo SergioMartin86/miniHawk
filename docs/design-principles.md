@@ -1547,3 +1547,81 @@ below the stack pointer - was tested by marking every page near a faulting `rsp`
 and does not explain them; not one of the lost pages had ever been near one. It
 does not matter for the fix, because the fix is to stop depending on the bit, but
 it is not a solved mystery and should not be written up as one.
+
+## A seek costs what changed, not what the machine could be (user-asked, 2026-09-10)
+
+The ask was a deep look at the state history with speed as the only first-class
+goal: forward capture, going back to an older frame, and the rerecord that
+follows an edit. Memory and disk were welcome but second. Everything below was
+measured before it was touched, on ares - Super Mario 64 (an 18 ms frame, some
+300 pages written each) and a Game Boy (a 3 ms frame, some 70) - with the two
+benches in `tests/perf` for the parts a core would only blur.
+
+**Going back was proportional to the arena.** Restoring a frame is one anchor
+loaded and the deltas since it applied, and applying a delta ended by
+re-protecting every page there is: half a million lookups and syscalls on the
+ares arena, 2.3 ms for a delta of sixteen pages, paid once per link. A restore
+of 34 links took 59 ms on the N64 and 54 on the Game Boy, whose deltas are a
+quarter the size - the same number, because the cost was not in the delta. The
+anchor load walked the same half million pages to find the few that differed.
+Both are proportional to the change now: a delta refreshes only the pages in
+its two lists whose protection actually moved, and the load compares the
+machine's packed status and dirty maps against the state's a word at a time,
+skipping eight untouched pages per two loads. The same restores are 3 ms and
+2 ms; on the bench a 2 GB seek of 32 links went from 78 ms to 1.7.
+
+**Forward capture was paying a fault for what it already knew.** A page the
+machine writes every frame - the framebuffer, the audio ring, the CPU's own
+registers - faulted every frame, and was re-protected every frame so that it
+could fault again. On the N64 that was two thirds of what a captured frame
+cost. A page written a few frames in a row now goes HOT: it stays writable, and
+what it did is found by comparing it with a copy taken when the epoch opened.
+Four kilobytes copied and compared is a fraction of a microsecond; a fault is
+several. A hot page that stops changing cools after a few frames and is held
+like any other. The comparison is exact where a fault is not, so a page written
+with the bytes it already held stays out of the delta - the Game Boy's frames
+came out a third smaller, 700 of them 85 MB where they were 110. The bench's
+300 pages written every frame went from 1.75 ms to 0.06. On the real cores the
+history's share of the run fell from 9% to 5% (N64) and 14% to 11% (Game Boy);
+what is left is the pages a frame writes for the first time in a while, and
+those are what the fault is for.
+
+The invariant is the whole design: **a hot page's shadow is the page as the
+epoch opened.** Opening an epoch copies every hot page, because nothing in the
+sandbox can know whether the guest ran since the last delta was saved, and the
+two operations that rewrite pages from outside the guest - a state loaded, a
+delta applied - refresh the copy or cool the page as they go. It was tempting to
+refresh the shadow only when a delta was saved and skip the copy at open; that
+is wrong the first time the engine takes an anchor instead of a delta, because
+the frame between ran with no epoch and the shadow is a frame stale, and a page
+written back to its older bytes would then be left out of a delta whose start
+did not hold them. The copy costs a tenth of a millisecond and the reasoning
+costs nothing to keep.
+
+**The client was spending as much on a seek's frame as the core did.** A
+TAStudio seek runs the main loop once per frame, and every frame refreshed the
+piano roll, presented the picture and pumped the message queue - 5.9 ms a frame
+on the Game Boy, of which 3.0 was the machine. The headless mode already served
+the host on a wall-clock cadence instead of per frame, for exactly this reason;
+a seek now does the same: sixty times a second the window is live, shows where
+the seek has got to and takes a click to stop it, and the frames between are
+emulated and nothing else. The destination frame is always drawn and shown.
+`CHIMERA_LOOP_TRACE=1` prints where each frame's time goes, phase by phase,
+because this was found by measuring and the next such thing will be too.
+
+Two sharp edges. The frames a seek passes through get the tools' fast update
+whether or not it is a turbo seek, so a Lua script that counts frames during a
+seek needs "Run Lua during turbo" now as it already did during one. And on the
+Xvfb box this was measured on, a TURBO seek is slower than a plain one - the
+present and the message pump cost several milliseconds each there with no frame
+drawn, which reads like software GL and a progress bar repainting - and that is
+not understood; it is bounded to the sixty services a second now, and the GPU
+box has not been measured.
+
+**A bug was found on the way and is fixed:** applying a delta copied a page's
+baseline aside AFTER overwriting it, so a page this process had never written -
+one from a history file, applied to a machine that had not reached that frame
+itself - kept the delta's bytes as its sealed image, and every later return to a
+frame where the page was clean put those bytes back. In-process it could not
+happen, because every page in a delta had faulted on the recording run and had
+its copy already; a reopened project is exactly the case it could.

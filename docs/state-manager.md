@@ -321,6 +321,39 @@ What is still unmeasured, and should not be guessed at: the cost with the GPU
 renderer running rather than the null one, and the same numbers on rpcs3, whose
 state and churn are both larger.
 
+### What a restore costs now (2026-09-10)
+
+The 4.7 ms per link above was not the delta's cost; it was the arena's.
+Applying a delta ended by re-protecting every page in the block, and loading an
+anchor walked every page to find the ones that differed. `tests/perf/restorebench.c`
+isolates the two on the same synthetic arena as epochbench - an anchor of 8 MB,
+32 deltas, best of five - and the ares arena is the 2 GB row:
+
+| arena | written/delta | anchor load | a delta applied | the seek |
+|---|---|---|---|---|
+| 64 MB | 256 | 3.9 -> 4.2 ms | 0.25 -> 0.14 ms | 12.0 -> 8.7 ms |
+| 2 GB | 16 | 4.9 -> 1.4 ms | 2.29 -> 0.011 ms | 78.0 -> 1.7 ms |
+| 2 GB | 256 | 9.3 -> 5.2 ms | 2.72 -> 0.15 ms | 96.2 -> 10.0 ms |
+| 2 GB | 1024 | - -> 18.8 ms | - -> 0.65 ms | - -> 39.4 ms |
+
+Read the two 2 GB rows against each other: a sixteen-page delta cost 2.3 ms and
+a 256-page one 2.7, so 2.2 of it was the same whatever the delta held. It is
+proportional to the delta now. The anchor load is proportional to what the load
+changes, which is why it grows with the pages written per delta - those are the
+pages it has to put back.
+
+What changed: `mb_block_delta_apply` refreshes only the pages in its two lists
+whose protection actually moved (the same before/after comparison
+`mb_block_load_state` was already making), and the load compares the machine's
+status and dirty maps against the state's a word at a time - the two facts are
+kept packed, one byte a page, beside the forty-byte page array, so eight
+untouched pages cost two loads instead of eight struct reads.
+
+On the cores, traced with `CHIMERA_HISTORY_TRACE=1`, a restore of 34 links went
+from 59 ms to 3 on the N64 and from 54 ms to 2 on the Game Boy. That the two
+were the same number before, with deltas four times apart in size, was the
+whole diagnosis.
+
 ## The policy: dense near the work
 
 Editing a movie is local. The frames somebody steps through, rewinds over and
@@ -645,6 +678,77 @@ long and its numbers are the worst case; a real machine writes in clusters.
 The `faults` column fell too, by a quarter to a third, and that is the removal
 of reverse deltas showing up: the handler no longer copies a page every time a
 frame first writes it.
+
+### Hot pages: a write that happens every frame is not watched, it is read (2026-09-10)
+
+What was left after the bookkeeping was the faults, and on a real machine most
+of them are the same pages every frame: a framebuffer, an audio ring, the CPU's
+own registers. Each paid a fault, and a re-protection at the next epoch so that
+it could fault again, to report what was already known. On the N64 that was two
+thirds of a captured frame.
+
+A page written a few frames in a row (`HOT_AFTER`, three) goes hot: it stays
+writable, and what it did is found at delta time by comparing it with a copy
+taken when the epoch opened. A hot page unchanged for a few frames
+(`COLD_AFTER`, eight) cools and is held again like any other. The comparison is
+exact where a fault is not: a page written with the bytes it already held is
+left out of the delta. The bench's fourth argument is pages written every frame
+at fixed places:
+
+| arena | scattered/frame | every frame | open | faults | delta | total |
+|---|---|---|---|---|---|---|
+| 2 GB | 300 | 0 | 0.50 | 1.21 | 0.03 | **1.75 ms** |
+| 2 GB | 100 | 200 | 0.22 | 0.36 | 0.04 | **0.63 ms** |
+| 2 GB | 0 | 300 | 0.04 | 0.00 | 0.02 | **0.06 ms** |
+| 256 MB | 20 | 50 | 0.04 | 0.07 | 0.01 | **0.11 ms** |
+
+On the cores, the history's share of a run: N64 9% -> 5%, Game Boy 14% -> 11%.
+The Game Boy's deltas came out a third smaller (287 KB -> 185 KB a frame, 700
+frames 110 MB -> 85 MB) from the exactness alone; the N64's barely moved, its
+writes are real. What remains is the pages a frame writes for the first time in
+a while, which is what a fault is for.
+
+The invariant, and the reason it is safe: a hot page's shadow is the page AS THE
+EPOCH OPENED. Opening an epoch copies every hot page - the sandbox cannot know
+whether the guest ran since the last delta was saved, and it does run, for the
+frame before an anchor - and a state load or a delta applied refreshes the copy
+or cools the page as it rewrites it. A page whose allocation changes cools; so
+does one a load makes clean, because clean pages are held for the baseline's
+sake. Windows stacks are never hot: they already have a shadow of their own,
+kept against the sealed image rather than the epoch. Shadows come from the same
+mapped pool as baseline snapshots, capped at 32768 pages (`HOT_MOST`).
+
+## What the client adds to a frame, and why a seek is served on a clock (2026-09-10)
+
+Everything above is the engine. A TAStudio seek runs the frontend's main loop
+once per emulated frame, and with `CHIMERA_LOOP_TRACE=1` the loop says where
+each frame's wall time goes, per phase, every 300 frames. A Game Boy seek of
+1200 frames with the piano roll open, headless under Xvfb on the dev box:
+
+| | advance | tools after | render | messages | other | per frame |
+|---|---|---|---|---|---|---|
+| before | 3.0 | 1.15 | 0.65 | 0.60 | 0.5 | **5.9 ms** |
+| after | 3.0 | 0.50 | 0.53 | 0.40 | 0.4 | **4.85 ms** |
+
+`advance` is the machine plus its capture - the same 3.0 ms `chimera-run`
+shows - and everything else was the client: the piano roll refreshed, the
+picture presented, the message queue pumped, per frame, for frames nobody
+could look at. Headless mode already served the host on a wall-clock cadence
+instead of per frame, for the same reason; a seek does the same now. Sixty
+times a second the window is live, shows where the seek has got to and takes a
+click to stop it; the frames between get the tools' fast update and nothing
+else, and are not drawn - which on a console with a 3D chip is most of the
+frame. The destination frame is always drawn and shown. What remains in the
+`after` row is those sixty services, each a real present and a real refresh on
+a software GL.
+
+Two things to know. The frames a seek passes through get the fast update
+whether or not it is a turbo seek, so a Lua script that counts frames during a
+seek wants "Run Lua during turbo", as it already did for a turbo one. And on
+this Xvfb box a TURBO seek is slower than a plain one - the present and the
+message pump cost several milliseconds each with no frame drawn - which is not
+understood, is bounded to sixty a second now, and has not been measured on the
+GPU box.
 
 ## Phasing
 

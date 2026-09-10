@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./run-epochbench.sh                      # the sweep the doc table reports
-#   ./run-epochbench.sh <MB> <pages> [frames]  # one measurement
+#   ./run-epochbench.sh <MB> <pages> [frames] [pages every frame]  # one measurement
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
