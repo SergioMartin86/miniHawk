@@ -289,14 +289,20 @@ namespace Chimera.Client.Common
 			{
 				if (p.FileSlot(i) is not "support") { primary = i; break; }
 			}
-			if (primary < 0) throw new CoreLoadException("the project lists no game file");
+			// A project MAY hold no game at all. Two of the ares core's machines
+			// are worth starting that way - a PlayStation reaches its own BIOS
+			// menu, an MSX its own BASIC - and a core that boots without a
+			// medium says so by declaring its rom slot with no minimum. The
+			// engine mounts the slot either way; what the core sees is a file of
+			// zero length, which is how it tells an empty drive from a full one.
+			var haveGame = primary >= 0;
 			// A project's files are mounted from WHERE THEY LIE. Nothing here reads
 			// one: a PS2 disc is over four gigabytes and a byte[] cannot reach two,
 			// so loading them was both wasteful and, past that size, impossible.
 			string PathOf(int i) => p.FileSourcePath(i) is { Length: > 0 } where
 				? where
 				: throw new CoreLoadException($"'{p.FileName(i)}' has not been resolved");
-			var primaryPath = PathOf(primary);
+			var primaryPath = haveGame ? PathOf(primary) : "";
 
 			var factory = CoreRegistry.Instance.AllFactories.FirstOrDefault(f => f.CoreName == p.CoreName)
 				?? throw new CoreLoadException($"the project's core '{p.CoreName}' is not loaded");
@@ -309,13 +315,16 @@ namespace Chimera.Client.Common
 			{
 				extras.Add(new(p.FileName(i), PathOf(i)));
 			}
-			extras.Add(new("rom.name", System.Text.Encoding.UTF8.GetBytes(p.FileName(primary))));
-			var primarySlot = p.FileSlot(primary);
-			var n = 2;
-			for (var i = primary + 1; i < p.FileCount; i++)
+			if (haveGame)
 			{
-				if (p.FileSlot(i) != primarySlot) continue;
-				extras.Add(new($"rom{n++}", PathOf(i)));
+				extras.Add(new("rom.name", System.Text.Encoding.UTF8.GetBytes(p.FileName(primary))));
+				var primarySlot = p.FileSlot(primary);
+				var n = 2;
+				for (var i = primary + 1; i < p.FileCount; i++)
+				{
+					if (p.FileSlot(i) != primarySlot) continue;
+					extras.Add(new($"rom{n++}", PathOf(i)));
+				}
 			}
 
 			game = new GameInfo
@@ -325,10 +334,10 @@ namespace Chimera.Client.Common
 				// an unwritten project's stand-in path says nothing about the game
 				Name = p.Title.Length is not 0
 					? p.Title
-					: (Path.GetFileNameWithoutExtension(p.FileName(primary)) is { Length: not 0 } fileName
+					: (haveGame && Path.GetFileNameWithoutExtension(p.FileName(primary)) is { Length: not 0 } fileName
 						? fileName
 						: Path.GetFileNameWithoutExtension(path)),
-				Hash = p.FileActualSha1(primary),
+				Hash = haveGame ? p.FileActualSha1(primary) : "",
 				System = factory.SystemIds[0],
 			};
 
@@ -345,7 +354,7 @@ namespace Chimera.Client.Common
 						// path (a project is not a game file)
 						RomData = null,
 						FileData = null,
-						Extension = Path.GetExtension(p.FileName(primary)),
+						Extension = haveGame ? Path.GetExtension(p.FileName(primary)) : "",
 						RomPath = primaryPath,
 						Game = game,
 					},
