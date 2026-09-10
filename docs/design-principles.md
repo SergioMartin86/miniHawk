@@ -1477,3 +1477,58 @@ One sharp edge paid for on the way: the sandbox's file system is flat, so
 `hostRoot` is always empty, and upstream's `host:` resolver leaves the path
 empty when it is - which made the machine unable to read the very ELF it had
 just been told to boot. In a flat file system a name IS its path.
+
+## A guard page is not a write barrier on Windows (2026-09-10)
+
+Seeking through the history gave back a machine the plain run never had. Only
+on Windows, only with ares, and only through the greenzone: saving and loading a
+full state every frame was exact, so the fault was in the page-level dirty
+tracking rather than in the state format. Sixty-eight bytes of Game Boy work RAM
+were wrong after seeking two hundred frames back over a four hundred frame run,
+and further back than about four hundred frames the guest jumped to address
+zero.
+
+**What the sandbox was doing.** miniBox tracks writes by protecting memory: a
+page that matches the baseline is read-only, the first write faults, the handler
+copies the pre-image and lets the write through. Windows cannot do that for the
+page the stack pointer is in - it delivers an exception by pushing a context
+record onto the faulting thread's own stack, so the kernel's write fails too and
+the process dies with no handler having run. ares hands every emulated component
+a coroutine stack out of malloc, so its stacks looked like ordinary memory and it
+died on its first frame. The fix at the time was to protect every clean page
+with the guard bit instead, because the kernel clears that bit BEFORE it raises,
+which makes the fault deliverable wherever the stack is.
+
+**Why that was wrong.** A guard bit can also be cleared with NO exception
+delivered at all. Instrumenting the arena found a few hundred pages an epoch
+that miniBox had told Windows to protect (`VirtualProtect` returned success, and
+querying straight afterwards confirmed the bit was set) and that later read back
+as plain PAGE_READWRITE with no handler ever having run for them. Every write to
+such a page after that is invisible, and the page still says clean - so the
+frame's delta does not carry it and the baseline it will be reverted to is the
+wrong one. A read-only page cannot fail that way: nothing but the sandbox itself
+can make it writable.
+
+**So the contract changed instead: a guest says where its stacks are.** Ordinary
+memory is read-only-when-clean on Windows exactly as it is on Linux, and MAP_STACK
+is how a guest asks for a stack. ares' libco asks for its coroutine stacks with
+mmap now (patch 0015 in that core) instead of taking them from malloc. A stack
+page on Windows is then never protected and never clean: its baseline is captured
+when it is allocated and again at seal, and it goes into every savestate and every
+delta whether or not the frame touched it. Seven hundred frames of Game Boy cost
+268MB of history that way against 110MB on Linux - that is the price of not being
+able to see a stack write, and it is only paid by a core that has stacks.
+
+**Two smaller things fell out of the same measurement.** An epoch marked a stack
+page eagerly and then dropped it from the set it re-examines, so a stack was
+captured by one frame and never looked at again; and `VirtualQuery` was being
+read as if `RegionSize` were the length from the address asked about, which it is
+not - it counts from the region's own base, so the walk stepped over the pages
+after it.
+
+**What this is not.** Nobody has identified what clears those guard bits. The
+exception-dispatch theory - the kernel scribbling its context record onto pages
+below the stack pointer - was tested by marking every page near a faulting `rsp`
+and does not explain them; not one of the lost pages had ever been near one. It
+does not matter for the fix, because the fix is to stop depending on the bit, but
+it is not a solved mystery and should not be written up as one.
