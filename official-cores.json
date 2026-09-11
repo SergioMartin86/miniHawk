@@ -103,7 +103,7 @@
     {
       "id": "ares",
       "name": "ares",
-      "systems": [ "N64", "NES", "GB", "GBC", "GEN", "SMS", "GG", "SG", "A26", "WS", "WSC", "ZXS", "MYV", "GBA", "CV", "MSX", "PS1", "A52", "NGP", "NGPC", "NG", "SFC", "32X", "MSX2", "PCE", "SGX" ],
+      "systems": [ "N64", "NES", "GB", "GBC", "GEN", "SMS", "GG", "SG", "A26", "WS", "WSC", "ZXS", "MYV", "GBA", "CV", "MSX", "PS1", "A52", "NGP", "NGPC", "NG", "SFC", "32X", "MSX2", "PCE", "SGX", "MCD", "MCD32X", "PCECD" ],
       "repo": "ToolAssisted-run/chimera-core-ares",
       "tested": ""
     },
