@@ -145,41 +145,104 @@ device holding the frame a blend deinterlacer needs next time. Skip it for
 fifteen hundred frames and the one frame that IS composed is composed from state
 that never saw them.
 
-So the fix is a WARM-UP, and it is bounded. Drawing the last frame only is 7.29%
-wrong, the last two 3.87%, and **the last five exactly right**. A core says how
-many frames its renderer needs (`video.renderWarmupFrames`, zero for almost all
-of them) and the frontend starts drawing that many before a seek's destination.
-PCSX2 declares ten - five with margin, and composing costs 0.75 ms a frame there,
-so the whole warm-up is under 8 ms per seek.
+The first fix was a WARM-UP: draw the last few frames before a seek's
+destination. Drawing the last frame only is 7.29% wrong here, the last two
+3.87%, the last five exactly right, so PCSX2 declared ten and the frontend drew
+them. **That was wrong, and the next section is why.**
 
-Verified end to end: a run that rewinds three times with a five-frame warm-up is
-BYTE-IDENTICAL to a straight run. With one frame it is the 7.29% above.
+**Dolphin and Ruffle were measured the same way and need nothing** - 0.00%
+either way. Dolphin because its XFB always decodes from the machine's own memory
+(the fix in the previous section), Ruffle because its rendering-off path skips
+only the readback and still runs `Player::render`. That is the shape to copy:
+skip what is pure output, never what the renderer will need next frame.
 
-**Dolphin and Ruffle were measured the same way and need none** - 0.00% either
-way. Dolphin because its XFB always decodes from the machine's own memory (the
-fix in the previous section), Ruffle because its rendering-off path skips only
-the readback and still runs `Player::render`. That is the shape to copy: skip
-what is pure output, never what the renderer will need next frame.
+## A warm-up cannot be long enough (2026-09-11)
+
+Marvel vs Capcom 2 is a fighting game. It redraws the whole screen sixty times a
+second, so five frames of warm-up really does put its renderer back where a
+straight playback would have left it. Take a title screen instead and the floor
+falls out.
+
+Flycast, Re-Volt, a seek to frame 1500 - which is its title screen, painted once
+somewhere around frame 1350 and then left alone:
+
+| frames drawn before the destination | picture |
+|---|---|
+| 1, 2, 3, 4, 5, 6, 7 | 72.60% differs - **the SEGA licence screen**, a whole screen behind |
+| 8, 12, 30, 60, 120 | the same 72.60% |
+| **300** | 0.00% |
+
+Nothing between 1 and 120 is better than 1. The picture is not a slightly wrong
+composition; it is the previous screen entirely. What a warm-up assumes - that
+a renderer's state decays and a few frames of running rebuilds it - is not what
+is happening. **What the renderer draws lives on the far side of the bridge and
+STAYS there.** A screen a game paints once is painted by exactly one frame; skip
+that frame and no later frame repaints it, because the game has nothing more to
+say. Only a warm-up that reaches back past the paint is right, and how far back
+that is depends on the game, not the core. There is no number to declare.
+
+The same game at frame 2000 converges at 8, because the screen is fading out and
+therefore being redrawn. That is what a warm-up number really measures: how
+recently the content happened to change. Gran Turismo 4 on PCSX2, three
+different points in its boot, all still 1.3% to 2.8% wrong with the ten frames
+PCSX2 had declared.
+
+### So the core keeps drawing, and only the readback is skipped
+
+`video.drawEveryFrame`. The engine reads it at session open and never sends
+`SetRenderingEnabled(0)`; `render == 0` then means only that the host does not
+copy the picture out. It is read in the engine, not a frontend, because it is a
+property of the core and must hold for every host that opens the package.
+
+The reason this is affordable at all is that the drawing was never the expensive
+part. 1500 frames on the GTX 1060:
+
+| | turbo | drawing, no readback | drawing AND reading back |
+|---|---|---|---|
+| PCSX2, Gran Turismo 4 | 8.28 s | **8.30 s** | 9.75 s |
+| Flycast, Re-Volt | 14.8 s | **15.0 s** | 17.5 s |
+
+The readback is 0.98 ms a frame on PCSX2 and 1.8 ms on Flycast - a 1.2 MB
+`glReadPixels` across the bridge, synchronous. The drawing is 0.017 ms and
+within noise respectively. Turbo keeps all of the saving and loses the bug.
+
+Verified with the declaration alone, no command-line flag: Flycast/Re-Volt at
+frame 1500 after three rewinds, and PCSX2/Gran Turismo 4 at frames 900, 1500 and
+2400 after three rewinds, are all byte-identical to a straight run that drew
+every frame.
+
+**Only two cores needed it, and it is the same two that had a turbo patch which
+skips DRAWING**: PCSX2 (patch 0016, returns from `GSRenderer::VSync` before
+`Merge`) and Flycast (patch 0010, returns from `OpenGLRenderer::Render` before
+the pass that reaches a screen). xemu and RPCS3 export no `SetRenderingEnabled`
+at all and so were never told to stop; Dolphin has none either; Ruffle has one
+that skips only the readback. Every core that was measured clean was clean for
+that reason.
 
 ### The sweep the rest of this section came from
 
-Every bridged core with content to run it, on the GTX 1060, 2026-09-11. "Rewind"
-is three passes of seek-back-and-replay against a straight run of the same
-movie; "warm-up" is the every-frame-composed against last-frame-only test that
-isolates a renderer's frame-to-frame display state.
+Every bridged core, with content to run it, on the GTX 1060, 2026-09-11. Two
+tests: a straight run of the same movie twice, and three passes of
+seek-back-and-replay against it. The picture column is the last frame, drawn.
 
-| core | straight run twice | rewind x3: machine | rewind x3: picture | needs a warm-up |
+| core | content | straight run twice | rewind x3: machine | rewind x3: picture |
 |---|---|---|---|---|
-| PCSX2 (Marvel vs Capcom 2) | identical | EE RAM identical | 7.29% before the fix | **yes, 5 frames** |
-| Dolphin (Pro Rally 2002) | identical | System RAM identical | identical | no (0.00%) |
-| Ruffle (New Star Soccer) | identical | - (no domains) | identical | no (0.00%) |
-| xemu | - | - | - | not run: no valid eeprom.bin here |
-| Flycast | - | - | - | not run: no dc_boot.bin here |
-| RPCS3 | - | - | - | not run |
+| PCSX2 | Marvel vs Capcom 2, Gran Turismo 4 | identical | EE RAM identical | 7.29% / 1.3-2.8% before the fix, exact after |
+| Flycast | Re-Volt, 240pSuite | identical | System RAM + VRAM identical | 72.60% before the fix, exact after |
+| Dolphin | Pro Rally 2002 | identical | System RAM identical | identical |
+| Ruffle | New Star Soccer | identical | - (no domains) | identical |
+| xemu | Prince of Persia: Sands of Time | identical | System RAM identical | identical |
+| RPCS3 | GTA San Andreas | identical | MainRAM identical | identical |
 
 PCSX2 was also put through a savestate round trip before every one of 3000
 frames (`chimera-run --rerecord`): picture and EE RAM identical at every
 checkpoint. Whatever the bridge does to a rewind, it is not that.
+
+xemu and RPCS3 were measured for the first time in this round. xemu needed
+nothing: its EEPROM is optional and the built-in identity is what a movie wants
+anyway. RPCS3 took a fix - it died before its first frame on any disc carrying a
+boot jingle, because `play_music_during_boot` hands an overlay to a video source
+a headless build does not have and `overlay_audio.cpp` `ensure()`s it.
 
 ## The fallback that does not fall back (Windows, 2026-09-11)
 

@@ -846,6 +846,22 @@ CE_API int32_t ce_session_frame_advance(ce_session *s, uint64_t buttons, int32_t
  * Invalidated by the next rendered frame_advance. */
 CE_API const uint32_t *ce_session_video(const ce_session *s);
 
+/* Keep the core DRAWING even on frames with render 0, so that only the readback
+ * is skipped.
+ *
+ * Turbo assumes a skipped frame is work deferred: nobody looks at it, and the
+ * next frame someone does look at is drawn from scratch. That holds for a
+ * renderer that composes its picture out of the machine's own memory every
+ * frame. It does not hold for one whose picture lives on the far side of the
+ * GPU bridge, because what it draws PERSISTS there: a screen a game paints once
+ * and then leaves alone is painted by exactly one frame, and if that frame was
+ * skipped no later frame repaints it. The picture then shows an older screen
+ * and no amount of warm-up brings it back - only replaying from before the
+ * paint does. Cores that need this say so in their package (video.drawEveryFrame)
+ * and pay the drawing, which on a real GPU is a fraction of the frame; the
+ * readback, which is most of what turbo was saving, is still skipped. */
+CE_API void ce_session_draw_every_frame(ce_session *s, int32_t on);
+
 /* The LIVE frame size: a machine that changes video modes (DOS) reports it
  * per frame through optional GetVideoWidth/GetVideoHeight exports, clamped
  * to the config's declared buffer. Without the exports these equal

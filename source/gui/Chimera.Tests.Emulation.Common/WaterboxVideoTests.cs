@@ -3,29 +3,30 @@ using Chimera.Emulation.Common.Waterbox;
 namespace Chimera.Tests.Emulation.Common
 {
 	/// <summary>
-	/// The video declaration's two GPU answers. Both are read once, deep in a
-	/// path nobody looks at, and both are silently harmless when wrong - a core
-	/// that should warm up and reports zero simply draws a slightly wrong frame
-	/// at the end of a seek, which is exactly the bug the warm-up exists for.
-	/// So the plumbing is pinned rather than trusted.
+	/// The video declaration's two GPU answers, as this side reads them. Both
+	/// are silently harmless when wrong - a core that should keep drawing and
+	/// says nothing simply shows an older screen at the end of a seek, which is
+	/// exactly the bug it exists for - so the names are pinned rather than
+	/// trusted. drawEveryFrame is ACTED on in the engine, which reads the same
+	/// key out of the same file; this pins that the two agree on its name.
 	/// </summary>
 	[TestClass]
 	public class WaterboxVideoTests
 	{
 		[TestMethod]
-		public void ADeclaredWarmupReachesTheCore()
+		public void ADeclaredDrawEveryFrameIsReadFromThePackage()
 		{
-			WaterboxConfig declared = new() { Video = new() { RenderWarmupFrames = 10 } };
-			Assert.AreEqual(10, declared.Video.RenderWarmupFrames);
+			WaterboxConfig declared = new() { Video = new() { DrawEveryFrame = true } };
+			Assert.IsTrue(declared.Video.DrawEveryFrame);
 
 			// what a package that says nothing means, which is almost all of them
 			WaterboxConfig silent = new() { Video = new() };
-			Assert.AreEqual(0, silent.Video.RenderWarmupFrames,
-				"a core that does not ask for a warm-up must not get one");
+			Assert.IsFalse(silent.Video.DrawEveryFrame,
+				"a core that does not ask to keep drawing must not be made to");
 		}
 
 		[TestMethod]
-		public void AMissingVideoBlockIsNotAWarmup()
+		public void AMissingVideoBlockDrawsLikeEveryOtherCore()
 		{
 			WaterboxConfig none = new();
 			Assert.IsNull(none.Video);
@@ -33,14 +34,14 @@ namespace Chimera.Tests.Emulation.Common
 
 		/// <summary>
 		/// The package is JSON and the property names are the contract; a rename
-		/// on either side is a warm-up that quietly becomes zero.
+		/// on either side is a declaration that quietly becomes false.
 		/// </summary>
 		[TestMethod]
-		public void TheWarmupIsReadFromTheNameThePackageUses()
+		public void TheAnswersAreReadFromTheNamesThePackageUses()
 		{
 			var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<WaterboxConfig>(
-				"{\"video\":{\"renderWarmupFrames\":7,\"gpuStatesSurviveTheContext\":true}}");
-			Assert.AreEqual(7, cfg.Video.RenderWarmupFrames);
+				"{\"video\":{\"drawEveryFrame\":true,\"gpuStatesSurviveTheContext\":true}}");
+			Assert.IsTrue(cfg.Video.DrawEveryFrame);
 			Assert.IsTrue(cfg.Video.GpuStatesSurviveTheContext);
 		}
 	}

@@ -61,6 +61,10 @@
  * still starts at 0, so the INPUT after a loaded state is the movie's first
  * entries rather than the ones that belong there - fine for a rendering
  * question, wrong for anything about the machine.
+ * --draw-every-frame keeps the core drawing on frames nobody looks at and
+ * skips only the readback (ce_session_draw_every_frame) - which is what a core
+ * whose picture persists on the GPU needs, and what --render-every-frame
+ * over-pays for.
  * --screenshot <frame>=<path> writes one frame's picture as a TGA. Repeatable.
  * The run is otherwise undrawn (turbo), so only the frames asked for cost
  * anything to draw - which is what makes "show me frame 1910 of this movie" a
@@ -193,6 +197,7 @@ int main(int argc, char **argv)
 	 * runner a measurement of a seek rather than of play. --render-every-frame
 	 * is the other half of that A/B: the same run, drawing. */
 	bool renderEveryFrame = false;
+	bool drawEveryFrame = false;
 	/* --rewind-loop <frame>,<times>: what re-recording actually does. A single
 	 * --seek asks whether the history holds one frame; this asks whether doing
 	 * it over and over leaves the machine, and the PICTURE, where a straight
@@ -236,6 +241,7 @@ int main(int argc, char **argv)
 		else if (arg == "--allow-core-mismatch") allowCoreMismatch = true;
 		else if (arg == "--gpu") wantGpu = true;
 		else if (arg == "--render-every-frame") renderEveryFrame = true;
+		else if (arg == "--draw-every-frame") drawEveryFrame = true;
 		else if (arg == "--rewind-warmup" && i + 1 < argc) rewindWarmup = std::atoll(argv[++i]);
 		else if (arg == "--rewind-loop" && i + 1 < argc)
 		{
@@ -285,7 +291,7 @@ int main(int argc, char **argv)
 	bool projectMode = !projectPath.empty();
 	if (projectMode ? packagePath == nullptr : moviePath == nullptr)
 	{
-		std::fprintf(stderr, "usage: chimera-run <package> <rom> <movie.txt> [--rerecord] [--seek <frame>] [--play <n>] [--edit-from <movie>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>] [--settings <json>] [--dump <domain>=<path>]... [--firmware <id>=<path>]... [--state <path>] [--frames <n>] [--save-state <frame>=<path>]... [--screenshot <frame>=<path>]... [--export-savedata <dir>] [--meta <path>] [--gpu]\n"
+		std::fprintf(stderr, "usage: chimera-run <package> <rom> <movie.txt> [--rerecord] [--seek <frame>] [--play <n>] [--edit-from <movie>] [--stop-at-seek] [--bands n,m,ms,fs,anchor] [--record <out.txt>] [--settings <json>] [--dump <domain>=<path>]... [--firmware <id>=<path>]... [--state <path>] [--frames <n>] [--save-state <frame>=<path>]... [--screenshot <frame>=<path>]... [--export-savedata <dir>] [--meta <path>] [--gpu] [--draw-every-frame]\n"
 			"       chimera-run --project <p.chimeraProject> <package> [--files <dir>]... [--allow-core-mismatch] [the same run flags]\n");
 		return 1;
 	}
@@ -519,6 +525,8 @@ int main(int argc, char **argv)
 		static_cast<int32_t>(extraNames.size()), &error);
 	if (session == nullptr) return fail(metaPath, error != nullptr ? error : "session open failed");
 
+	if (drawEveryFrame) ce_session_draw_every_frame(session, 1);
+
 	int64_t frames = ce_movie_log_count(movie);
 
 	/* the movie is the SESSION's from here: the engine parses entries, tracks
@@ -535,7 +543,10 @@ int main(int argc, char **argv)
 	 * a limit applied after it would leave the decoded input shorter than the
 	 * run. */
 	if (frameLimit >= 0 && (frameLimit < frames || !recordPath.empty())) frames = frameLimit;
-	if (seekFrame >= 0 || !historyIn.empty() || !historyOut.empty())
+	/* --rewind-loop needs the history too: it seeks back through it, and a run
+	 * without one fails at the first pass with "no stored state at or before
+	 * the target frame". */
+	if (seekFrame >= 0 || rewindTo >= 0 || !historyIn.empty() || !historyOut.empty())
 	{
 		/* Bands before enabling: enabling captures the anchor, and the anchor
 		 * spacing decides whether it is the only one. */

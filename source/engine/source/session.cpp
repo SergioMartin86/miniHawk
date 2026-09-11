@@ -70,6 +70,7 @@ struct SessionConfig
 	std::vector<std::string> buttons;
 	std::vector<chimera::EntryAxis> axes;
 	bool deterministic = false;
+	bool drawEveryFrame = false; // video.drawEveryFrame - see ce_session_draw_every_frame
 	std::string defaultsJson; // JSON object: every declared setting at its default
 	std::string settingsJson; // the effective settings, serialized for the guest
 };
@@ -192,6 +193,7 @@ bool parseConfig(const char *json, uint64_t len, const char *overrides, SessionC
 	cfg.vsyncNum = intOf(video, "vsyncNumerator");
 	cfg.vsyncDen = intOf(video, "vsyncDenominator");
 	cfg.getBgra = strOf(video, "getBgra", "GetVideoBgra");
+	cfg.drawEveryFrame = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(video, "drawEveryFrame"));
 	cfg.samplesPerFrame = intOf(audio, "samplesPerFrame");
 	cfg.channels = intOf(audio, "channels", 1);
 	cfg.getAudio = strOf(audio, "get", "GetAudio");
@@ -436,6 +438,12 @@ struct ce_session
 	// also what a state load leaves behind (see ce_session_load_state).
 	void (*setRendering)(int32_t) = nullptr;
 	int32_t renderingSent = -1;
+	/* When set, the core is never told to stop drawing - only the READBACK is
+	 * skipped on a frame nobody looks at. A renderer whose picture lives on the
+	 * far side of the bridge needs this: what it draws persists there, so a
+	 * frame skipped during a seek is not deferred work but a picture that no
+	 * later frame redraws. See docs/gpu-bridge.md. */
+	int32_t drawAlways = 0;
 	// trace
 	void (*traceSetEnabled)(int32_t) = nullptr;
 	int32_t (*traceLineCount)() = nullptr;
@@ -664,6 +672,11 @@ void ce_session::probeOptionalGroups()
 	// guest is told nothing here - the first advance sends whatever it wants,
 	// and until then the core's own default (drawing) stands.
 	setRendering = reinterpret_cast<void (*)(int32_t)>(opt("SetRenderingEnabled", 1));
+	/* ...unless the package says its renderer must never be stopped, in which
+	 * case turbo skips the readback and nothing else. The declaration lives
+	 * here rather than in a frontend because it is a property of the core, and
+	 * every host that opens this package needs it to hold. */
+	drawAlways = cfg.drawEveryFrame ? 1 : 0;
 
 	// savedata export: all four or nothing. Only the POINTERS are kept - the
 	// file list is dynamic (a game creates files while it runs), so it is
@@ -822,6 +835,7 @@ void ce_session::trace(int32_t lag, int32_t render)
  * exists for. */
 void ce_session::wantRendering(int32_t on)
 {
+	if (drawAlways != 0) on = 1;
 	if (setRendering == nullptr || renderingSent == on) return;
 	setRendering(on);
 	renderingSent = on;
@@ -1455,6 +1469,8 @@ int32_t ce_session_frame_advance(ce_session *s, uint64_t buttons, int32_t render
 }
 
 const uint32_t *ce_session_video(const ce_session *s) { return s->videoBuf.data(); }
+
+void ce_session_draw_every_frame(ce_session *s, int32_t on) { s->drawAlways = on != 0 ? 1 : 0; }
 
 int32_t ce_session_video_width(const ce_session *s) { return s->vidW; }
 int32_t ce_session_video_height(const ce_session *s) { return s->vidH; }

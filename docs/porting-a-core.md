@@ -216,7 +216,12 @@ Probed once after `Init`; absent exports simply mean the tool is not offered.
   `PeekBus`, `PokeBus`, resolved per access. Cache one page of translation and
   a RAM search costs nothing.
 - Registers, trace, core-rendered surfaces, save-data export, turbo
-  (`SetRenderingEnabled`).
+  (`SetRenderingEnabled`). **Turbo means "skip what is pure OUTPUT", not "skip
+  the renderer".** If the export can only be implemented by skipping drawing -
+  which is the case for a renderer whose picture lives on a GPU outside the
+  sandbox, because what it draws persists there and a frame skipped is a
+  picture lost - then declare `video.drawEveryFrame` and let it skip the
+  readback alone. docs/gpu-bridge.md has the measurements.
 
 ## Publishing it
 

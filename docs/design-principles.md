@@ -1969,12 +1969,27 @@ deinterlace phase, and leaves the device holding the frame a blend deinterlacer
 will want next. Skip it for fifteen hundred frames and the one frame that IS
 composed comes from state that never saw them.
 
-**The fix is a warm-up, and the point is that it is bounded.** Drawing the last
-frame only is 7.29% of the picture wrong; the last two, 3.87%; the last five,
-exact. A core declares how many frames its renderer needs
-(`video.renderWarmupFrames`, zero for almost all of them) and the frontend
-starts drawing that many before a seek's destination. A run that rewinds three
-times with a five-frame warm-up is byte-identical to a straight run.
+The first fix was a warm-up: draw the last five frames before a seek's
+destination, because drawing the last frame only is 7.29% of the picture wrong,
+the last two 3.87%, and the last five exact. **It was the wrong fix, and the way
+it was wrong is worth keeping.** Marvel vs Capcom 2 redraws its whole screen
+sixty times a second, so a few frames of drawing really does rebuild everything
+that matters. A title screen does not. Flycast on Re-Volt, seeking to a title
+screen painted once around frame 1350 and then left alone: drawing the last 1,
+2, 4, 8, 30, 60 or 120 frames all give the same picture, and it is the SEGA
+licence screen, a whole screen earlier. Only 300 - far enough back to include
+the frame that painted it - is right. What the renderer draws lives on the far
+side of the bridge and STAYS there; a screen painted by exactly one frame is
+lost if that frame is skipped, and no number of later frames repaints it,
+because the game has nothing more to say. **There is no number to declare.**
+
+So the core is simply never told to stop drawing (`video.drawEveryFrame`, read
+by the engine at session open), and `render == 0` comes to mean only that the
+host does not copy the picture out. That is affordable because the drawing was
+never the expensive part: over 1500 frames on a GTX 1060, PCSX2 costs 8.28s in
+turbo, 8.30s drawing without reading back, and 9.75s doing both. The readback -
+a 1.2 MB `glReadPixels` across the bridge - is the whole saving, and turbo keeps
+it.
 
 The general rule this is an instance of: **"nobody is looking at this frame" is
 a statement about the OUTPUT, not a licence to skip the renderer's own
@@ -1982,7 +1997,8 @@ bookkeeping.** Ruffle gets it right by construction - its rendering-off path
 skips the readback and still runs `Player::render`, which is where its caches and
 its `Event.RENDER` broadcast live - and Dolphin gets it right because its XFB
 always decodes from the machine's own memory. Both measured at 0.00% either way.
-PCSX2 skipped the whole stage, and this is what that cost.
+PCSX2 and Flycast skipped the whole stage, and this is what that cost - and
+they are the only two bridged cores that did.
 
 It also says something about what a hardware renderer's picture is allowed to
 be. The greenzone's contract has always been about the MACHINE, and this did not

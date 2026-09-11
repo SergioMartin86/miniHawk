@@ -462,26 +462,31 @@ namespace Chimera.Emulation.Common.Waterbox
 			public bool GpuStatesSurviveTheContext { get; set; }
 
 			/// <summary>
-			/// How many frames this core's renderer needs to have DRAWN before
-			/// its picture is the one a straight playback would show. Zero for
-			/// almost every core, which composes each frame from the machine
-			/// and nothing else.
+			/// Never tell this core to stop drawing. Turbo then skips only the
+			/// READBACK - the picture the host copies out - and the renderer
+			/// goes on running.
 			///
-			/// A seek replays with drawing off - nobody is looking at the
-			/// frames on the way - and a renderer whose display stage carries
-			/// state from one frame to the next then composes the destination
-			/// from state that never saw them. PCSX2 does: skipping its display
-			/// stage freezes a scanmask countdown and the deinterlace phase, and
-			/// the frame a seek lands on comes out visibly different from the
-			/// same frame played through. Measured on Marvel vs Capcom 2: 7.3%
-			/// of the picture wrong with one frame drawn, 3.9% with two, and
-			/// EXACT with five.
+			/// Turbo's assumption is that a skipped frame is work deferred:
+			/// nobody looks at it, and the next frame someone does look at is
+			/// drawn from scratch. That is true of a renderer that composes
+			/// each frame out of the machine's own memory. It is false of one
+			/// whose picture lives on the far side of the GPU bridge, because
+			/// what it draws PERSISTS there. A screen a game paints once and
+			/// then leaves alone is painted by exactly ONE frame; skip that
+			/// frame and no later frame repaints it, so the picture shows an
+			/// older screen and no warm-up of any length brings it back.
+			/// Measured on Re-Volt: a seek to frame 1500 shows the SEGA licence
+			/// screen instead of the title, and drawing the last 1, 4, 6, 8, 12,
+			/// 30, 60 or 120 frames changes nothing - only 300, which reaches
+			/// back past the paint, is right. Gran Turismo 4 is 1.3% to 2.8%
+			/// wrong however many frames are warmed.
 			///
-			/// So the frontend starts drawing this many frames before a seek's
-			/// destination. It is bounded and small - it is a warm-up, not a
-			/// dependency on history - and a core that needs none pays nothing.
+			/// The drawing is nearly free on a GPU - what turbo was saving is
+			/// the readback, which this still skips. Measured over 1500 frames
+			/// on a GTX 1060: PCSX2 8.28s turbo, 8.30s drawing, 9.75s drawing
+			/// AND reading back; Flycast 14.8s, 15.0s, 17.5s.
 			/// </summary>
-			public int RenderWarmupFrames { get; set; }
+			public bool DrawEveryFrame { get; set; }
 		}
 
 		public sealed class AudioConfig

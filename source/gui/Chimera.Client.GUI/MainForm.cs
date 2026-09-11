@@ -2533,24 +2533,18 @@ namespace Chimera.Client.GUI
 			{
 				var isFastForwarding = IsFastForwarding;
 				var isFastForwardingOrRewinding = isFastForwarding || isRewinding || Config.Unthrottled;
-				// A seek's destination, and the frames just before it.
+				// A seek's destination.
 				//
 				// Drawing only the destination is right for almost every core:
 				// a frame is composed from the machine and nothing else, so the
-				// frames a seek passed through cost nothing to have skipped. It
-				// is NOT right for a renderer whose display stage carries state
-				// from one frame to the next - PCSX2's scanmask countdown and
-				// deinterlace phase only advance when it composes - and there
-				// the frame a seek lands on comes out visibly different from
-				// the same frame played through. Measured on Marvel vs Capcom
-				// 2: 7.3% of the picture wrong drawing one frame, 3.9% drawing
-				// two, exact from five. It is a warm-up and it is bounded; a
-				// core says how long its is (RenderWarmupFrames, zero for
-				// almost all of them) and pays nothing when it is zero.
-				int renderWarmup = Emulator is IGpuRendered gpuWarm ? gpuWarm.RenderWarmupFrames : 0;
+				// frames a seek passed through cost nothing to have skipped.
+				// A renderer whose picture lives on the far side of the GPU
+				// bridge is the exception, and no amount of drawing NEAR the
+				// destination fixes it. That is handled where it belongs, in
+				// the engine: a package that says video.drawEveryFrame is never
+				// told to stop drawing at all, and only the readback this flag
+				// controls is skipped.
 				bool atSeekEnd = IsSeeking && Emulator.Frame == PauseOnFrame.Value - 1;
-				bool nearSeekEnd = IsSeeking && renderWarmup > 0
-					&& Emulator.Frame >= PauseOnFrame.Value - 1 - renderWarmup;
 				bool atTurboSeekEnd = IsTurboSeeking && atSeekEnd;
 				// the frames a seek passes through get the turbo treatment whether or
 				// not it is a turbo seek; what turbo adds is that none of them is
@@ -2637,8 +2631,7 @@ namespace Chimera.Client.GUI
 				// one-in-four is what they are watching.
 				bool render = (!_throttle.skipNextFrame && !(IsTurboSeeking && !atTurboSeekEnd) && !(IsSeeking && _seekQuiet))
 					|| _currAviWriter?.UsesVideo is true
-					|| atSeekEnd
-					|| nearSeekEnd;
+					|| atSeekEnd;
 				long advanceStarted = LoopTrace.Enabled ? Stopwatch.GetTimestamp() : 0;
 				bool newFrame = Emulator.FrameAdvance(InputManager.ControllerOutput, render, renderSound);
 				LoopTrace.Add(LoopTrace.Advance, advanceStarted);
