@@ -189,6 +189,10 @@ int main(int argc, char **argv)
 	std::vector<std::string> fileDirs;
 	bool allowCoreMismatch = false;
 	bool wantGpu = false;
+	/* Frames are drawn only when a screenshot asks for one, which makes this
+	 * runner a measurement of a seek rather than of play. --render-every-frame
+	 * is the other half of that A/B: the same run, drawing. */
+	bool renderEveryFrame = false;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -220,6 +224,7 @@ int main(int argc, char **argv)
 		else if (arg == "--files" && i + 1 < argc) fileDirs.push_back(argv[++i]);
 		else if (arg == "--allow-core-mismatch") allowCoreMismatch = true;
 		else if (arg == "--gpu") wantGpu = true;
+		else if (arg == "--render-every-frame") renderEveryFrame = true;
 		else if (arg == "--history-in" && i + 1 < argc) historyIn = argv[++i];
 		else if (arg == "--history-out" && i + 1 < argc) historyOut = argv[++i];
 		else if (arg == "--firmware" && i + 1 < argc)
@@ -620,7 +625,8 @@ int main(int argc, char **argv)
 			? nullptr
 			: recAxes[static_cast<size_t>(i)].data();
 		auto shot = shots.find(i);
-		if (ce_session_movie_advance(session, 0, axes, shot != shots.end() ? 1 : 0) < 0)
+		if (ce_session_movie_advance(session, 0, axes,
+			(renderEveryFrame || shot != shots.end()) ? 1 : 0) < 0)
 		{
 			return fail(metaPath, ce_session_last_error(session));
 		}

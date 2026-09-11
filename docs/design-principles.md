@@ -1818,3 +1818,41 @@ that core's own PLAN.md: ares has no uPD4990A, so the MVS BIOS waits on a
 real-time clock pulse that never comes. The switches are exposed now because
 they are declared and a frontend must not silently eat a declaration; what they
 do is the core's business and the core says so.
+
+## The GL bridge can say WHICH calls, not just how many (2026-09-11)
+
+`CHIMERA_GL_TRACE` has printed a per-frame call count since the getenv round,
+and that count is what made "six thousand calls a frame" a sentence anybody
+could say. It is also what made it a sentence nobody could act on. Ruffle's
+frame on New Star Soccer is fifty thousand calls; the next question - which of
+them, and costing what - had no instrument.
+
+Two now:
+
+- **`CHIMERA_GL_TIME=1`** adds "N ms in the driver" to the per-frame line. The
+  clock read either side is real, about 20ns a call, so a fifty-thousand-call
+  frame pays a millisecond to be measured; that is worth knowing when reading
+  the number, and it is why this is off by default.
+- **`CHIMERA_GL_PROFILE=1`** counts calls and nanoseconds per opcode and dumps
+  the table every 300 frames and again at exit. The names are deliberately not
+  carried in the process: opcodes are the master list's order (miniBox
+  `source/gl/gl-entry-points.txt`, first entry is 100) and resolving them is a
+  job for whoever reads the dump, not for the hot path.
+
+The exit dump is not belt and braces. `ce_gl_release` marks the frame boundary
+and a host that is not drawing never calls it, so a run with rendering off
+collected the whole profile and printed none of it.
+
+What they found on a GTX 1060 is in the Ruffle core's own PLAN.md, and the
+shape of it is worth repeating here because it is general: **forty thousand GL
+calls cost 1.5 ms between them, and six calls cost 11.** The expensive ones
+were `glGetSynciv` and `glGenBuffers` - waiting for the GPU, and allocating
+fresh resources every frame. A call count is a measure of chattiness and
+chattiness is not cost.
+
+And a correction to the round before: the same feature measured 6 ms a frame
+under llvmpipe and 1.5 ms on the real GPU. A software rasteriser's readback is
+a copy out of memory the CPU has just written; a real driver's is a transfer it
+has already had to wait for. Numbers taken on Mesa in WSL do not transfer to a
+GPU, and this codebase has a whole memory note saying so - which did not stop
+it happening.

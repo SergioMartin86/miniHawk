@@ -41,6 +41,7 @@
 
 #include <cstdio>   /* snprintf: both flavours report why there is no context */
 #include <cstdlib>
+#include <chrono>
 #include <ctime>    /* one ingredient of a context's identity */
 
 #ifdef CE_GL_BRIDGE
@@ -332,6 +333,53 @@ static bool glCheck()
 	return on;
 }
 
+/* CHIMERA_GL_TIME: how long a frame spends INSIDE the driver, as against
+ * inside the machine that is calling it.
+ *
+ * A chatty renderer and a slow one look the same from outside: the frame takes
+ * 30ms either way. The question that separates them is what share of that 30ms
+ * is spent below this function, and the only way to answer it is to time each
+ * crossing and add them up. It is off by default because the clock read either
+ * side is real - about 20ns a call, so roughly 0.15ms on a six-thousand-call
+ * frame, which is worth knowing when reading the number it produces. */
+static bool glTime()
+{
+	static const bool on = getenv("CHIMERA_GL_TIME") != nullptr;
+	return on;
+}
+
+static uint64_t g_driverNs, g_driverNsAtFrame;
+
+/* CHIMERA_GL_PROFILE: WHICH calls, not just how many.
+ *
+ * "Fifty thousand GL calls a frame" is not actionable; "forty thousand of them
+ * are glUniform4fv" is. Counted per opcode, with the time each opcode's calls
+ * took, and dumped every 300 frames. The names are not carried here - the
+ * opcodes are the master list's order (miniBox source/gl/gl-entry-points.txt,
+ * first entry is opcode 100) and resolving them is a job for whoever reads the
+ * dump, not for a hot path. */
+static bool glProfile()
+{
+	static const bool on = getenv("CHIMERA_GL_PROFILE") != nullptr;
+	return on;
+}
+
+enum { kProfileOps = CHIMERA_GL_OP_LIST_LENGTH + 100 };
+static uint64_t *g_opCalls, *g_opNs;
+
+static void profileDump(void)
+{
+	if (g_opCalls == nullptr) return;
+	fprintf(stderr, "[ce-gl-profile] op,calls,ms\n");
+	for (int op = 0; op < kProfileOps; op++)
+	{
+		if (g_opCalls[op] == 0) continue;
+		fprintf(stderr, "[ce-gl-profile] %d,%llu,%.3f\n", op,
+			(unsigned long long)g_opCalls[op], (double)g_opNs[op] / 1e6);
+	}
+	fflush(stderr);
+}
+
 /* How many calls crossed, and how many frames they were spread over: the two
  * numbers that say whether a core's renderer is chatty. Printed by
  * ce_gl_release under CHIMERA_GL_TRACE, which is once a frame. */
@@ -345,12 +393,23 @@ extern "C" void ce_gl_release(void)
 	if (glTrace())
 	{
 		g_frames++;
-		fprintf(stderr, "[ce-gl] frame %llu: %llu calls (%llu so far, %.0f a frame)\n",
-			(unsigned long long)g_frames, (unsigned long long)(g_calls - g_callsAtFrame),
-			(unsigned long long)g_calls, (double)g_calls / (double)g_frames);
+		if (glTime())
+			fprintf(stderr,
+				"[ce-gl] frame %llu: %llu calls, %.3f ms in the driver"
+				" (%llu so far, %.0f a frame, %.3f ms a frame)\n",
+				(unsigned long long)g_frames, (unsigned long long)(g_calls - g_callsAtFrame),
+				(double)(g_driverNs - g_driverNsAtFrame) / 1e6,
+				(unsigned long long)g_calls, (double)g_calls / (double)g_frames,
+				(double)g_driverNs / 1e6 / (double)g_frames);
+		else
+			fprintf(stderr, "[ce-gl] frame %llu: %llu calls (%llu so far, %.0f a frame)\n",
+				(unsigned long long)g_frames, (unsigned long long)(g_calls - g_callsAtFrame),
+				(unsigned long long)g_calls, (double)g_calls / (double)g_frames);
 		fflush(stderr);
 	}
 	g_callsAtFrame = g_calls;
+	g_driverNsAtFrame = g_driverNs;
+	if (glProfile() && g_frames > 0 && g_frames % 300 == 0) profileDump();
 }
 
 static uintptr_t ce_gl_dispatch_one(uintptr_t op, uintptr_t a, uintptr_t b,
@@ -387,6 +446,39 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 		const GLenum err = glGetError();
 		if (err != GL_NO_ERROR)
 			fprintf(stderr, "[ce-gl!] op=%lu raised %#x\n", (unsigned long)op, (unsigned)err);
+		return rv;
+	}
+	if (glProfile())
+	{
+		if (g_opCalls == nullptr)
+		{
+			g_opCalls = (uint64_t *)calloc(kProfileOps, sizeof(uint64_t));
+			g_opNs = (uint64_t *)calloc(kProfileOps, sizeof(uint64_t));
+			if (g_opCalls == nullptr || g_opNs == nullptr) { free(g_opCalls); free(g_opNs);
+				g_opCalls = nullptr; g_opNs = nullptr; }
+			/* ce_gl_release marks the frame boundary, and a host that is not
+			 * drawing never calls it - so a run with rendering off would
+			 * otherwise collect the whole profile and print none of it. */
+			else atexit(profileDump);
+		}
+		const auto at = std::chrono::steady_clock::now();
+		const uintptr_t rv = ce_gl_dispatch_one(op, a, b, c, d, e);
+		const uint64_t took = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::steady_clock::now() - at).count();
+		g_driverNs += took;
+		if (g_opCalls != nullptr && op < (uintptr_t)kProfileOps)
+		{
+			g_opCalls[op]++;
+			g_opNs[op] += took;
+		}
+		return rv;
+	}
+	if (glTime())
+	{
+		const auto at = std::chrono::steady_clock::now();
+		const uintptr_t rv = ce_gl_dispatch_one(op, a, b, c, d, e);
+		g_driverNs += (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::steady_clock::now() - at).count();
 		return rv;
 	}
 	return ce_gl_dispatch_one(op, a, b, c, d, e);
