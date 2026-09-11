@@ -42,13 +42,14 @@ The officially maintained cores are:
 | --- | --- |
 | Nintendo Entertainment System / Famicom | [quickerNES](https://github.com/ToolAssisted-run/chimera-core-quickernes), [QuickerNesHawk](https://github.com/ToolAssisted-run/chimera-core-neshawk), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Famicom Disk System | [QuickerNesHawk](https://github.com/ToolAssisted-run/chimera-core-neshawk) |
-| Super Nintendo | [Snes9x](https://github.com/ToolAssisted-run/chimera-core-snes9x) |
+| Super Nintendo | [Snes9x](https://github.com/ToolAssisted-run/chimera-core-snes9x), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Nintendo 64 | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | GameCube | [Dolphin](https://github.com/ToolAssisted-run/chimera-core-dolphin) |
 | Wii | [Dolphin](https://github.com/ToolAssisted-run/chimera-core-dolphin) |
 | Game Boy / Game Boy Color | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Game Boy Advance | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Mega Drive / Genesis | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| Mega Drive 32X | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Sega CD / Mega CD | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx) |
 | Master System | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Game Gear | [Genesis Plus GX](https://github.com/ToolAssisted-run/chimera-core-gpgx), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
@@ -63,7 +64,8 @@ The officially maintained cores are:
 | Atari 2600 | [Stella](https://github.com/ToolAssisted-run/chimera-core-stella), [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Atari 5200 | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | ColecoVision | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
-| MSX | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| MSX / MSX2 | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
+| PC Engine / TurboGrafx-16 / SuperGrafx | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Neo Geo AES | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | Neo Geo Pocket / Color | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
 | WonderSwan / WonderSwan Color | [ares](https://github.com/ToolAssisted-run/chimera-core-ares) |
@@ -74,7 +76,7 @@ The officially maintained cores are:
 
 Where a system has more than one core, they are different emulators and not
 interchangeable: a movie names the package that recorded it, and two cores
-disagree about the machine in ways a run depends on. ares carries twenty-one
+disagree about the machine in ways a run depends on. ares carries twenty-six
 machines in one package and its own README says which of them are proven, which
 have only been run against a commercial game off the record, and which are
 declared but not to be trusted yet.
