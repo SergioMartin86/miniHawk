@@ -2088,3 +2088,27 @@ have been right. What makes this class of bug expensive is that the two halves
 fail asymmetrically: writing a wrongly-shaped entry is silent, and the cost is
 paid later by a reader in the middle of a paint, where there is nothing sensible
 to do with an exception.
+
+## A black screenshot is not evidence until the same frame is drawn beside it (2026-09-11)
+
+A report of "the picture is pitch black" cost two false positives in one
+afternoon, both of them the same mistake. A frontend screenshot taken at frame
+702 of a Marvel vs Capcom 2 project came back an unbroken 0.00% lit; so did one
+at frame 600. Neither was a bug. Frame 600 of that game is black under any
+input at all, and frame 702 is black under THAT PROJECT'S input and lit under a
+blank movie - the project holds a start press the blank movie does not, and the
+game is a screen further on because of it.
+
+So the ground truth for a picture is the same frame of the same movie, drawn by
+`chimera-run` beside it, and the input is half of "the same movie". This is
+cheap to get - `--screenshot <frame>=<path>` on a run that is otherwise undrawn
+costs one composed frame - and the alternative is chasing the frontend for an
+hour over a game that was showing a loading screen.
+
+The other half of the discipline is to A/B the suspect rather than reason about
+it. The suspect there was `video.drawEveryFrame`, added hours earlier, and the
+A/B did not need a rebuild of anything: the installed core package is a zip, so
+it was repacked with the key set to `false` and run beside the real one through
+the same frontend. Same picture, so not the flag. A package-level switch is
+often the cheapest bisect available, and it tests the shipped artefact rather
+than a build of it.

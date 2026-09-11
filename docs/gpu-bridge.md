@@ -266,6 +266,49 @@ never touches Mesa's glapi, which is why a GPU run does not see it.
 exactly the promise above: a machine that cannot have a GPU cannot use this
 core's OpenGL renderer either, and falls back only as far as the software one.
 
+## A pitch-black picture, looked for and not found (2026-09-11)
+
+Reported from use: "the PS2 OpenGL hardware renderer no longer produces an
+image, the picture is pitch black". It does not reproduce, and the flag added
+the same day is not what it would be if it did.
+
+`video.drawEveryFrame` was ruled out by an A/B rather than by reading: the
+installed PCSX2 package was repacked with the key set to `false`, which puts the
+engine back on the old contract (`SetRenderingEnabled(0)` really is sent, turbo
+really does skip the drawing), and both packages were driven through the same
+frontend, the same movie and the same destination. The two pictures agree. The
+flag can only ever add drawing, and the guest is still told `1` once on the
+first frame, which is what it was already doing: `renderingSent` starts at -1,
+the first `wantRendering` call sends 1, and PCSX2's `chimera_render_enabled`
+is 1 before anyone says anything.
+
+What was driven, all on the GTX 1060, all showing a picture:
+
+| path | result |
+|---|---|
+| `chimera-run --gpu`, turbo with screenshots | GT4 at 900 and 1500, 99.5% lit |
+| `chimera-run --gpu --render-every-frame` | identical to the above |
+| `chimera-run --gpu --rewind-loop 300,20` | MvC2 still 99.4% lit after 20 passes |
+| frontend `--headless`, `opengl-hw`, plain play | identical to `chimera-run` |
+| frontend `--headless`, project + piano roll, seek | correct at the seek's end |
+| frontend `--headless`, soak with 11 back-jumps | correct |
+| frontend in a WINDOW, and fullscreen | correct, photographed from outside |
+| frontend, core rebooted twice in one process | correct, 120 fps |
+
+Two of those looked black before the ground truth was checked, and neither was:
+frame 702 of Marvel vs Capcom 2 is black **with that project's input** and lit
+with a blank movie, and frames 400 and 600 are black under any input. A black
+screenshot means nothing until the same frame of the same movie has been drawn
+by `chimera-run` beside it.
+
+What the report probably is, then, is the picture being WRONG rather than
+absent - issues 55 and 56 - which is what the section above is about, and what
+`drawEveryFrame` fixes. PCSX2's `renderer` now defaults to `software` for the
+same reason: the deterministic rasteriser is the one that cannot degrade, and on
+this box it costs a little over twice the time (2401 frames of Gran Turismo 4,
+20.6s against 9.6s) for a picture that is byte-identical run to run, with EE RAM
+the same under either renderer.
+
 ## Telling the two failures apart
 
 A core drawn by a GPU and a core drawn by nobody fail differently, and on a
@@ -293,9 +336,12 @@ stopped.
 
 - **Hardware.** Every measurement so far is on a machine with no GPU, against
   llvmpipe; a real driver should do better, and nobody has checked.
-- **Windows.** The host half builds against WGL and makes a real context on a
-  real driver (`4.6.0 NVIDIA 581.42`, GTX 1060, 2026-09-02); no frame drawn
-  through it has been seen on a screen there yet.
+- ~~**Windows.** No frame drawn through it has been seen on a screen there.~~
+  Settled 2026-09-11: the frontend was run windowed and fullscreen on the GTX
+  1060 (`4.6.0 NVIDIA 581.42`) with `renderer=opengl-hw`, and the window was
+  photographed from outside the process showing Gran Turismo 4 at 60 and 120
+  fps. What is still unproven there is a LONG session: everything measured is
+  thousands of frames, not hours.
 - **Readback.** A game that reads rendered pixels into machine state would feed
   GPU output into the savestate, and that is where a desync stops being a
   possibility and becomes a certainty.
