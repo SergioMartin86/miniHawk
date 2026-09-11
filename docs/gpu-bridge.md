@@ -161,6 +161,28 @@ fix in the previous section), Ruffle because its rendering-off path skips only
 the readback and still runs `Player::render`. That is the shape to copy: skip
 what is pure output, never what the renderer will need next frame.
 
+## The fallback that does not fall back (Windows, 2026-09-11)
+
+"When either fails the core draws the way it draws without a GPU" is what this
+document says a few sections up, and on Windows it is not true for PCSX2. With
+`renderer` set to `opengl` - or to `opengl-hw` with no bridge to be had, which
+is the same path - the core runs for about a thousand frames and then takes an
+access violation. Bisected on Marvel vs Capcom 2: 800 frames fine, 1200 dead,
+and dead at the same guest address every time, straight run or re-record.
+
+The address symbolises to `_x86_64_get_dispatch` in Mesa's glapi
+(`src/mapi/glapi/gen/glapi_x86-64.S`), which reads the GL dispatch table out of
+thread-local storage through **%fs** - and miniBox says, in the same log, that
+the guest's %fs was lost: "guest %fs was 0000000000000000 ... something outside
+a fault took it". It repairs %fs at syscall boundaries, which is where it
+notices; a GL call between two syscalls gets there first and dereferences zero.
+
+So it is not the bridge - it happens with no bridge at all, and the bridged path
+never touches Mesa's glapi, which is why a GPU run does not see it.
+`renderer=software` (PCSX2's own rasteriser, no Mesa) is fine. What it costs is
+exactly the promise above: a machine that cannot have a GPU cannot use this
+core's OpenGL renderer either, and falls back only as far as the software one.
+
 ## Telling the two failures apart
 
 A core drawn by a GPU and a core drawn by nobody fail differently, and on a
