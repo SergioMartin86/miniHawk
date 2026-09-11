@@ -2006,3 +2006,40 @@ break it: EE RAM was byte-identical through every one of these runs. But a
 person watching TAStudio judges by the picture, and a picture that depends on
 which frames happened to be drawn is a picture that cannot be trusted to mean
 anything. Costing 0.75 ms a frame, there was no reason to leave it.
+
+## A window's title is asked for, not assigned (user-reported, 2026-09-11)
+
+Reported from use: the Cache Manager's "Greenzone budgets..." button threw
+`InvalidOperationException` the moment it was clicked, from `FormBase`'s own
+`Text` setter, before the dialog had drawn anything.
+
+`FormBase` refuses `Text = ...` on purpose. A title is not a string a window
+owns, it is an answer the window has to be able to give again: the "static
+window titles" setting (Config > Customization, for anyone recording their
+screen) reaches in and asks every open window for its title a second time, and a
+window that assigned its title once during construction has nothing left to ask.
+So the title is a property - `WindowTitle` for the honest one, `WindowTitleStatic`
+for the one safe to show a stranger - and `UpdateWindowTitle` is the only thing
+that writes to `Text`. The setter throws rather than quietly ignoring the write,
+because a window silently keeping the wrong title is the failure the whole
+mechanism exists to prevent.
+
+**This class of mistake is easy to make and invisible until somebody opens the
+window.** It compiles: `Text` is an ordinary inherited property. It reads right:
+the same constructor assigns `Text` to a dozen child controls a few lines below,
+where it is perfectly correct, so the one bare `Text =` looks like all the
+others. And nothing exercises it - a dialog reached from one button in one
+window is not on any path a test or a session walks by accident. This one had
+been in the tree since the budgets dialog was written.
+
+The sweep found 21 `FormBase` subclasses and exactly one offender, so this was
+not a pattern that had spread. The guard against the next one is
+`FormTitleContractTests.EveryWindowGetsItsTitleFromWindowTitle`: it reflects over
+the frontend assembly for every concrete `FormBase` subclass (base classes that
+only exist to be derived from, such as `ToolFormBase`, are excluded by being the
+base of another) and fails naming any that declares neither override. A window
+that declares neither has nowhere to have put its title except `Text`, so the
+check catches the bug without having to construct windows that need an emulator
+and a live session. Its limit is worth knowing: a window that overrides
+correctly and ALSO assigns `Text` somewhere later still gets through, so the
+per-form tests that open a dialog and read its title back stay worth writing.

@@ -32,6 +32,10 @@ namespace Chimera.Client.GUI
 	/// </summary>
 	public sealed class GreenzoneBudgetsForm : FormBase
 	{
+		private const string TITLE = "Greenzone budgets";
+
+		private readonly string? _projectLabel;
+
 		private readonly NumericUpDown _memory;
 		private readonly NumericUpDown _disk;
 		private readonly CheckBox? _override;
@@ -53,6 +57,22 @@ namespace Chimera.Client.GUI
 				}
 				: new ProjectCache.ProjectBudgets();
 
+		/// <summary>
+		/// Names the project when there is one, because this window is reached from
+		/// a row in the cache manager and the answer to "whose budgets am I
+		/// looking at" should not depend on having noticed the checkbox further
+		/// down.
+		/// </summary>
+		protected override string WindowTitle
+			=> _projectLabel is { Length: > 0 } label ? $"{TITLE}: {Shorten(label)}" : TITLE;
+
+		/// <remarks>
+		/// A project's name is exactly the sort of thing somebody turning on static
+		/// titles does not want read off their window bar, so the static form drops
+		/// it rather than shortening it.
+		/// </remarks>
+		protected override string WindowTitleStatic => TITLE;
+
 		/// <param name="projectLabel">
 		/// What to call the project these may be set for, or null for the defaults alone -
 		/// which is what the window shows when no project row is selected.
@@ -63,8 +83,13 @@ namespace Chimera.Client.GUI
 			string? projectLabel = null,
 			ProjectCache.ProjectBudgets? projectBudgets = null)
 		{
+			// before anything else, and before any chance of the base class asking
+			// for a title: WindowTitle reads this field, and a field read too early
+			// gives a wrong title silently instead of failing the way a direct
+			// assignment to Text does.
+			_projectLabel = projectLabel;
+
 			SuspendLayout();
-			Text = "Greenzone budgets";
 			FormBorderStyle = FormBorderStyle.FixedDialog;
 			MaximizeBox = false;
 			MinimizeBox = false;
