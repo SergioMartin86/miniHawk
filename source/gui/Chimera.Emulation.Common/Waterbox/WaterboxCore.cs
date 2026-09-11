@@ -361,6 +361,8 @@ namespace Chimera.Emulation.Common.Waterbox
 		/// </summary>
 		public bool GpuStatesSurviveTheContext => _cfg.Video?.GpuStatesSurviveTheContext is true;
 
+		public int RenderWarmupFrames => _cfg.Video?.RenderWarmupFrames ?? 0;
+
 		// ICorePrecompile: only meaningful when the core was opened as a precompile session
 		public bool PrecompileDone => _session.PrecompileDone;
 		public (uint Done, uint Total) PrecompileProgress => _session.PrecompileProgress;

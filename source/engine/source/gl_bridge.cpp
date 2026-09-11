@@ -438,6 +438,178 @@ static void gpuTimeFrameEnd(void)
 	}
 }
 
+/* CHIMERA_GL_LIFETIME: is the guest binding objects that no longer exist?
+ *
+ * The bridge's whole contract is that GL object NAMES live in guest memory
+ * while the objects themselves live in the driver. A savestate carries the
+ * names and not the objects, so after a load the guest can be holding the name
+ * of something that was deleted since - and the driver answers a bind on a dead
+ * name by doing nothing, silently, which is a picture that is quietly wrong
+ * rather than a crash.
+ *
+ * The driver already knows. glIsTexture and its family answer whether a name is
+ * a live object, so every bind is checked against the truth. One extra GL call
+ * per bind is far too dear to leave on, which is why this is a diagnostic; what
+ * it produces is a per-frame count of binds that named nothing.
+ *
+ * A freshly generated name that has never been bound is not yet an object and
+ * answers false here too, so the FIRST bind of each object counts. That is a
+ * constant handful a frame; what matters is whether the number climbs. */
+static bool glLifetime()
+{
+	static const bool on = getenv("CHIMERA_GL_LIFETIME") != nullptr;
+	return on;
+}
+
+static uint64_t g_deadBinds, g_deadBindsAtFrame, g_liveBinds;
+
+static void lifetimeCheck(uintptr_t op, uintptr_t a)
+{
+	GLuint name = 0;
+	GLboolean live = GL_TRUE;
+	switch (op)
+	{
+		case CHIMERA_GL_OP_glBindTexture:
+			name = ((struct ChimeraGlArgs_glBindTexture *)a)->texture;
+			if (name != 0) live = glIsTexture(name);
+			break;
+		case CHIMERA_GL_OP_glBindBuffer:
+			name = ((struct ChimeraGlArgs_glBindBuffer *)a)->buffer;
+			if (name != 0) live = glIsBuffer(name);
+			break;
+		case CHIMERA_GL_OP_glBindFramebuffer:
+			name = ((struct ChimeraGlArgs_glBindFramebuffer *)a)->framebuffer;
+			if (name != 0) live = glIsFramebuffer(name);
+			break;
+		case CHIMERA_GL_OP_glBindVertexArray:
+			name = ((struct ChimeraGlArgs_glBindVertexArray *)a)->array;
+			if (name != 0) live = glIsVertexArray(name);
+			break;
+		case CHIMERA_GL_OP_glUseProgram:
+			name = ((struct ChimeraGlArgs_glUseProgram *)a)->program;
+			if (name != 0) live = glIsProgram(name);
+			break;
+		default:
+			return;
+	}
+	if (name == 0) return;
+	if (live) g_liveBinds++; else g_deadBinds++;
+}
+
+/* ---------------------------------------------------------------------------
+ * What a savestate does to the objects the guest is holding.
+ *
+ * The bridge's contract is that GL object NAMES live in guest memory and the
+ * objects live in the driver. A savestate carries the names. It cannot carry
+ * the objects, so between saving a state and loading it the driver's world
+ * moves on underneath the names, and there are two ways that hurts:
+ *
+ *  - a name the guest still holds was DELETED since. Every call naming it is
+ *    refused, silently, and that part of the picture is whatever was there.
+ *  - a name the guest still holds was deleted and HANDED OUT AGAIN since, to a
+ *    different object. Every call naming it succeeds and draws the wrong
+ *    thing. This is the one nothing can see: no GL error, no crash, just a
+ *    picture that is quietly wrong and gets worse with every reload.
+ *
+ * Both are counted here, exactly, by giving every name a generation that goes
+ * up each time the driver hands it out. A snapshot at save time and a
+ * comparison at load time is the whole measurement.
+ *
+ * CHIMERA_GL_STATEAUDIT=1 turns it on. It is a diagnostic, not a fix: knowing
+ * the number is what decides whether a fix is worth its cost. */
+static bool glAudit()
+{
+	static const bool on = getenv("CHIMERA_GL_STATEAUDIT") != nullptr;
+	return on;
+}
+
+enum { kAuditTexture = 0, kAuditBuffer = 1, kAuditFramebuffer = 2, kAuditKinds = 3 };
+
+/* One object's life, in frames. A name is handed out, used, deleted, and later
+ * handed out again to something else entirely; each of those is an interval,
+ * and the whole question this answers is which interval a savestate believes
+ * in. */
+struct AuditLife { int64_t born; int64_t died; };  /* died < 0 while it lives */
+
+static std::vector<std::vector<AuditLife>> g_auditLives[kAuditKinds];
+static int64_t g_auditFrame;
+static uint64_t g_auditLoads, g_auditDead, g_auditReused, g_auditLeaked;
+
+static std::vector<AuditLife> &auditSlot(int kind, GLuint name)
+{
+	std::vector<std::vector<AuditLife>> &all = g_auditLives[kind];
+	if (all.size() <= name) all.resize((size_t)name + 1024);
+	return all[name];
+}
+
+static void auditGen(int kind, GLuint name)
+{
+	if (!glAudit() || name == 0) return;
+	auditSlot(kind, name).push_back(AuditLife{ g_auditFrame, -1 });
+}
+
+static void auditDelete(int kind, GLuint name)
+{
+	if (!glAudit() || name == 0) return;
+	std::vector<AuditLife> &lives = auditSlot(kind, name);
+	if (!lives.empty() && lives.back().died < 0) lives.back().died = g_auditFrame;
+}
+
+extern "C" void ce_gl_audit_frame(int64_t frame)
+{
+	if (glAudit()) g_auditFrame = frame;
+}
+
+/* What a restore to `to` does to the objects the guest is about to believe in.
+ *
+ * dead:   it holds the name of something deleted since - every call naming it
+ *         is refused silently and that part of the picture is stale.
+ * reused: it holds a name that was deleted AND handed out again to a different
+ *         object. Every call naming it succeeds and draws the wrong thing.
+ *         Nothing can see this one: no GL error, no crash.
+ * leaked: made after the frame being restored, so the guest has just forgotten
+ *         it and nothing will ever delete it.
+ */
+extern "C" void ce_gl_state_loaded(int64_t to)
+{
+	if (!glAudit()) return;
+	uint64_t dead = 0, reused = 0, held = 0, leaked = 0;
+	for (int k = 0; k < kAuditKinds; k++)
+	{
+		for (size_t n = 1; n < g_auditLives[k].size(); n++)
+		{
+			const std::vector<AuditLife> &lives = g_auditLives[k][n];
+			if (lives.empty()) continue;
+			/* which interval was this name living in at frame `to`? */
+			int at = -1;
+			for (size_t i = 0; i < lives.size(); i++)
+			{
+				if (lives[i].born <= to && (lives[i].died < 0 || lives[i].died > to)) { at = (int)i; break; }
+			}
+			if (at < 0)
+			{
+				if (lives.back().died < 0 && lives.back().born > to) leaked++;
+				continue;
+			}
+			held++;
+			const bool current = (size_t)at + 1 == lives.size();
+			if (!current) reused++;             /* died and was handed out again */
+			else if (lives[at].died >= 0) dead++;  /* died and never came back */
+		}
+	}
+	g_auditLoads++;
+	g_auditDead += dead;
+	g_auditReused += reused;
+	g_auditLeaked += leaked;
+	fprintf(stderr, "[ce-gl-audit] restore %llu to frame %lld: the state believes in"
+		" %llu objects - %llu deleted since, %llu handed out again since,"
+		" %llu made since and now orphaned\n",
+		(unsigned long long)g_auditLoads, (long long)to,
+		(unsigned long long)held, (unsigned long long)dead,
+		(unsigned long long)reused, (unsigned long long)leaked);
+	fflush(stderr);
+}
+
 static bool glWhy()
 {
 	static const bool on = getenv("CHIMERA_GL_WHY") != nullptr;
@@ -471,6 +643,9 @@ static uint64_t g_calls, g_callsAtFrame, g_frames;
 /* Defined below, beside the pool they belong to; needed here because the frame
  * boundary is where a deferred delete comes due. */
 static bool glPool();
+static bool glLifetime();
+static bool glAudit();
+static void auditGen(int kind, GLuint name);
 static void gpuTimeFrameEnd(void);
 
 extern "C" void ce_gl_release(void)
@@ -495,6 +670,16 @@ extern "C" void ce_gl_release(void)
 				(unsigned long long)g_frames, (unsigned long long)(g_calls - g_callsAtFrame),
 				(unsigned long long)g_calls, (double)g_calls / (double)g_frames);
 		fflush(stderr);
+	}
+	if (glLifetime())
+	{
+		fprintf(stderr, "[ce-gl-life] frame %llu: %llu binds named nothing"
+			" (%llu this frame, %llu live)\n",
+			(unsigned long long)g_frames, (unsigned long long)g_deadBinds,
+			(unsigned long long)(g_deadBinds - g_deadBindsAtFrame),
+			(unsigned long long)g_liveBinds);
+		fflush(stderr);
+		g_deadBindsAtFrame = g_deadBinds;
 	}
 	g_callsAtFrame = g_calls;
 	g_driverNsAtFrame = g_driverNs;
@@ -600,6 +785,33 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 			fprintf(stderr, "[ce-gl] borrowed the context (GL_VERSION now %s)\n",
 				glGetString(GL_VERSION) ? (const char *)glGetString(GL_VERSION) : "(null)");
 	}
+	if (glLifetime()) lifetimeCheck(op, a);
+	if (glAudit())
+	{
+		switch (op)
+		{
+			case CHIMERA_GL_OP_glDeleteTextures:
+			{
+				struct ChimeraGlArgs_glDeleteTextures *p = (struct ChimeraGlArgs_glDeleteTextures *)a;
+				for (GLsizei i = 0; i < p->n; i++) auditDelete(kAuditTexture, p->textures[i]);
+				break;
+			}
+			case CHIMERA_GL_OP_glDeleteBuffers:
+			{
+				struct ChimeraGlArgs_glDeleteBuffers *p = (struct ChimeraGlArgs_glDeleteBuffers *)a;
+				for (GLsizei i = 0; i < p->n; i++) auditDelete(kAuditBuffer, p->buffers[i]);
+				break;
+			}
+			case CHIMERA_GL_OP_glDeleteFramebuffers:
+			{
+				struct ChimeraGlArgs_glDeleteFramebuffers *p = (struct ChimeraGlArgs_glDeleteFramebuffers *)a;
+				for (GLsizei i = 0; i < p->n; i++) auditDelete(kAuditFramebuffer, p->framebuffers[i]);
+				break;
+			}
+			default: break;
+		}
+	}
+
 	/* Recycled buffer names, before anything else looks at the opcode: see
 	 * g_bufferPool. Both of these answer without reaching the driver when the
 	 * pool can serve them, which is the whole point. */
@@ -617,6 +829,10 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 			glGenBuffers(args->n - served, args->buffers + served);
 			for (GLsizei i = served; i < args->n; i++) poolMarkOurs(args->buffers[i]);
 		}
+		/* Including the pooled ones: a name the pool hands back IS a different
+		 * object as far as the guest is concerned, and counting it is the whole
+		 * point of the audit. */
+		for (GLsizei i = 0; i < args->n; i++) auditGen(kAuditBuffer, args->buffers[i]);
 		return 0;
 	}
 	if (glPool() && op == CHIMERA_GL_OP_glDeleteBuffers)
@@ -654,6 +870,30 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 			fprintf(stderr, "[ce-gl!] op=%lu raised %#x\n", (unsigned long)op, (unsigned)err);
 		return rv;
 	}
+	/* Names the driver (or the pool) just handed out, recorded AFTER the call
+	 * because that is when the out parameter holds them. */
+	if (glAudit())
+	{
+		switch (op)
+		{
+			case CHIMERA_GL_OP_glGenTextures:
+			{
+				const uintptr_t rv = ce_gl_dispatch_one(op, a, b, c, d, e);
+				struct ChimeraGlArgs_glGenTextures *p = (struct ChimeraGlArgs_glGenTextures *)a;
+				for (GLsizei i = 0; i < p->n; i++) auditGen(kAuditTexture, p->textures[i]);
+				return rv;
+			}
+			case CHIMERA_GL_OP_glGenFramebuffers:
+			{
+				const uintptr_t rv = ce_gl_dispatch_one(op, a, b, c, d, e);
+				struct ChimeraGlArgs_glGenFramebuffers *p = (struct ChimeraGlArgs_glGenFramebuffers *)a;
+				for (GLsizei i = 0; i < p->n; i++) auditGen(kAuditFramebuffer, p->framebuffers[i]);
+				return rv;
+			}
+			default: break;
+		}
+	}
+
 	if (glProfile())
 	{
 		if (g_opCalls == nullptr)
@@ -888,6 +1128,8 @@ extern "C" int32_t ce_gl_requested(void) { return g_requested; }
 extern "C" int32_t ce_gl_available(void) { return 0; }
 extern "C" const char *ce_gl_description(void) { return ""; }
 extern "C" void ce_gl_release(void) { }
+extern "C" void ce_gl_audit_frame(int64_t) { }
+extern "C" void ce_gl_state_loaded(int64_t) { }
 extern "C" uintptr_t ce_gl_dispatch(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) { return 0; }
 extern "C" int32_t ce_gl_start(char *error_out, int32_t error_len)
 {

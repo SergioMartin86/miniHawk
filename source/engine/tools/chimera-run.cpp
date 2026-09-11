@@ -193,6 +193,17 @@ int main(int argc, char **argv)
 	 * runner a measurement of a seek rather than of play. --render-every-frame
 	 * is the other half of that A/B: the same run, drawing. */
 	bool renderEveryFrame = false;
+	/* --rewind-loop <frame>,<times>: what re-recording actually does. A single
+	 * --seek asks whether the history holds one frame; this asks whether doing
+	 * it over and over leaves the machine, and the PICTURE, where a straight
+	 * run leaves them. A renderer whose objects live outside the savestate
+	 * degrades a little on each pass, and only a repetition shows it. */
+	int64_t rewindTo = -1;
+	int64_t rewindTimes = 0;
+	/* How many frames before the destination to start DRAWING again. A seek
+	 * replays with rendering off, and a renderer whose display stage carries
+	 * state from frame to frame needs a few composed frames to catch up. */
+	int64_t rewindWarmup = 1;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -225,6 +236,15 @@ int main(int argc, char **argv)
 		else if (arg == "--allow-core-mismatch") allowCoreMismatch = true;
 		else if (arg == "--gpu") wantGpu = true;
 		else if (arg == "--render-every-frame") renderEveryFrame = true;
+		else if (arg == "--rewind-warmup" && i + 1 < argc) rewindWarmup = std::atoll(argv[++i]);
+		else if (arg == "--rewind-loop" && i + 1 < argc)
+		{
+			std::string spec = argv[++i];
+			auto comma = spec.find(',');
+			if (comma == std::string::npos) return fail(metaPath, "--rewind-loop wants <frame>,<times>");
+			rewindTo = std::atoll(spec.substr(0, comma).c_str());
+			rewindTimes = std::atoll(spec.substr(comma + 1).c_str());
+		}
 		else if (arg == "--history-in" && i + 1 < argc) historyIn = argv[++i];
 		else if (arg == "--history-out" && i + 1 < argc) historyOut = argv[++i];
 		else if (arg == "--firmware" && i + 1 < argc)
@@ -706,6 +726,41 @@ int main(int argc, char **argv)
 		}
 	}
 
+	/* Re-recording, as many times as asked. Each pass goes back to the same
+	 * frame and replays to the end, invalidating first so the replay is a real
+	 * replay rather than a restore of the ending already cached - which is what
+	 * a person retyping inputs makes the frontend do.
+	 *
+	 * The machine must come back the same every time; the dumps at the end say
+	 * whether it did. The picture is the other half, and the reason this exists:
+	 * a renderer whose objects live on the far side of the bridge cannot be
+	 * rewound with the machine, and what that costs only shows over repetition.
+	 */
+	for (int64_t pass = 0; pass < rewindTimes && rewindTo >= 0; pass++)
+	{
+		if (ce_session_seek(session, rewindTo) != 0) return fail(metaPath, ce_session_last_error(session));
+		if (ce_session_frame(session) != rewindTo) return fail(metaPath, "rewind landed on the wrong frame");
+		ce_session_greenzone_invalidate(session, rewindTo);
+		/* Stop ONE frame short and take the last one by hand, drawing. A seek
+		 * replays with rendering off - correctly, nobody is looking at the
+		 * frames on the way - so a picture taken after a seek would be whatever
+		 * was last composed rather than this frame. The final frame has to be
+		 * drawn for the screenshot to mean anything. */
+		const int64_t warm = rewindWarmup < 1 ? 1 : rewindWarmup;
+		if (ce_session_seek(session, frames - warm) != 0) return fail(metaPath, ce_session_last_error(session));
+		for (int64_t w = 0; w < warm; w++)
+		{
+			if (ce_session_movie_advance(session, 0, nullptr, 1) < 0)
+			{
+				return fail(metaPath, ce_session_last_error(session));
+			}
+		}
+		if (ce_session_frame(session) != frames) return fail(metaPath, "replay landed on the wrong frame");
+		std::fprintf(stderr, "[rewind-loop] pass %lld of %lld done\n",
+			(long long)(pass + 1), (long long)rewindTimes);
+		std::fflush(stderr);
+	}
+
 	if (!recordPath.empty())
 	{
 		/* the session's own log, one entry per line - the shape chimera-run
@@ -740,7 +795,17 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
-		if (found < 0) return fail(metaPath, "no memory domain named " + dump.first);
+		if (found < 0)
+		{
+			std::string had;
+			for (int32_t d = 0; d < count; d++)
+			{
+				had += (d ? ", " : "");
+				had += ce_session_domain_name(session, d);
+			}
+			return fail(metaPath, "no memory domain named '" + dump.first
+				+ "'; this core has: " + had);
+		}
 		int64_t size = ce_session_domain_size(session, found);
 		std::vector<uint8_t> bytes(static_cast<size_t>(size));
 		ce_session_domain_read(session, found, 0, bytes.data(), size);

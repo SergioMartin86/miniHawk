@@ -32,5 +32,19 @@ namespace Chimera.Emulation.Common
 		/// objects came from and builds them again.
 		/// </summary>
 		bool GpuStatesSurviveTheContext { get; }
+
+		/// <summary>
+		/// How many frames this core's renderer needs to have DRAWN before its
+		/// picture is the one a straight playback would show. Zero for almost
+		/// every core.
+		///
+		/// A seek replays with drawing off, and a renderer whose display stage
+		/// carries state from one frame to the next then composes the
+		/// destination from state that never saw the frames on the way. The
+		/// frontend starts drawing this many frames before a seek's
+		/// destination, which costs a handful of composed frames per seek and
+		/// nothing at all to a core that answers zero.
+		/// </summary>
+		int RenderWarmupFrames { get; }
 	}
 }

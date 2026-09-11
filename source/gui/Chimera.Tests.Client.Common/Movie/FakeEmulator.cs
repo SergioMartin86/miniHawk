@@ -15,6 +15,8 @@ namespace Chimera.Tests.Client.Common.Movie
 		/// <summary>False, as for a renderer that does not rebuild after a context change.</summary>
 		public bool GpuStatesSurviveTheContext { get; set; }
 
+		public int RenderWarmupFrames { get; set; }
+
 		private BasicServiceProvider _serviceProvider;
 		public IEmulatorServiceProvider ServiceProvider => _serviceProvider;
 

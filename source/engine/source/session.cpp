@@ -300,6 +300,10 @@ extern "C" void ce_precompile_request(int32_t index, int32_t count, int32_t firm
 extern "C" const char *ce_gl_description(void);
 extern "C" int32_t ce_gl_requested(void);
 extern "C" void ce_gl_release(void);
+/* The bridge cannot see a savestate go by, and a savestate is exactly when its
+ * world and the guest's stop agreeing - see CHIMERA_GL_STATEAUDIT. */
+extern "C" void ce_gl_audit_frame(int64_t frame);
+extern "C" void ce_gl_state_loaded(int64_t to);
 extern "C" uintptr_t ce_gl_dispatch(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 
 struct ce_session
@@ -846,6 +850,7 @@ int32_t ce_session::advanceCore(const uint8_t *buttons, int32_t render)
 	}
 	sampleCount = nsamp;
 	frame++;
+	ce_gl_audit_frame(frame);   /* which frame the bridge's objects are being made on */
 	/* The frame is over and the caller draws next, so the GL context the bridge
 	 * borrowed goes back before it does - the same thing ce_session_frame_advance
 	 * does, and for the same reason.
@@ -893,6 +898,11 @@ bool ce_session::greenzoneRestore(int64_t to)
 	 * latches, so resend every button on the next advance */
 	std::fill(btnSent.begin(), btnSent.end(), uint8_t{ 0xFF });
 	renderingSent = -1; // see ce_session_load_state
+	/* The greenzone restores through the history rather than through
+	 * ce_session_load_state, so the bridge has to be told here too - this is
+	 * the path a rewind and a re-record actually take. */
+	ce_gl_release();
+	ce_gl_state_loaded(to);
 	frame = to;
 	return true;
 }
@@ -1485,6 +1495,7 @@ int32_t ce_session_load_state(ce_session *s, const uint8_t *data, uint64_t len)
 	chimera::WbxReturn r{};
 	s->host->wbx_load_state(s->obj, streamRead, reinterpret_cast<uintptr_t>(&stream), &r); // see save re: no bracket
 	ce_gl_release(); /* a restore can run guest code, and guest code can draw */
+	ce_gl_state_loaded(s->frame);
 	if (s->traceEvery > 0)
 	{
 		fprintf(stderr, "[trace] load state: %llu bytes, %s, machine now: threads %d running %d digest %016llx\n",

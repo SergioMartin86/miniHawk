@@ -1946,3 +1946,47 @@ because it has no persistent buffer mapping, and it cannot have one here: a
 persistent map hands back a host pointer, and a sandboxed guest cannot read host
 memory. That is the same root cause as the buffer churn the pool now absorbs,
 and the rest of it lives in the guest. Named, measured, and not pretended away.
+
+## A seek does not draw, and that is a promise about the PICTURE too (user-reported, 2026-09-11)
+
+Reported from use: a PlayStation 2 project's picture degrades as you re-record,
+without desyncing, and only playing the movie from the beginning puts it right.
+
+Four measurements, on a GTX 1060, took it apart. Rewinding once, five times and
+twenty times all produced **exactly the same** difference from a straight run -
+83,663 bytes - so it is not cumulative. Saving and reloading the state before
+every one of 3000 frames produced no difference at all, so it is not the
+savestate. A straight run with no rewind anywhere, composing only its final
+frame, produced **the same 83,663 bytes**, so it is not the rewind. And the
+software renderer did the same thing, so it is not the GPU.
+
+What it is: **a seek replays with drawing off, and one renderer's display stage
+carries state from frame to frame.** Chimera turns rendering off for the frames
+a seek passes through - nobody is looking at them - and PCSX2's turbo patch
+implements that by returning from `GSRenderer::VSync` before `Merge`. Merge is
+not only composition: it decrements a scanmask countdown, advances the
+deinterlace phase, and leaves the device holding the frame a blend deinterlacer
+will want next. Skip it for fifteen hundred frames and the one frame that IS
+composed comes from state that never saw them.
+
+**The fix is a warm-up, and the point is that it is bounded.** Drawing the last
+frame only is 7.29% of the picture wrong; the last two, 3.87%; the last five,
+exact. A core declares how many frames its renderer needs
+(`video.renderWarmupFrames`, zero for almost all of them) and the frontend
+starts drawing that many before a seek's destination. A run that rewinds three
+times with a five-frame warm-up is byte-identical to a straight run.
+
+The general rule this is an instance of: **"nobody is looking at this frame" is
+a statement about the OUTPUT, not a licence to skip the renderer's own
+bookkeeping.** Ruffle gets it right by construction - its rendering-off path
+skips the readback and still runs `Player::render`, which is where its caches and
+its `Event.RENDER` broadcast live - and Dolphin gets it right because its XFB
+always decodes from the machine's own memory. Both measured at 0.00% either way.
+PCSX2 skipped the whole stage, and this is what that cost.
+
+It also says something about what a hardware renderer's picture is allowed to
+be. The greenzone's contract has always been about the MACHINE, and this did not
+break it: EE RAM was byte-identical through every one of these runs. But a
+person watching TAStudio judges by the picture, and a picture that depends on
+which frames happened to be drawn is a picture that cannot be trusted to mean
+anything. Costing 0.75 ms a frame, there was no reason to leave it.

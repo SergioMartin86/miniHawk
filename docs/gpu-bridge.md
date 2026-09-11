@@ -118,6 +118,49 @@ rest of the session. The symptom is a pitch black screen with working sound and
 no OSD, and it is what Windows did the first time this ran against a real
 display.
 
+## A seek does not draw, and one renderer noticed
+
+Reported from use: a PlayStation 2 project's picture degrades as you re-record,
+without desyncing, and playing the movie from the beginning puts it right.
+
+It is none of the things that sounds like. Measured on a GTX 1060, Marvel vs
+Capcom 2, 3000 frames:
+
+| | |
+|---|---|
+| rewind to frame 1500 and replay, once | 7.29% of the picture differs |
+| the same, five times | **the same 7.29%** |
+| the same, twenty times | **the same 7.29%** |
+| EE RAM, every time | identical |
+| save and reload the state every frame for 3000 frames | identical, picture and RAM |
+| **a straight run with no rewind at all, composing only the last frame** | **the same 7.29%** |
+| the same on the SOFTWARE renderer | 7.56% |
+
+The last two rows are the answer. It is not cumulative, not the savestate, and
+not the GPU. **A seek replays with drawing off** - correctly, nobody is looking
+at the frames on the way - and PCSX2's turbo patch implements "off" by returning
+from `GSRenderer::VSync` before `Merge`. Merge is not only composition: it
+decrements a scanmask countdown, advances the deinterlace phase, and leaves the
+device holding the frame a blend deinterlacer needs next time. Skip it for
+fifteen hundred frames and the one frame that IS composed is composed from state
+that never saw them.
+
+So the fix is a WARM-UP, and it is bounded. Drawing the last frame only is 7.29%
+wrong, the last two 3.87%, and **the last five exactly right**. A core says how
+many frames its renderer needs (`video.renderWarmupFrames`, zero for almost all
+of them) and the frontend starts drawing that many before a seek's destination.
+PCSX2 declares ten - five with margin, and composing costs 0.75 ms a frame there,
+so the whole warm-up is under 8 ms per seek.
+
+Verified end to end: a run that rewinds three times with a five-frame warm-up is
+BYTE-IDENTICAL to a straight run. With one frame it is the 7.29% above.
+
+**Dolphin and Ruffle were measured the same way and need none** - 0.00% either
+way. Dolphin because its XFB always decodes from the machine's own memory (the
+fix in the previous section), Ruffle because its rendering-off path skips only
+the readback and still runs `Player::render`. That is the shape to copy: skip
+what is pure output, never what the renderer will need next frame.
+
 ## Telling the two failures apart
 
 A core drawn by a GPU and a core drawn by nobody fail differently, and on a

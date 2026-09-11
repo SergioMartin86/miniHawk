@@ -460,6 +460,28 @@ namespace Chimera.Emulation.Common.Waterbox
 			/// yes, and drops them for one that does not.
 			/// </summary>
 			public bool GpuStatesSurviveTheContext { get; set; }
+
+			/// <summary>
+			/// How many frames this core's renderer needs to have DRAWN before
+			/// its picture is the one a straight playback would show. Zero for
+			/// almost every core, which composes each frame from the machine
+			/// and nothing else.
+			///
+			/// A seek replays with drawing off - nobody is looking at the
+			/// frames on the way - and a renderer whose display stage carries
+			/// state from one frame to the next then composes the destination
+			/// from state that never saw them. PCSX2 does: skipping its display
+			/// stage freezes a scanmask countdown and the deinterlace phase, and
+			/// the frame a seek lands on comes out visibly different from the
+			/// same frame played through. Measured on Marvel vs Capcom 2: 7.3%
+			/// of the picture wrong with one frame drawn, 3.9% with two, and
+			/// EXACT with five.
+			///
+			/// So the frontend starts drawing this many frames before a seek's
+			/// destination. It is bounded and small - it is a warm-up, not a
+			/// dependency on history - and a core that needs none pays nothing.
+			/// </summary>
+			public int RenderWarmupFrames { get; set; }
 		}
 
 		public sealed class AudioConfig
