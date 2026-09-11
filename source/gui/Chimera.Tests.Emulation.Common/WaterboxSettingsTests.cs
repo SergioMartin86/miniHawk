@@ -56,6 +56,49 @@ namespace Chimera.Tests.Emulation.Common
 			CollectionAssert.DoesNotContain(ng, "gb.fastBoot");
 		}
 
+		/// <summary>
+		/// The engine says which settings are exposed by INDEX into the list it
+		/// was handed, which is the package's own. A machine's narrowed list is
+		/// shorter and renumbered, so the two must not be confused: they were,
+		/// and the effect was that every setting belonging to a machine
+		/// disappeared from the wizard - a Neo Geo showed none of its DIP
+		/// switches, a Game Boy no Fast Boot.
+		/// </summary>
+		[TestMethod]
+		public void AMachineSettingIsFoundAtItsPackageIndex()
+		{
+			WaterboxConfig cfg = new()
+			{
+				MachineSetting = "machine",
+				Machines =
+				[
+					new() { Id = "GB", Label = "Game Boy", When = [ "gb" ] },
+					new() { Id = "NG", Label = "Neo Geo", When = [ "ng" ] },
+				],
+				Settings =
+				[
+					new() { Name = "machine", Type = "enum", Default = "gb", Options = [ "gb", "ng" ] },
+					new() { Name = "gb.fastBoot", Default = false, When = [ "gb" ] },
+					new() { Name = "ng.settingsMode", Default = false, When = [ "ng" ] },
+					new() { Name = "ng.freePlay", Default = true, When = [ "ng" ] },
+					new() { Name = "region", Type = "enum", Default = "ntsc", Options = [ "ntsc", "pal" ] },
+				],
+			};
+
+			var ng = cfg.SettingsByDeclarationIndexFor(cfg.Machines[1])
+				.Select(static d => d?.Name).ToList();
+			Assert.AreEqual(cfg.Settings.Count, ng.Count,
+				"one slot per package setting, whether or not this machine has it");
+			CollectionAssert.AreEqual(
+				new[] { "machine", null, "ng.settingsMode", "ng.freePlay", "region" },
+				ng, "a Neo Geo keeps its own settings at the package's own indices");
+
+			var gb = cfg.SettingsByDeclarationIndexFor(cfg.Machines[0])
+				.Select(static d => d?.Name).ToList();
+			CollectionAssert.AreEqual(
+				new[] { "machine", "gb.fastBoot", null, null, "region" }, gb);
+		}
+
 		[TestMethod]
 		public void ASettingThatNamesNoMachineAppliesToAnyOfThem()
 		{

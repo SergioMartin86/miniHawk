@@ -1623,10 +1623,18 @@ namespace Chimera.Client.GUI
 				Newtonsoft.Json.JsonConvert.SerializeObject(effective));
 			// as the CHOSEN MACHINE has them: a package that is several machines
 			// narrows some settings per machine (a Master System port takes a pad
-			// or nothing, where a Mega Drive port takes six devices)
-			var all = _cfg.SettingsFor(_cfg.MachineFor(effective));
+			// or nothing, where a Mega Drive port takes six devices).
+			//
+			// Indexed against the PACKAGE's settings list, because that is the
+			// list the engine was handed and its indices count into. A narrowed
+			// list is shorter and renumbered; reading it at those indices lands
+			// on a different setting, the name check then rejects it, and every
+			// setting a machine narrows disappears - which is why a Neo Geo
+			// showed none of its DIP switches and a Game Boy no Fast Boot.
+			var all = _cfg.SettingsByDeclarationIndexFor(_cfg.MachineFor(effective));
 			var declarations = exposed
-				.Where(entry => entry.Index >= 0 && entry.Index < all.Count && all[entry.Index].Name == entry.Name)
+				.Where(entry => entry.Index >= 0 && entry.Index < all.Count
+					&& all[entry.Index] is not null && all[entry.Index].Name == entry.Name)
 				.Select(entry => all[entry.Index])
 				// ...except the renderer and the machine, which are asked beside
 				// the core on page one and would only be asked twice here

@@ -194,6 +194,47 @@ namespace Chimera.Emulation.Common.Waterbox
 
 		private readonly Dictionary<string, IReadOnlyList<SettingDecl>> _narrowed = new();
 
+		/// <summary>
+		/// The same answer as <see cref="SettingsFor"/>, laid out against the
+		/// package's OWN settings list rather than against itself: entry i is
+		/// the machine's version of <c>Settings[i]</c>, or null where the
+		/// machine does not have that setting at all.
+		///
+		/// The engine answers "which settings are exposed" with indices into
+		/// the declaration it was handed, which is the package's list. A
+		/// narrowed list is shorter and renumbered, so reading it at those
+		/// indices lands on the wrong setting - and every one of a machine's
+		/// own settings was quietly dropped that way, which is how a Neo Geo
+		/// came to show none of its DIP switches.
+		/// </summary>
+		public IReadOnlyList<SettingDecl> SettingsByDeclarationIndexFor(MachineConfig machine)
+		{
+			var decls = Settings ?? new List<SettingDecl>();
+			var key = (machine?.Id ?? "") + "\u0000"
+				+ string.Join(",", machine?.When ?? new List<string>());
+			if (_byDeclIndex.TryGetValue(key, out var cached)) return cached;
+
+			// SettingsFor keeps declaration order and only drops or rewrites
+			// entries, so walking the two together pairs each survivor with the
+			// slot it came from.
+			var narrowed = SettingsFor(machine);
+			var mapped = new SettingDecl[decls.Count];
+			var at = 0;
+			for (var i = 0; i < decls.Count; i++)
+			{
+				if (at < narrowed.Count && string.Equals(narrowed[at].Name, decls[i].Name,
+					StringComparison.Ordinal))
+				{
+					mapped[i] = narrowed[at];
+					at++;
+				}
+			}
+			_byDeclIndex[key] = mapped;
+			return mapped;
+		}
+
+		private readonly Dictionary<string, IReadOnlyList<SettingDecl>> _byDeclIndex = new();
+
 		/// <summary>The machine that IS this system, or null.</summary>
 		public MachineConfig MachineForSystem(string systemId)
 			=> HasMachines && !string.IsNullOrEmpty(systemId)

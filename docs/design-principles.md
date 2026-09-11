@@ -1783,3 +1783,38 @@ band kept every frame whatever it cost. That half is in docs/state-manager.md.
 Together: 112 ms a frame to 48, which is nine frames a second to twenty-one.
 What remains is the six thousand crossings themselves - each one a call out of
 the sandbox - and that is a batching problem, not a constant-factor one.
+
+## A machine's own settings were indexed against the wrong list (user-reported, 2026-09-11)
+
+Reported from use: the Neo Geo shows no settings at all, and it used to.
+
+The settings were there. They are declared in the package, scoped to the machine
+with `when`, and `machines.json` and `waterbox.config` both carry all seven of
+the Neo Geo's. What went wrong was arithmetic.
+
+The engine answers "which settings are exposed" with a NAME and an INDEX, and
+the index counts into the declaration it was handed - the package's own settings
+list. The wizard then read that index out of `SettingsFor(machine)`, which is a
+different list: the machine's, with the settings belonging to other machines
+dropped and everything after them renumbered. A name check caught the mismatch
+and threw the entry away, so nothing was ever displayed wrongly - it was simply
+not displayed. Every setting a machine narrows disappeared: the Neo Geo's DIP
+switches, the Game Boy's Fast Boot, the Super Famicom's PPU revisions, all of
+them, on every multi-machine core.
+
+`SettingsByDeclarationIndexFor` answers in the package's own index space - one
+slot per package setting, null where the machine does not have it - and the
+wizard reads that. The test pins the shape rather than the symptom, because the
+symptom (nothing shown) is indistinguishable from "this machine has no
+settings", which is exactly why this survived.
+
+**Worth saying about the Neo Geo in particular**, since that is where it was
+found: those seven settings ARE its DIP switches - they go straight into
+REG_DIPSW - but an **AES never reads that register**. Traced over 900 frames of
+two commercial games, it is read zero times, because the AES is a home console
+and has no DIP switches on it. The machine that reads them is the MVS, the
+arcade board, and the ares core does not offer it yet for a reason recorded in
+that core's own PLAN.md: ares has no uPD4990A, so the MVS BIOS waits on a
+real-time clock pulse that never comes. The switches are exposed now because
+they are declared and a frontend must not silently eat a declaration; what they
+do is the core's business and the core says so.
