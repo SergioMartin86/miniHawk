@@ -42,6 +42,7 @@
 #include <cstdio>   /* snprintf: both flavours report why there is no context */
 #include <cstdlib>
 #include <chrono>
+#include <vector>
 #include <ctime>    /* one ingredient of a context's identity */
 
 #ifdef CE_GL_BRIDGE
@@ -385,6 +386,10 @@ static void profileDump(void)
  * ce_gl_release under CHIMERA_GL_TRACE, which is once a frame. */
 static uint64_t g_calls, g_callsAtFrame, g_frames;
 
+/* Defined below, beside the pool they belong to; needed here because the frame
+ * boundary is where a deferred delete comes due. */
+static bool glPool();
+
 extern "C" void ce_gl_release(void)
 {
 	if (!g_borrowed) return;
@@ -415,6 +420,83 @@ extern "C" void ce_gl_release(void)
 static uintptr_t ce_gl_dispatch_one(uintptr_t op, uintptr_t a, uintptr_t b,
                                     uintptr_t c, uintptr_t d, uintptr_t e);
 
+/* ---------------------------------------------------------------------------
+ * Buffer names, recycled.
+ *
+ * Measured on a GTX 1060 (Ruffle, New Star Soccer): a hundred and thirty-nine
+ * buffers created, filled with glBufferData, and deleted EVERY FRAME - the
+ * counts pair exactly - costing 1.74 ms in glGenBuffers alone. Twelve
+ * microseconds a call, for an entry point that is supposed to do nothing but
+ * reserve a name.
+ *
+ * It does nothing but reserve a name when the driver is idle. It is not idle:
+ * the buffers being deleted are ones the GPU is still reading, so the delete
+ * is deferred and the next reservation waits behind that queue. The churn pays
+ * for itself twice over.
+ *
+ * So a deleted buffer's name is kept rather than given back to the driver, and
+ * the next request for one is answered from that list. Three things make this
+ * safe rather than clever:
+ *
+ *  - a recycled buffer is RE-SPECIFIED before use. Every one of those
+ *    hundred and thirty-nine is followed by a glBufferData, which replaces its
+ *    size and its contents outright and orphans whatever the GPU still held.
+ *    (Immutable storage would not allow that, but a guest across this bridge
+ *    cannot have ARB_buffer_storage - it hands out a host pointer - so the
+ *    mutable path is the only path here.)
+ *  - only names this bridge HANDED OUT are pooled. A guest deleting something
+ *    it never generated is a guest with a bug, and passing that through to the
+ *    driver is how it stays visible.
+ *  - the list is bounded. Past the cap the delete is a real delete, so a guest
+ *    that frees far more than it allocates cannot make this a leak.
+ *
+ * What it does NOT do is textures, and the reason is worth recording: they are
+ * created with glTexStorage2D, which is immutable. A recycled texture would
+ * have to be handed back for exactly the shape it already has, and the shape is
+ * not known until the call AFTER the one that has to choose. Doing it properly
+ * means translating texture names throughout the bridge, which is a great deal
+ * of surface for the megabyte-a-frame this would save.
+ */
+static bool glPool()
+{
+	static const bool on = getenv("CHIMERA_GL_NO_POOL") == nullptr;
+	return on;
+}
+
+static std::vector<GLuint> g_bufferPool;
+static std::vector<bool> g_bufferOurs;   /* indexed by name: did we hand it out? */
+static const size_t kBufferPoolMax = 4096;
+
+static void poolMarkOurs(GLuint name)
+{
+	if (name == 0) return;
+	if (g_bufferOurs.size() <= (size_t)name) g_bufferOurs.resize((size_t)name + 1024, false);
+	g_bufferOurs[name] = true;
+}
+
+static bool poolIsOurs(GLuint name)
+{
+	return name != 0 && (size_t)name < g_bufferOurs.size() && g_bufferOurs[name];
+}
+
+/* Textures are NOT recycled, and the reason is worth keeping.
+ *
+ * They are created with glTexStorage2D, which is immutable: a recycled texture
+ * would have to be handed back for exactly the shape it already has, and the
+ * shape is not known until the call AFTER the one that has to choose a name.
+ * Doing it properly means translating texture names throughout the bridge,
+ * which is a great deal of surface for the megabyte a frame it would save.
+ *
+ * Deferring the DELETES was tried instead - hold them a few frames so the GPU
+ * is finished before the driver is told, on the theory that glGenTextures is
+ * dear (eleven microseconds, against sixty nanoseconds for the glTexStorage2D
+ * behind it) because it drains a queue of deferred deletes. It is not: measured
+ * three ways against buffer pooling alone, it moved nothing outside the noise,
+ * and glGenTextures cost the same either way. Removed rather than kept on the
+ * strength of a plausible story, because it holds textures the guest has
+ * finished with and that is a real cost to carry for nothing.
+ */
+
 extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintptr_t b,
                                                uintptr_t c, uintptr_t d, uintptr_t e)
 {
@@ -432,6 +514,44 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 			fprintf(stderr, "[ce-gl] borrowed the context (GL_VERSION now %s)\n",
 				glGetString(GL_VERSION) ? (const char *)glGetString(GL_VERSION) : "(null)");
 	}
+	/* Recycled buffer names, before anything else looks at the opcode: see
+	 * g_bufferPool. Both of these answer without reaching the driver when the
+	 * pool can serve them, which is the whole point. */
+	if (glPool() && op == CHIMERA_GL_OP_glGenBuffers)
+	{
+		struct ChimeraGlArgs_glGenBuffers *args = (struct ChimeraGlArgs_glGenBuffers *)a;
+		GLsizei served = 0;
+		while (served < args->n && !g_bufferPool.empty())
+		{
+			args->buffers[served++] = g_bufferPool.back();
+			g_bufferPool.pop_back();
+		}
+		if (served < args->n)
+		{
+			glGenBuffers(args->n - served, args->buffers + served);
+			for (GLsizei i = served; i < args->n; i++) poolMarkOurs(args->buffers[i]);
+		}
+		return 0;
+	}
+	if (glPool() && op == CHIMERA_GL_OP_glDeleteBuffers)
+	{
+		struct ChimeraGlArgs_glDeleteBuffers *args = (struct ChimeraGlArgs_glDeleteBuffers *)a;
+		for (GLsizei i = 0; i < args->n; i++)
+		{
+			const GLuint name = args->buffers[i];
+			if (poolIsOurs(name) && g_bufferPool.size() < kBufferPoolMax)
+			{
+				g_bufferPool.push_back(name);
+				continue;
+			}
+			/* not ours, or the pool is full: a real delete, so a guest bug
+			 * stays visible and a lopsided guest cannot leak */
+			glDeleteBuffers(1, &name);
+			if (name != 0 && (size_t)name < g_bufferOurs.size()) g_bufferOurs[name] = false;
+		}
+		return 0;
+	}
+
 	/* CHIMERA_GL_CHECK asks the driver, after every crossing, whether that call
 	 * upset it. Nothing else can: a core's renderer sees only what this hands
 	 * back, so a GL error raised out here is invisible to it and to the user -

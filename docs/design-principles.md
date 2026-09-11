@@ -1856,3 +1856,56 @@ a copy out of memory the CPU has just written; a real driver's is a transfer it
 has already had to wait for. Numbers taken on Mesa in WSL do not transfer to a
 GPU, and this codebase has a whole memory note saying so - which did not stop
 it happening.
+
+## A deleted buffer's name is kept (2026-09-11)
+
+The profile above said Ruffle's frame spends 1.74 ms in `glGenBuffers`. A
+hundred and thirty-nine buffers created, filled with `glBufferData`, and deleted
+every frame - the counts pair exactly - at twelve microseconds a call for an
+entry point whose whole job is to reserve a name.
+
+Reserving a name does not cost twelve microseconds. What costs that is the
+driver draining deferred deletes: the buffers being freed are ones the GPU is
+still reading, so the delete is held, and the next reservation queues behind it.
+The churn is paid for twice.
+
+So the bridge keeps the name instead of giving it back, and answers the next
+request from that list. Three things make it safe rather than clever:
+
+- **A recycled buffer is re-specified before use.** Every one of those hundred
+  and thirty-nine is followed by a `glBufferData`, which replaces its size and
+  contents outright and orphans whatever the GPU still held. Immutable storage
+  would not allow that, but a guest across this bridge cannot have
+  `ARB_buffer_storage` - it hands out a host pointer - so the mutable path is
+  the only path here.
+- **Only names the bridge handed out are pooled.** A guest deleting something it
+  never generated has a bug, and passing that through to the driver is how the
+  bug stays visible.
+- **The list is bounded.** Past the cap a delete is a real delete, so a guest
+  that frees far more than it allocates cannot turn this into a leak.
+
+Measured on a GTX 1060, frames differenced to remove startup: 18.12 ms a frame
+to **16.97**, and the driver's share 13.50 to 11.36. `glGenBuffers` leaves the
+profile entirely. `CHIMERA_GL_NO_POOL=1` turns it off, which is how the A/B was
+taken and how the next person can retake it.
+
+**The oracle for a change like this is the picture, not the clock.** Three
+frames apiece of Ruffle and of Dolphin, captured on the real GPU with the pool
+on and off: byte-identical, all six. A GL object pool that changes a pixel is
+not an optimisation, and nothing else in this codebase can tell you that it did.
+
+### Deferring texture deletes: tried, measured, removed
+
+Textures churn the same way - a hundred created and deleted a frame, and
+`glGenTextures` is 1.13 ms while the `glTexStorage2D` behind it is sixty
+NANOseconds. They cannot be pooled: `glTexStorage2D` is immutable, so a recycled
+texture must be handed back for exactly the shape it already has, and the shape
+is not known until the call after the one that has to choose a name. Doing it
+properly means translating texture names throughout the bridge.
+
+The cheap version - hold the deletes a few frames so the GPU has finished before
+the driver is told - was written, and it does nothing. Three runs against buffer
+pooling alone: 17.14, 17.53 against 17.03, 16.90, and `glGenTextures` cost the
+same either way. It was removed rather than kept on the strength of a plausible
+story, because it holds textures the guest has finished with, and that is a real
+cost to carry for nothing.
