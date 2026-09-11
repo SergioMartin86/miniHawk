@@ -366,17 +366,99 @@ static bool glProfile()
 }
 
 enum { kProfileOps = CHIMERA_GL_OP_LIST_LENGTH + 100 };
-static uint64_t *g_opCalls, *g_opNs;
+static uint64_t *g_opCalls, *g_opNs, *g_opMax, *g_opSlow;
+
+/* A call that averages a hundred microseconds is one of two very different
+ * things: every call costing a hundred, or one call in fifty costing five
+ * milliseconds while the rest cost nothing. The first is overhead and the
+ * second is a BLOCK - the CPU waiting for the GPU - and they want opposite
+ * fixes. So the longest call and the number over 50us are kept beside the
+ * total, because the average cannot tell them apart. */
+static const uint64_t kSlowNs = 50000;
+
+/* CHIMERA_GL_WHY: what the guest was DOING when it blocked.
+ *
+ * A profile says which call waited; it cannot say what the wait was for. The
+ * calls before it can: a fence waited on straight after a readback is a
+ * different problem from one waited on straight after a draw. So the last few
+ * opcodes are kept in a ring, and a call that blocks prints them.
+ *
+ * Bounded on purpose - the first few blocks of a run say everything, and a
+ * hundred thousand of them would say nothing at all. */
+static unsigned g_whyRing[16];
+static unsigned g_whyAt;
+static int g_whyLeft = -1;
+
+/* CHIMERA_GL_GPUTIME: is the GPU actually the one that is busy?
+ *
+ * The profile says the guest blocks eighteen times a frame waiting on a fence.
+ * That has two readings and they want opposite fixes: the GPU genuinely has
+ * that much work, or it does not and the waits are the pipeline being drained
+ * for no good reason. A timestamp at the first call of a frame and another at
+ * the last, read a frame later when they are certainly available, says which -
+ * if the GPU's own span is most of the frame it is saturated, and if it is a
+ * fraction the CPU is waiting on something it need not.
+ */
+static bool glGpuTime()
+{
+	static const bool on = getenv("CHIMERA_GL_GPUTIME") != nullptr;
+	return on;
+}
+
+static GLuint g_tsQuery[2];
+static bool g_tsPending;
+static uint64_t g_gpuNsTotal, g_gpuFrames;
+
+static void gpuTimeFrameBegin(void)
+{
+	if (!glGpuTime()) return;
+	if (g_tsQuery[0] == 0) glGenQueries(2, g_tsQuery);
+	if (g_tsPending)
+	{
+		GLuint64 a = 0, b = 0;
+		glGetQueryObjectui64v(g_tsQuery[0], GL_QUERY_RESULT, &a);
+		glGetQueryObjectui64v(g_tsQuery[1], GL_QUERY_RESULT, &b);
+		if (b > a) { g_gpuNsTotal += (uint64_t)(b - a); g_gpuFrames++; }
+		g_tsPending = false;
+	}
+	glQueryCounter(g_tsQuery[0], GL_TIMESTAMP);
+}
+
+static void gpuTimeFrameEnd(void)
+{
+	if (!glGpuTime() || g_tsQuery[1] == 0) return;
+	glQueryCounter(g_tsQuery[1], GL_TIMESTAMP);
+	g_tsPending = true;
+	if (g_gpuFrames > 0 && g_gpuFrames % 100 == 0)
+	{
+		fprintf(stderr, "[ce-gl-gpu] %llu frames, GPU span %.3f ms a frame\n",
+			(unsigned long long)g_gpuFrames,
+			(double)g_gpuNsTotal / 1e6 / (double)g_gpuFrames);
+		fflush(stderr);
+	}
+}
+
+static bool glWhy()
+{
+	static const bool on = getenv("CHIMERA_GL_WHY") != nullptr;
+	if (on && g_whyLeft < 0)
+	{
+		const char *v = getenv("CHIMERA_GL_WHY");
+		g_whyLeft = (v != nullptr && *v >= '1' && *v <= '9') ? atoi(v) : 40;
+	}
+	return on;
+}
 
 static void profileDump(void)
 {
 	if (g_opCalls == nullptr) return;
-	fprintf(stderr, "[ce-gl-profile] op,calls,ms\n");
+	fprintf(stderr, "[ce-gl-profile] op,calls,ms,slow,maxus\n");
 	for (int op = 0; op < kProfileOps; op++)
 	{
 		if (g_opCalls[op] == 0) continue;
-		fprintf(stderr, "[ce-gl-profile] %d,%llu,%.3f\n", op,
-			(unsigned long long)g_opCalls[op], (double)g_opNs[op] / 1e6);
+		fprintf(stderr, "[ce-gl-profile] %d,%llu,%.3f,%llu,%.1f\n", op,
+			(unsigned long long)g_opCalls[op], (double)g_opNs[op] / 1e6,
+			(unsigned long long)g_opSlow[op], (double)g_opMax[op] / 1e3);
 	}
 	fflush(stderr);
 }
@@ -389,10 +471,12 @@ static uint64_t g_calls, g_callsAtFrame, g_frames;
 /* Defined below, beside the pool they belong to; needed here because the frame
  * boundary is where a deferred delete comes due. */
 static bool glPool();
+static void gpuTimeFrameEnd(void);
 
 extern "C" void ce_gl_release(void)
 {
 	if (!g_borrowed) return;
+	gpuTimeFrameEnd();
 	return_current();
 	g_borrowed = false;
 	if (glTrace())
@@ -479,6 +563,7 @@ static bool poolIsOurs(GLuint name)
 	return name != 0 && (size_t)name < g_bufferOurs.size() && g_bufferOurs[name];
 }
 
+
 /* Textures are NOT recycled, and the reason is worth keeping.
  *
  * They are created with glTexStorage2D, which is immutable: a recycled texture
@@ -510,6 +595,7 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 		save_current();
 		bind_ours();
 		g_borrowed = true;
+		gpuTimeFrameBegin();
 		if (glTrace())
 			fprintf(stderr, "[ce-gl] borrowed the context (GL_VERSION now %s)\n",
 				glGetString(GL_VERSION) ? (const char *)glGetString(GL_VERSION) : "(null)");
@@ -574,8 +660,14 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 		{
 			g_opCalls = (uint64_t *)calloc(kProfileOps, sizeof(uint64_t));
 			g_opNs = (uint64_t *)calloc(kProfileOps, sizeof(uint64_t));
-			if (g_opCalls == nullptr || g_opNs == nullptr) { free(g_opCalls); free(g_opNs);
-				g_opCalls = nullptr; g_opNs = nullptr; }
+			g_opMax = (uint64_t *)calloc(kProfileOps, sizeof(uint64_t));
+			g_opSlow = (uint64_t *)calloc(kProfileOps, sizeof(uint64_t));
+			if (g_opCalls == nullptr || g_opNs == nullptr
+				|| g_opMax == nullptr || g_opSlow == nullptr)
+			{
+				free(g_opCalls); free(g_opNs); free(g_opMax); free(g_opSlow);
+				g_opCalls = nullptr; g_opNs = nullptr; g_opMax = nullptr; g_opSlow = nullptr;
+			}
 			/* ce_gl_release marks the frame boundary, and a host that is not
 			 * drawing never calls it - so a run with rendering off would
 			 * otherwise collect the whole profile and print none of it. */
@@ -590,6 +682,26 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 		{
 			g_opCalls[op]++;
 			g_opNs[op] += took;
+			if (took > g_opMax[op]) g_opMax[op] = took;
+			if (took > kSlowNs) g_opSlow[op]++;
+			if (glWhy())
+			{
+				if (took > kSlowNs && g_whyLeft > 0)
+				{
+					g_whyLeft--;
+					fprintf(stderr, "[ce-gl-why] op %lu blocked %.0f us after:",
+						(unsigned long)op, (double)took / 1e3);
+					for (unsigned i = 0; i < 16; i++)
+					{
+						const unsigned at = (g_whyAt + i) % 16;
+						if (g_whyRing[at] != 0) fprintf(stderr, " %u", g_whyRing[at]);
+					}
+					fprintf(stderr, "\n");
+					fflush(stderr);
+				}
+				g_whyRing[g_whyAt] = (unsigned)op;
+				g_whyAt = (g_whyAt + 1) % 16;
+			}
 		}
 		return rv;
 	}

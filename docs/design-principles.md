@@ -1894,7 +1894,7 @@ frames apiece of Ruffle and of Dolphin, captured on the real GPU with the pool
 on and off: byte-identical, all six. A GL object pool that changes a pixel is
 not an optimisation, and nothing else in this codebase can tell you that it did.
 
-### Deferring texture deletes: tried, measured, removed
+### Deferring texture deletes: tried, removed, then actually measured
 
 Textures churn the same way - a hundred created and deleted a frame, and
 `glGenTextures` is 1.13 ms while the `glTexStorage2D` behind it is sixty
@@ -1904,8 +1904,45 @@ is not known until the call after the one that has to choose a name. Doing it
 properly means translating texture names throughout the bridge.
 
 The cheap version - hold the deletes a few frames so the GPU has finished before
-the driver is told - was written, and it does nothing. Three runs against buffer
-pooling alone: 17.14, 17.53 against 17.03, 16.90, and `glGenTextures` cost the
-same either way. It was removed rather than kept on the strength of a plausible
-story, because it holds textures the guest has finished with, and that is a real
-cost to carry for nothing.
+the driver is told - was written and removed. It is 0.5 ms a frame WORSE:
+17.74 and 17.59 against 17.22 and 17.19 for buffer pooling alone.
+
+**Those are not the numbers this section first carried, and the first ones were
+worthless.** `chimera-run` compiles the engine's sources straight in
+(`meson.build`: `engine_src + gl_bridge_src`); it does not load
+`libchimera.dll`. Every A/B taken by copying the DLL beside it and leaving the
+executable alone measured the same binary twice, and reported the difference
+between two runs of it as the difference between two builds. Copy BOTH, and
+md5sum both, every time - the note about staging a fresh directory per
+experiment was already in this codebase's memory and it was still not enough,
+because it did not say which files.
+
+## The fence waiting is the GPU, and the GPU is busy (2026-09-11)
+
+After the buffer pool, the largest single item in Ruffle's frame was 6.7 ms in
+`glGetSynciv`. An average cannot say what that is: every call costing a hundred
+microseconds is overhead, and one call in fifty costing five milliseconds is a
+BLOCK. So the profile grew a longest-call and an over-50us count, and then
+`CHIMERA_GL_WHY=N`, which prints the last sixteen opcodes whenever a call
+blocks - because a profile says which call waited and never what the wait was
+for.
+
+It is unambiguous. In steady state, 2851 of 3428 blocking events were
+`glGetSynciv` and every one of them came immediately after
+`DrawElementsInstancedBaseVertexBaseInstance`: about eighteen a frame, 267
+microseconds each, the guest issuing a draw and then waiting for the GPU. The
+rest is the readback, once a frame, as a chain that is exactly what it looks
+like - `ReadPixels`, `FenceSync`, `Flush`, `GetSynciv`, `ClientWaitSync`,
+`GetBufferSubData`, each one blocking, about 2 ms together.
+
+**The waits are real.** `CHIMERA_GL_GPUTIME=1` brackets each frame with
+`glQueryCounter(GL_TIMESTAMP)` and reads the pair a frame later: the GPU's own
+span is the same order as the whole frame. And the frame tracks GPU work -
+Ruffle's `quality` from high to low is 17.07 ms a frame to 14.43, a 15% cut for
+nothing but less multisampling. The CPU is waiting on a GPU that has the work.
+
+So the bridge cannot take this one. It is wgpu's OpenGL backend synchronising
+because it has no persistent buffer mapping, and it cannot have one here: a
+persistent map hands back a host pointer, and a sandboxed guest cannot read host
+memory. That is the same root cause as the buffer churn the pool now absorbs,
+and the rest of it lives in the guest. Named, measured, and not pretended away.

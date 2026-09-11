@@ -846,6 +846,18 @@ int32_t ce_session::advanceCore(const uint8_t *buttons, int32_t render)
 	}
 	sampleCount = nsamp;
 	frame++;
+	/* The frame is over and the caller draws next, so the GL context the bridge
+	 * borrowed goes back before it does - the same thing ce_session_frame_advance
+	 * does, and for the same reason.
+	 *
+	 * It was missing here, which is how the movie path differed from the
+	 * frontend's: a caller that plays a movie AND draws would have found our
+	 * context still current under it. Nothing in the tree does both, so it cost
+	 * nobody a picture; what it cost was the frame BOUNDARY, which is where the
+	 * bridge counts a frame, prints its per-frame diagnostics and retires a
+	 * frame's worth of bookkeeping. On this path there were no frames at all,
+	 * and a measurement taken through chimera-run silently had none. */
+	ce_gl_release();
 	const int32_t lag = inputWasRead != nullptr && inputWasRead() == 0 ? 1 : 0;
 	trace(lag, render);
 	return lag;
