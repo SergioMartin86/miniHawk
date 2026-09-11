@@ -161,6 +161,26 @@ fix in the previous section), Ruffle because its rendering-off path skips only
 the readback and still runs `Player::render`. That is the shape to copy: skip
 what is pure output, never what the renderer will need next frame.
 
+### The sweep the rest of this section came from
+
+Every bridged core with content to run it, on the GTX 1060, 2026-09-11. "Rewind"
+is three passes of seek-back-and-replay against a straight run of the same
+movie; "warm-up" is the every-frame-composed against last-frame-only test that
+isolates a renderer's frame-to-frame display state.
+
+| core | straight run twice | rewind x3: machine | rewind x3: picture | needs a warm-up |
+|---|---|---|---|---|
+| PCSX2 (Marvel vs Capcom 2) | identical | EE RAM identical | 7.29% before the fix | **yes, 5 frames** |
+| Dolphin (Pro Rally 2002) | identical | System RAM identical | identical | no (0.00%) |
+| Ruffle (New Star Soccer) | identical | - (no domains) | identical | no (0.00%) |
+| xemu | - | - | - | not run: no valid eeprom.bin here |
+| Flycast | - | - | - | not run: no dc_boot.bin here |
+| RPCS3 | - | - | - | not run |
+
+PCSX2 was also put through a savestate round trip before every one of 3000
+frames (`chimera-run --rerecord`): picture and EE RAM identical at every
+checkpoint. Whatever the bridge does to a rewind, it is not that.
+
 ## The fallback that does not fall back (Windows, 2026-09-11)
 
 "When either fails the core draws the way it draws without a GPU" is what this
