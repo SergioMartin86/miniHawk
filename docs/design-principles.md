@@ -2043,3 +2043,48 @@ check catches the bug without having to construct windows that need an emulator
 and a live session. Its limit is worth knowing: a window that overrides
 correctly and ALSO assigns `Text` somewhere later still gets through, so the
 per-form tests that open a dialog and read its title back stay worth writing.
+
+## A movie's log has a shape, and only the machine can describe it
+(user-reported, 2026-09-11)
+
+Reported from use (issue #54): open a project, seek so some frames are green,
+select a range and press Delete. A "Failed to draw input roll" box appears, the
+project closes, and the frontend then falls over painting the roll it no longer
+has a movie for. Not core-specific: seen on DOSBox-X, reproduced on PCSX2.
+
+What is thrown, from inside the paint, is
+`ArgumentOutOfRangeException: Length cannot be less than zero` out of
+`MovieController.SetFromMnemonic` - it looked for the comma that ends an axis
+field, found none, and asked for a substring of negative length. The entry it
+was reading had no axis fields at all. That entry was the one Delete had just
+written: Clear is the only editing path that generates an entry from
+`DefaultValueController` rather than from the frame's own state, and
+`DefaultValueController` was built once, lazily, and kept for the movie's life.
+
+The order that poisons it is the order a project opens in. The file says which
+core to boot and with what, so the file is READ FIRST; until that boot the
+frontend's emulator is the null one, whose controller has no controls and -
+because `InputManager.SyncControls` builds a mnemonics cache for every emulator
+it syncs, the null one included - is perfectly willing to generate entries. The
+read touches `DefaultValueController` (finding where the run's input stops), and
+that first touch fixed the writer's idea of an entry as "115 controls, none of
+them axes" for the rest of the session, while every reader used the machine's
+own controller, which knows this movie's four mouse axes.
+
+The corroborating measurement was on screen the whole time: the reporter's
+"Last input" marker sat on frame 844, the last frame of the movie, when the run's
+input stops at 744. That marker is found by comparing entries against an empty
+one, and an "empty" generated from the null emulator's controller (131 characters,
+no commas) matches no real entry (151 characters, four axis fields), so the search
+runs off the end.
+
+**The rule: a controller used to generate or parse a movie's entries is not a
+thing to cache across the boot that defines it.** Both caches now remember the
+definition and the log key they were built from and rebuild when either changes
+(`MovieBase.DefaultValueController`, `TasMovie.DisplayValue`), and `TasMovie.Attach`
+- which runs after the session has the machine's controller - works out where
+the input stops a second time, because the pass done during the read could not
+have been right. What makes this class of bug expensive is that the two halves
+fail asymmetrically: writing a wrongly-shaped entry is silent, and the cost is
+paid later by a reader in the middle of a paint, where there is nothing sensible
+to do with an exception.

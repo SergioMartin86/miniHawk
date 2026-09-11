@@ -68,6 +68,15 @@ namespace Chimera.Client.Common
 			RefreshPins();
 
 			base.Attach(emulator);
+
+			// Where the run's input stops is found by comparing entries against an
+			// empty one, and what "empty" looks like is the machine's to say. A
+			// project is READ before its core boots, so the pass done there had
+			// only the null emulator's controller to ask and cannot be trusted.
+			// The machine is here now, so the answer - and the marker that shows
+			// it - are worked out again.
+			RefreshLastNonEmptyInput(0);
+			Markers.RefreshPermanent();
 		}
 
 		public override bool StartsFromSavestate
@@ -213,7 +222,8 @@ namespace Chimera.Client.Common
 		public void InvalidateEntireGreenzone()
 			=> InvalidateAfter(0);
 
-		private (int Frame, IMovieController Controller) _displayCache = (-1, null);
+		private (int Frame, IMovieController Controller, ControllerDefinition Definition, string LogKey) _displayCache
+			= (-1, null, null, null);
 
 		/// <summary>
 		/// Returns the mnemonic value for boolean buttons, and actual value for axes,
@@ -221,9 +231,20 @@ namespace Chimera.Client.Common
 		/// </summary>
 		public string DisplayValue(int frame, string buttonName, bool defaultAxisAsBlank)
 		{
+			// The shape this reader was built for can change under it - see
+			// MovieBase.DefaultValueController for how - and a reader built for
+			// another shape gets every entry wrong, so it is thrown away and made
+			// again rather than kept for the movie's lifetime.
+			var definition = Session.MovieController.Definition;
+			if (_displayCache.Controller is null
+				|| !ReferenceEquals(_displayCache.Definition, definition)
+				|| _displayCache.LogKey != LogKey)
+			{
+				_displayCache = (-1, new MovieController(definition, LogKey), definition, LogKey);
+			}
+
 			if (_displayCache.Frame != frame || Log.Count == 1)
 			{
-				_displayCache.Controller ??= new MovieController(Session.MovieController.Definition, LogKey);
 				_displayCache.Controller.SetFromMnemonic(Log[frame]);
 				_displayCache.Frame = frame;
 			}

@@ -26,7 +26,11 @@ namespace Chimera.Tests.Client.Common.Movie
 		public IDictionary<string, object> UserBag { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
 
 
-		public IMovieController MovieController { get; }
+		/// <summary>
+		/// Settable, because the real session replaces it when a core boots: a
+		/// movie read before that happens sees the null emulator's controller.
+		/// </summary>
+		public IMovieController MovieController { get; set; }
 
 		public IController StickySource { get; set; }
 		public IController MovieIn { get; set; } = NullController.Instance;

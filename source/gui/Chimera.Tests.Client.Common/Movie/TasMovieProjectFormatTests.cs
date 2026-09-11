@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 
 using Chimera.Client.Common;
+using Chimera.Emulation.Common;
 
 namespace Chimera.Tests.Client.Common.Movie
 {
@@ -550,6 +551,92 @@ namespace Chimera.Tests.Client.Common.Movie
 			Assert.IsFalse(loaded.Save().IsError);
 			using var overwritten = Chimera.Emulation.Common.Engine.EngineProject.Open(path);
 			StringAssert.Contains(overwritten.SettingsJson, "\"fast_boot\":true");
+		}
+		/// <summary>
+		/// The controller the frontend holds before any core has booted: the null
+		/// emulator's, which names no controls at all. It carries a mnemonics
+		/// cache because InputManager builds one for every emulator it syncs, the
+		/// null one included - so an entry CAN be generated from it rather than
+		/// the attempt being refused, which is what lets the fault below through.
+		/// </summary>
+		private static ControllerDefinition NullEmulatorControls()
+		{
+			var definition = new ControllerDefinition("Null Controller").MakeImmutable();
+			definition.BuildMnemonicsCache("NULL");
+			return definition;
+		}
+
+		/// <summary>
+		/// Opens a saved project in the order the frontend really does it: the
+		/// file is read FIRST, because it is the file that says which core to boot
+		/// and with what, and only afterwards does the session get the machine's
+		/// own controller.
+		/// </summary>
+		private static TasMovie OpenTheWayAProjectOpens(string path)
+		{
+			FakeEmulator emu = new();
+			FakeMovieSession session = new(emu)
+			{
+				MovieController = new MovieController(NullEmulatorControls()),
+			};
+			TasMovie movie = new(session, path);
+			session.Movie = movie;
+			Assert.IsTrue(movie.Load(), "the project should load");
+
+			// the boot: the machine is up, and the session speaks its controller
+			session.MovieController = new MovieController(emu.ControllerDefinition, movie.LogKey);
+			movie.Attach(emu);
+			return movie;
+		}
+
+		/// <summary>
+		/// Clearing frames writes a neutral entry over each one, and the piano
+		/// roll reads those entries back on its very next paint. Both halves have
+		/// to agree on the shape of an entry, and the writer's idea of it used to
+		/// be settled the first time anything asked - during the project READ,
+		/// before the core had booted, when the only controller to ask was the
+		/// null emulator's and it knew none of this movie's axes. The entry that
+		/// came out had no axis fields at all, and reading it back threw out of
+		/// the paint: "Failed to draw input roll" (issue #54).
+		/// </summary>
+		[TestMethod]
+		public void AClearedFrameIsStillShapedLikeTheMovie()
+		{
+			var path = Path.Combine(_dir, "clear-after-boot.chimeraProject");
+			var worked = MakeWorkedMovie(path); // presses A on frame 3 of 6
+			Assert.IsFalse(worked.Save().IsError);
+
+			var movie = OpenTheWayAProjectOpens(path);
+			var neutral = movie.GetInputLogEntry(0);
+
+			movie.ClearFrame(3); // the Delete key, one frame of the selection
+
+			// the paint that follows the edit
+			Assert.AreEqual("", movie.DisplayValue(3, "A", true));
+			Assert.AreEqual("", movie.DisplayValue(3, "Stick", true));
+			Assert.AreEqual(neutral, movie.GetInputLogEntry(3),
+				"the cleared entry is not shaped like the rest of the log");
+		}
+
+		/// <summary>
+		/// Where a run's input stops is found by comparing entries against an
+		/// empty one, and only the machine can say what empty looks like. Answered
+		/// before the boot it matches nothing, so the answer falls through to the
+		/// last frame of the movie and the run's "Last input" marker sits at the
+		/// end of a run whose input stopped long before.
+		/// </summary>
+		[TestMethod]
+		public void WhereTheInputStopsIsAnsweredByTheMachine()
+		{
+			var path = Path.Combine(_dir, "last-input-after-boot.chimeraProject");
+			var worked = MakeWorkedMovie(path); // presses A on frame 3 of 6
+			Assert.IsFalse(worked.Save().IsError);
+
+			var movie = OpenTheWayAProjectOpens(path);
+
+			Assert.AreEqual(3, movie.LastNonEmptyInputFrame);
+			Assert.AreEqual(3, movie.Markers.Find(static m => m.Permanence == MarkerPermanence.LastInput)!.Frame,
+				"the run's own marker followed the wrong answer");
 		}
 	}
 }

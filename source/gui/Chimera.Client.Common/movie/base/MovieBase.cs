@@ -6,12 +6,36 @@ namespace Chimera.Client.Common
 	public abstract partial class MovieBase : BasicMovieInfo, IMovie, IDisposable
 	{
 		private IController _defaultValueController;
+		private ControllerDefinition _defaultValueControllerDefinition;
+		private string _defaultValueControllerLogKey;
+
+		/// <summary>
+		/// A controller with nothing pressed on it, shaped like the entries of
+		/// THIS movie's input log.
+		/// </summary>
+		/// <remarks>
+		/// Neither half of that shape is available at construction time, and
+		/// neither stays put: a project is read before its core boots, so the
+		/// first caller here is handed the null emulator's controller, which
+		/// knows none of the movie's axes. An entry generated from that one has
+		/// no axis fields at all, and the next read of the frame it was written
+		/// to cannot parse it - which is what made clearing frames take the
+		/// piano roll down (issue #54). So what this was built from is
+		/// remembered, and it is built again the moment either half changes.
+		/// </remarks>
 		protected IController DefaultValueController
 		{
 			get
 			{
-				// LogKey isn't available at construction time, so we have to create this instance when it is accessed.
-				_defaultValueController ??= new MovieController(Session.MovieController.Definition, LogKey);
+				var definition = Session.MovieController.Definition;
+				if (_defaultValueController is null
+					|| !ReferenceEquals(_defaultValueControllerDefinition, definition)
+					|| _defaultValueControllerLogKey != LogKey)
+				{
+					_defaultValueController = new MovieController(definition, LogKey);
+					_defaultValueControllerDefinition = definition;
+					_defaultValueControllerLogKey = LogKey;
+				}
 				return _defaultValueController;
 			}
 		}
