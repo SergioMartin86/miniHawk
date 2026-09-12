@@ -44,23 +44,57 @@ namespace Chimera.Client.GUI
 		/// <summary>Why the last Run returned null, in the words of whatever refused it; null when it succeeded.</summary>
 		public static string LastFailure { get; private set; }
 
+		/// <summary>How much one session is assumed to need, measured rather than guessed.</summary>
+		/// <remarks>
+		/// A session holds a PlayStation 3's address space and an LLVM compiler at
+		/// once. One compiling Ultra Street Fighter IV was measured peaking at
+		/// 8.32 GB, so the old figure of 8 GB was under the real cost - and it was
+		/// multiplied by everything the machine said was free, leaving nothing for
+		/// this process or the system. Both halves of that end the same way: the
+		/// operating system kills a session, and a killed session says nothing on
+		/// its way out, which is how this came back as "failed without saying why".
+		/// </remarks>
+		private const double GigabytesPerSession = 10;
+
+		/// <summary>Left for the system and for this process, never handed to sessions.</summary>
+		private const double GigabytesReserved = 4;
+
 		/// <summary>
-		/// How many sessions run side by side. A session compiling a big game
-		/// peaks at several gigabytes - it holds a machine's address space and a
-		/// compiler at once - so this is bounded by memory as well as by cores:
-		/// one session per 8 GB the machine can spare, never more than half the
-		/// cores, never more than eight. Fewer sessions is slower; too many is a
-		/// machine that swaps, which is slower still.
+		/// How many sessions run side by side: one per <see cref="GigabytesPerSession"/>
+		/// of what the machine can spare AFTER <see cref="GigabytesReserved"/>, never
+		/// more than half the cores, never more than eight, never fewer than one.
+		/// Fewer sessions is slower; too many is a machine that swaps, or kills them.
 		/// </summary>
 		public static int Workers
 		{
 			get
 			{
 				var byCores = Math.Max(1, Environment.ProcessorCount / 2);
-				var byMemory = Math.Max(1, (int)(AvailableGigabytes() / 8));
+				var spare = Math.Max(0, AvailableGigabytes() - GigabytesReserved);
+				var byMemory = Math.Max(1, (int)(spare / GigabytesPerSession));
 				return Math.Min(8, Math.Min(byCores, byMemory));
 			}
 		}
+
+		/// <summary>
+		/// What an exit code says about how a session ended. A session that the
+		/// system killed prints nothing, so its code is the only evidence there
+		/// is - and reporting "failed without saying why" while holding it was
+		/// throwing the evidence away.
+		/// </summary>
+		internal static string WhyItDied(int code) => code switch
+		{
+			137 => "killed by the system (out of memory)",          // 128 + SIGKILL
+			139 => "crashed (segmentation fault)",                  // 128 + SIGSEGV
+			134 => "aborted",                                       // 128 + SIGABRT
+			-1073741819 => "crashed (access violation)",            // 0xC0000005
+			-1073741801 => "out of memory",                         // 0xC0000017
+			-1073740791 => "crashed (stack buffer overrun)",        // 0xC0000409
+			_ => $"exit code {code}",
+		};
+
+		/// <summary>Whether a code is one the machine gives for running out of memory.</summary>
+		internal static bool DiedForWantOfMemory(int code) => code is 137 or -1073741801;
 
 		/// <summary>What the machine can spare right now, in GB; 8 when it will not say.</summary>
 		private static double AvailableGigabytes()
@@ -163,88 +197,120 @@ namespace Chimera.Client.GUI
 				return null;
 			}
 
-			var n = Workers;
-			var done = new uint[n];
-			var total = new uint[n];
 			var found = new Dictionary<string, string>(StringComparer.Ordinal);
-			var processes = new List<Process>();
-			string failure = null;
 			LastFailure = null;
+			var workers = Workers;
+			// kept across attempts: a session's own words are worth more than
+			// anything inferred from an exit code, whichever attempt said them
+			string refused = null;
 
-			void Line(int index, string line)
+			// A session the system killed took its share of the work with it, and a
+			// manifest written from what the others managed would be a list of what
+			// this game needs with holes in it. The answer is not to give up: it is
+			// to want less at once. Halving the sessions and going again turns the
+			// one failure a person cannot act on into a slower success they do not
+			// have to know about.
+			for (;;)
 			{
-				var refusal = RefusalLine.Match(line);
-				if (refusal.Success)
+				var done = new uint[workers];
+				var total = new uint[workers];
+				var processes = new List<Process>();
+				string failure = null;
+
+				void Line(int index, string line)
 				{
-					// first one wins: the others are the same modal in the other sessions
-					lock (found) { failure ??= refusal.Groups[1].Value; }
-					return;
-				}
-				var m = CacheLine.Match(line);
-				if (m.Success)
-				{
-					lock (found)
+					var refusal = RefusalLine.Match(line);
+					if (refusal.Success)
 					{
-						// stored and fetched both count: a worker that found an
-						// object another one had just written still needs it
-						found[m.Groups[2].Value] = m.Groups[3].Value.ToUpperInvariant();
+						// first one wins: the others are the same modal in the other sessions
+						lock (found)
+						{
+							failure ??= refusal.Groups[1].Value;
+							refused ??= refusal.Groups[1].Value;
+						}
+						return;
 					}
-					onEntry?.Invoke(new Entry { Name = m.Groups[2].Value, Sha1 = m.Groups[3].Value.ToUpperInvariant(), Present = true });
-					return;
+					var m = CacheLine.Match(line);
+					if (m.Success)
+					{
+						lock (found)
+						{
+							// stored and fetched both count: a worker that found an
+							// object another one had just written still needs it
+							found[m.Groups[2].Value] = m.Groups[3].Value.ToUpperInvariant();
+						}
+						onEntry?.Invoke(new Entry { Name = m.Groups[2].Value, Sha1 = m.Groups[3].Value.ToUpperInvariant(), Present = true });
+						return;
+					}
+					m = ProgressLine.Match(line);
+					if (!m.Success) return;
+					// Every session reports the game's module count, and finishes a
+					// share of it: one total, and the dones add up.
+					done[index] = uint.Parse(m.Groups[1].Value);
+					total[index] = uint.Parse(m.Groups[2].Value);
+					onProgress?.Invoke((uint)done.Sum(v => (long)v), total.Max());
 				}
-				m = ProgressLine.Match(line);
-				if (!m.Success) return;
-				// Every session reports the game's module count, and finishes a
-				// share of it: one total, and the dones add up.
-				done[index] = uint.Parse(m.Groups[1].Value);
-				total[index] = uint.Parse(m.Groups[2].Value);
-				onProgress?.Invoke((uint)done.Sum(v => (long)v), total.Max());
-			}
 
-			for (var i = 0; i < n; i++)
-			{
-				var args = new List<string> { "--headless" };
-				if (!string.IsNullOrEmpty(configPath)) args.Add($"--config={configPath}");
-				args.Add($"--core={packagePath}");
-				args.Add($"--precompile={i}/{n}");
-				// Say the firmware outright. Going through the config means the
-				// parent must have written it there first, and the wizard can hold
-				// a path that never gets written - a core may call a firmware
-				// optional that this GAME cannot boot without. A session refused at
-				// boot compiles nothing.
-				foreach (var (id, path) in firmware ?? new Dictionary<string, string>())
+				for (var i = 0; i < workers; i++)
 				{
-					args.Add($"--firmware={id}={path}");
+					var args = new List<string> { "--headless" };
+					if (!string.IsNullOrEmpty(configPath)) args.Add($"--config={configPath}");
+					args.Add($"--core={packagePath}");
+					args.Add($"--precompile={i}/{workers}");
+					// Say the firmware outright. Going through the config means the
+					// parent must have written it there first, and the wizard can hold
+					// a path that never gets written - a core may call a firmware
+					// optional that this GAME cannot boot without. A session refused at
+					// boot compiles nothing.
+					foreach (var (id, path) in firmware ?? new Dictionary<string, string>())
+					{
+						args.Add($"--firmware={id}={path}");
+					}
+					args.Add(romPath);
+					var index = i;
+					var p = SelfProcess.Start(args, line => Line(index, line));
+					if (p is not null) processes.Add(p);
 				}
-				args.Add(romPath);
-				var index = i;
-				var p = SelfProcess.Start(args, line => Line(index, line));
-				if (p is not null) processes.Add(p);
-			}
-			if (processes.Count is 0) return null;
+				if (processes.Count is 0) return null;
 
-			var stopped = false;
-			while (processes.Any(p => !p.HasExited))
-			{
-				Thread.Sleep(150);
-				if (stopped || cancelled?.Invoke() != true) continue;
-				stopped = true;
-				foreach (var p in processes.Where(p => !p.HasExited))
+				var stopped = false;
+				while (processes.Any(p => !p.HasExited))
 				{
-					try { p.Kill(); } catch (Exception) { /* it finished on its own */ }
+					Thread.Sleep(150);
+					if (stopped || cancelled?.Invoke() != true) continue;
+					stopped = true;
+					foreach (var p in processes.Where(p => !p.HasExited))
+					{
+						try { p.Kill(); } catch (Exception) { /* it finished on its own */ }
+					}
 				}
-			}
-			foreach (var p in processes) p.WaitForExit();
-			if (stopped) return null;
+				foreach (var p in processes) p.WaitForExit();
+				if (stopped) return null;
 
-			// A session that died took its share with it, and a manifest written
-			// from what the others managed would be a list of what this game
-			// needs with holes in it - which is exactly what must not happen.
-			var died = processes.Count(p => p.ExitCode != 0);
-			if (died is not 0)
-			{
-				Console.Error.WriteLine($"precompile: {died} of {processes.Count} sessions failed");
-				LastFailure = failure ?? $"{died} of {processes.Count} sessions failed without saying why";
+				// A session that died took its share with it, and a manifest written
+				// from what the others managed would be a list of what this game
+				// needs with holes in it - which is exactly what must not happen.
+				var dead = processes.Where(p => p.ExitCode != 0).ToList();
+				if (dead.Count is 0) break;
+
+				var why = string.Join(", ",
+					dead.Select(p => WhyItDied(p.ExitCode)).Distinct(StringComparer.Ordinal));
+				Console.Error.WriteLine(
+					$"precompile: {dead.Count} of {processes.Count} sessions failed ({why})");
+
+				if (failure is null && workers > 1 && dead.All(p => DiedForWantOfMemory(p.ExitCode)))
+				{
+					workers = Math.Max(1, workers / 2);
+					Console.Error.WriteLine($"precompile: retrying with {workers} session(s)");
+					continue;
+				}
+
+				// Whatever else happened, it is not "without saying why" any more.
+				LastFailure = failure
+					?? $"{dead.Count} of {processes.Count} compile sessions failed: {why}."
+						+ (workers > 1
+							? " Closing other programs, or a machine with more memory, would let it run fewer at once."
+							: " This ran one session at a time already, so memory is unlikely to be the reason.");
 				return null;
 			}
 
@@ -260,7 +326,7 @@ namespace Chimera.Client.GUI
 			};
 			if (manifest.Files.Count is 0)
 			{
-				LastFailure = failure ?? "the sessions compiled nothing for this game";
+				LastFailure = refused ?? "the sessions compiled nothing for this game";
 				return null;
 			}
 			manifest.Save(cacheDir, romSha1);

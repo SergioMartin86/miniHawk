@@ -247,5 +247,57 @@ namespace Chimera.Tests.Client.GUI
 		Assert.IsFalse(rx.IsMatch("[headless] caption: PS3 load error"));
 		Assert.IsFalse(rx.IsMatch("Precompiled 3/8 modules"));
 	}
+	/// <summary>
+	/// Reported from use: "3 of 8 sessions failed without saying why". A session
+	/// the operating system kills prints nothing on its way out, so its exit code
+	/// is the only evidence there is - and the orchestrator was holding it while
+	/// telling the user nothing. Every code now says something.
+	/// </summary>
+	[TestMethod]
+	public void ADeadSessionAlwaysSaysHowItDied()
+	{
+		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(137), "out of memory");
+		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(139), "crashed");
+		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(134), "abort");
+		// the codes Windows gives, which is where this was reported
+		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(unchecked((int)0xC0000005)), "access violation");
+		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(unchecked((int)0xC0000017)), "out of memory");
+		// and anything unrecognised still names itself rather than saying nothing
+		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(42), "42");
+		foreach (var code in new[] { 1, 2, 42, 134, 137, 139, -1, unchecked((int)0xC0000005) })
+		{
+			Assert.IsFalse(string.IsNullOrWhiteSpace(PrecompileOrchestrator.WhyItDied(code)));
+		}
+	}
+
+	/// <summary>
+	/// Only a death the machine attributes to memory earns a retry with fewer
+	/// sessions. Retrying a genuine crash would just take twice as long to fail.
+	/// </summary>
+	[TestMethod]
+	public void OnlyAMemoryDeathIsWorthRetrying()
+	{
+		Assert.IsTrue(PrecompileOrchestrator.DiedForWantOfMemory(137));
+		Assert.IsTrue(PrecompileOrchestrator.DiedForWantOfMemory(unchecked((int)0xC0000017)));
+		Assert.IsFalse(PrecompileOrchestrator.DiedForWantOfMemory(139));
+		Assert.IsFalse(PrecompileOrchestrator.DiedForWantOfMemory(134));
+		Assert.IsFalse(PrecompileOrchestrator.DiedForWantOfMemory(1));
+	}
+
+	/// <summary>
+	/// One session compiling Ultra Street Fighter IV was measured peaking at
+	/// 8.32 GB, so the sessions have to be counted against memory with something
+	/// left over for the system - never none, never more than eight, never more
+	/// than half the cores.
+	/// </summary>
+	[TestMethod]
+	public void SessionsAreBoundedByTheMachine()
+	{
+		var workers = PrecompileOrchestrator.Workers;
+		Assert.IsTrue(workers >= 1, "there is always at least one session");
+		Assert.IsTrue(workers <= 8, $"never more than eight, got {workers}");
+		Assert.IsTrue(workers <= Math.Max(1, Environment.ProcessorCount / 2),
+			$"never more than half the cores ({Environment.ProcessorCount}), got {workers}");
+	}
 }
 }
