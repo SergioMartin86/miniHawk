@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <cctype>
 #include <map>
 #include <memory>
 #include <string>
@@ -284,6 +285,16 @@ bool mediaWriteIso9660(const std::vector<MediaEntry> &files, const std::string &
 		at->kids.push_back(std::move(f));
 	}
 
+	/* A PlayStation 3 disc announces itself with PS3_DISC.SFB beside PS3_GAME,
+	 * which is the same shape the rpcs3 core looks for in an archive. */
+	bool isPs3Disc = false;
+	for (const auto &k : root.kids)
+	{
+		std::string upper = k->name;
+		for (char &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+		if (!k->dir && upper == "PS3_DISC.SFB") isPs3Disc = true;
+	}
+
 	/* names, then the order the records go in - both settled here so that
 	 * nothing downstream depends on how the directory was read */
 	std::vector<Node *> dirs;
@@ -440,7 +451,35 @@ bool mediaWriteIso9660(const std::vector<MediaEntry> &files, const std::string &
 			emit(zeros, static_cast<size_t>(std::min<uint64_t>(kSector, bytes - written)));
 	};
 
-	padTo(16ull * kSector); /* system area */
+	/* ---- the system area, and the PS3 region table in it ----
+	 *
+	 * Sectors 0-15 are reserved by ISO 9660 and mean nothing to it, which is
+	 * where a PlayStation 3 disc keeps the table that says which parts of it are
+	 * encrypted. rpcs3 does not treat that as optional: Loader/ISO.cpp reads a
+	 * big-endian region count out of the first four bytes and refuses anything
+	 * with a count below 1 as "non-PS3ISO", which reaches the user as "Invalid
+	 * file or folder" with nothing about a region table in it.
+	 *
+	 * An image built from a decrypted folder dump has exactly one region and it
+	 * is not encrypted, so that is what is written: count 1, and one region
+	 * ending at the last sector. Everything rpcs3 does after that check is
+	 * non-fatal - the Redump and 3k3y probes find nothing, leave the encryption
+	 * type NONE, and reads pass through untouched.
+	 *
+	 * Only for a disc that looks like a PS3 one. Another console's image gets the
+	 * zeros it has always had, because this table would be meaningless there. */
+	if (isPs3Disc)
+	{
+		std::vector<uint8_t> sector0(kSector, 0);
+		const uint32_t lastSector = totalSectors - 1;
+		for (int i = 0; i < 4; i++)
+		{
+			sector0[i] = static_cast<uint8_t>(1u >> ((3 - i) * 8));           /* region count */
+			sector0[12 + i] = static_cast<uint8_t>(lastSector >> ((3 - i) * 8));
+		}
+		emit(sector0.data(), sector0.size());
+	}
+	padTo(16ull * kSector); /* the rest of the system area */
 
 	auto volumeDescriptor = [&](uint8_t type, bool joliet) {
 		std::vector<uint8_t> v;

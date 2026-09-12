@@ -300,6 +300,40 @@ static void anIsoIsReproducibleAndHoldsWhatWentIn()
 	assert(got.count("a_first.txt") == 1 && got.count("Z_last.txt") == 1);
 }
 
+/* A PlayStation 3 disc keeps a region table in the ISO system area, and rpcs3
+ * treats it as mandatory: Loader/ISO.cpp reads a big-endian region count out of
+ * the first four bytes and refuses a count below 1 as "non-PS3ISO", which
+ * reaches the user as "Invalid file or folder" with nothing said about regions.
+ * An image built from a decrypted dump has one region and it is not encrypted.
+ * Reported from use: the first ISO this tool made would not boot. */
+static void aPs3DiscCarriesItsRegionTable()
+{
+	const fs::path a = workRoot() / "a"; /* PS3_DISC.SFB at its root */
+	const fs::path iso = workRoot() / "ps3.iso";
+	std::string sha, err;
+	assert(chimera::mediaMake(a.string(), iso.string(), chimera::MediaFormat::Iso9660, nullptr, sha, err));
+
+	const std::vector<uint8_t> img = slurp(iso);
+	const auto be32 = [&](size_t at) {
+		return (uint32_t(img[at]) << 24) | (uint32_t(img[at + 1]) << 16)
+			| (uint32_t(img[at + 2]) << 8) | uint32_t(img[at + 3]);
+	};
+	assert(be32(0) == 1); /* one region */
+	/* ending on the last sector of the image, so it covers all of it */
+	assert(be32(12) == (img.size() / 2048) - 1);
+
+	/* and a disc that is not a PS3 one is left alone: the table would mean
+	 * nothing there, and the system area is reserved */
+	const fs::path plain = workRoot() / "plain";
+	fs::remove_all(plain);
+	put(plain / "readme.txt", "hello");
+	const fs::path plainIso = workRoot() / "plain.iso";
+	assert(chimera::mediaMake(plain.string(), plainIso.string(), chimera::MediaFormat::Iso9660,
+		nullptr, sha, err));
+	const std::vector<uint8_t> other = slurp(plainIso);
+	for (size_t i = 0; i < 32; i++) assert(other[i] == 0);
+}
+
 /* ---- FAT12 ---- */
 
 static void aFloppyIsReproducibleAndReadable()
@@ -365,6 +399,7 @@ int main()
 	collectSkipsWhatIsNotAFile();
 	progressCountsEveryByteAndFile();
 	anIsoIsReproducibleAndHoldsWhatWentIn();
+	aPs3DiscCarriesItsRegionTable();
 	aFloppyIsReproducibleAndReadable();
 	aFloppyRefusesWhatDoesNotFit();
 	aCancelledPackLeavesNothing();
