@@ -283,6 +283,8 @@ engine_src = files(
   'source/engine/source/session.cpp',
   'source/engine/source/state_history.cpp',
   'source/engine/source/media_maker.cpp',
+  'source/engine/source/media_iso.cpp',
+  'source/engine/source/media_fat12.cpp',
   'source/engine/source/gl_bridge.cpp',
   'extern/miniz/miniz.c',  # vendored (MIT): the zip half of the state container
   'extern/cjson/cJSON.c',  # vendored (MIT): bundle JSON

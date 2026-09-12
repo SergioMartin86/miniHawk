@@ -61,6 +61,16 @@ bool mediaCollect(const std::string &folder, std::vector<MediaEntry> &out, std::
 bool mediaMake(const std::string &folder, const std::string &outPath, MediaFormat format,
 	const MediaProgress &progress, std::string &sha1Out, std::string &error);
 
+/* The writers, one per translation unit. Each takes the collected files already
+ * sorted, and each is responsible for writing nothing at all when it fails: a
+ * half-written image that still looks like an image is worse than no image. */
+bool mediaWriteZipStored(const std::vector<MediaEntry> &files, const std::string &outPath,
+	const MediaProgress &progress, std::string &sha1Out, std::string &error);
+bool mediaWriteIso9660(const std::vector<MediaEntry> &files, const std::string &outPath,
+	const MediaProgress &progress, std::string &sha1Out, std::string &error);
+bool mediaWriteFat12(const std::vector<MediaEntry> &files, const std::string &outPath,
+	const MediaProgress &progress, std::string &sha1Out, std::string &error);
+
 } // namespace chimera
 
 #endif

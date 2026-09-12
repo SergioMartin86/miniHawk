@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -209,6 +210,151 @@ static void collectSkipsWhatIsNotAFile()
 	}
 }
 
+/* ---- ISO ---- */
+
+static std::vector<uint8_t> slurp(const fs::path &p)
+{
+	FILE *f = std::fopen(p.string().c_str(), "rb");
+	assert(f != nullptr);
+	std::fseek(f, 0, SEEK_END);
+	const long n = std::ftell(f);
+	std::fseek(f, 0, SEEK_SET);
+	std::vector<uint8_t> v(static_cast<size_t>(n));
+	if (n) assert(std::fread(v.data(), 1, v.size(), f) == v.size());
+	std::fclose(f);
+	return v;
+}
+
+static constexpr uint16_t kFixedFatDate = (0 << 9) | (1 << 5) | 1;
+
+static uint32_t rd32le(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (uint32_t(p[3]) << 24); }
+
+/* Walks the JOLIET tree, which is the one a reader prefers and the one rpcs3
+ * decodes, and collects every file as path -> bytes. Small on purpose: enough
+ * to prove the image says what the folder said, without a library. */
+static void readIsoJoliet(const std::vector<uint8_t> &iso, uint32_t lba, uint32_t len,
+	const std::string &prefix, std::map<std::string, std::vector<uint8_t>> &out)
+{
+	const uint8_t *dir = iso.data() + size_t(lba) * 2048;
+	uint32_t at = 0;
+	while (at < len)
+	{
+		const uint8_t *r = dir + at;
+		if (r[0] == 0)
+		{
+			/* padding to the end of a sector: jump to the next one */
+			const uint32_t next = ((at / 2048) + 1) * 2048;
+			if (next >= len) break;
+			at = next;
+			continue;
+		}
+		const uint32_t recLen = r[0];
+		const uint32_t childLba = rd32le(r + 2);
+		const uint32_t childLen = rd32le(r + 10);
+		const bool isDir = (r[25] & 0x02) != 0;
+		const uint32_t idLen = r[32];
+		std::string name;
+		for (uint32_t i = 0; i + 1 < idLen; i += 2)
+			name.push_back(static_cast<char>(r[33 + i + 1])); /* UCS-2BE, ASCII here */
+		at += recLen;
+		if (idLen == 1 && (r[33] == 0 || r[33] == 1)) continue; /* . and .. */
+		if (isDir) readIsoJoliet(iso, childLba, childLen, prefix + name + "/", out);
+		else
+		{
+			const uint8_t *data = iso.data() + size_t(childLba) * 2048;
+			out[prefix + name] = std::vector<uint8_t>(data, data + childLen);
+		}
+	}
+}
+
+static void anIsoIsReproducibleAndHoldsWhatWentIn()
+{
+	const fs::path a = workRoot() / "a";
+	const fs::path b = workRoot() / "b";
+	const fs::path ia = workRoot() / "a.iso";
+	const fs::path ib = workRoot() / "b.iso";
+
+	std::string sa, sb, err;
+	assert(chimera::mediaMake(a.string(), ia.string(), chimera::MediaFormat::Iso9660, nullptr, sa, err));
+	assert(chimera::mediaMake(b.string(), ib.string(), chimera::MediaFormat::Iso9660, nullptr, sb, err));
+	assert(sa == sb); /* same content, different dates and modes */
+
+	const std::vector<uint8_t> iso = slurp(ia);
+	/* the descriptors rpcs3's loader scans for: PVD, Joliet SVD, terminator */
+	assert(iso[16 * 2048] == 1 && std::memcmp(&iso[16 * 2048 + 1], "CD001", 5) == 0);
+	assert(iso[17 * 2048] == 2 && std::memcmp(&iso[17 * 2048 + 1], "CD001", 5) == 0);
+	assert(iso[18 * 2048] == 255);
+	/* and the Joliet escape sequence that says the names are UCS-2 */
+	assert(std::memcmp(&iso[17 * 2048 + 88], "%/E", 3) == 0);
+
+	/* the root directory record lives in the descriptor, at offset 156 */
+	const uint8_t *rootRec = &iso[17 * 2048 + 156];
+	std::map<std::string, std::vector<uint8_t>> got;
+	readIsoJoliet(iso, rd32le(rootRec + 2), rd32le(rootRec + 10), "", got);
+
+	assert(got.size() == 6);
+	assert(got.count("PS3_GAME/USRDIR/EBOOT.BIN") == 1);
+	assert(got["PS3_GAME/USRDIR/EBOOT.BIN"] == std::vector<uint8_t>(300000, 'E'));
+	assert(got["PS3_DISC.SFB"] == std::vector<uint8_t>({ 'S', 'F', 'B', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd' }));
+	/* the real names survive, case and all, which is what Joliet is for */
+	assert(got.count("a_first.txt") == 1 && got.count("Z_last.txt") == 1);
+}
+
+/* ---- FAT12 ---- */
+
+static void aFloppyIsReproducibleAndReadable()
+{
+	const fs::path a = workRoot() / "a";
+	const fs::path b = workRoot() / "b";
+	const fs::path fa = workRoot() / "a.img";
+	const fs::path fb = workRoot() / "b.img";
+	std::string sa, sb, err;
+	assert(chimera::mediaMake(a.string(), fa.string(), chimera::MediaFormat::Fat12, nullptr, sa, err));
+	assert(chimera::mediaMake(b.string(), fb.string(), chimera::MediaFormat::Fat12, nullptr, sb, err));
+	assert(sa == sb);
+
+	const std::vector<uint8_t> img = slurp(fa);
+	assert(img.size() == 2880u * 512u);
+	assert(img[510] == 0x55 && img[511] == 0xAA);
+	/* the BPB a 1.44 MB floppy must carry */
+	assert(img[11] == 0x00 && img[12] == 0x02); /* 512 bytes per sector */
+	assert(img[13] == 1);                        /* one sector per cluster */
+	assert(img[21] == 0xF0);                     /* media descriptor */
+	/* DOS put the moment of formatting in the volume serial; ours is fixed, or
+	 * two identical disks would not hash alike */
+	assert(rd32le(&img[39]) == 0);
+
+	/* walk the root directory and find a file we put there */
+	const uint32_t rootOff = (1u + 2u * 9u) * 512u;
+	bool foundEboot = false, foundDir = false;
+	for (uint32_t i = 0; i < 224; i++)
+	{
+		const uint8_t *e = &img[rootOff + i * 32];
+		if (e[0] == 0) break;
+		const std::string name(reinterpret_cast<const char *>(e), 11);
+		if (e[11] & 0x10) foundDir = true;
+		if (name.compare(0, 8, "Z_LAST  ") == 0) foundEboot = true;
+		/* every date field is the fixed one */
+		assert(rd32le(e + 16) == ((uint32_t(kFixedFatDate) << 16) | kFixedFatDate));
+	}
+	assert(foundDir);  /* PS3_GAME became a subdirectory */
+	assert(foundEboot);
+}
+
+static void aFloppyRefusesWhatDoesNotFit()
+{
+	const fs::path big = workRoot() / "big";
+	fs::remove_all(big);
+	/* comfortably past 1.44 MB */
+	for (int i = 0; i < 4; i++)
+		put(big / ("part" + std::to_string(i) + ".bin"), std::string(500000, 'x'));
+	std::string sha, err;
+	assert(!chimera::mediaMake(big.string(), (workRoot() / "big.img").string(),
+		chimera::MediaFormat::Fat12, nullptr, sha, err));
+	assert(err.find("does not fit") != std::string::npos);
+	assert(!fs::exists(workRoot() / "big.img"));
+}
+
 int main()
 {
 	fs::remove_all(workRoot());
@@ -218,6 +364,9 @@ int main()
 	whatComesOutIsWhatWentIn();
 	collectSkipsWhatIsNotAFile();
 	progressCountsEveryByteAndFile();
+	anIsoIsReproducibleAndHoldsWhatWentIn();
+	aFloppyIsReproducibleAndReadable();
+	aFloppyRefusesWhatDoesNotFit();
 	aCancelledPackLeavesNothing();
 	anEmptyFolderIsRefused();
 

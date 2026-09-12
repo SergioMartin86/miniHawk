@@ -137,7 +137,9 @@ bool copyInto(OutFile &out, const MediaEntry &e, uint32_t &crcOut, uint64_t &byt
 	return ok;
 }
 
-bool writeStoredZip(const std::vector<MediaEntry> &files, const std::string &outPath,
+} // namespace
+
+bool mediaWriteZipStored(const std::vector<MediaEntry> &files, const std::string &outPath,
 	const MediaProgress &progress, std::string &sha1Out, std::string &error)
 {
 	uint64_t bytesTotal = 0;
@@ -342,8 +344,6 @@ bool writeStoredZip(const std::vector<MediaEntry> &files, const std::string &out
 	return true;
 }
 
-} // namespace
-
 bool mediaCollect(const std::string &folder, std::vector<MediaEntry> &out, std::string &error)
 {
 	namespace fs = std::filesystem;
@@ -406,13 +406,11 @@ bool mediaMake(const std::string &folder, const std::string &outPath, MediaForma
 	switch (format)
 	{
 		case MediaFormat::ZipStored:
-			return writeStoredZip(files, outPath, progress, sha1Out, error);
+			return mediaWriteZipStored(files, outPath, progress, sha1Out, error);
 		case MediaFormat::Iso9660:
-			error = "the ISO writer is not built yet";
-			return false;
+			return mediaWriteIso9660(files, outPath, progress, sha1Out, error);
 		case MediaFormat::Fat12:
-			error = "the floppy writer is not built yet";
-			return false;
+			return mediaWriteFat12(files, outPath, progress, sha1Out, error);
 	}
 	error = "unknown format";
 	return false;
