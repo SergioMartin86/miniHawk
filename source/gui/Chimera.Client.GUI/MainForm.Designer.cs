@@ -126,6 +126,7 @@ namespace Chimera.Client.GUI
 			this.MacroToolMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.toolStripSeparator29 = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.BatchRunnerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
+			this.MediaMakerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.toolStripSeparator22 = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.GenericCoreSubMenu = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.HelpSubMenu = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
@@ -806,6 +807,7 @@ namespace Chimera.Client.GUI
             this.HexEditorMenuItem,
             this.MacroToolMenuItem,
             this.toolStripSeparator29,
+            this.MediaMakerMenuItem,
             this.BatchRunnerMenuItem});
 			this.ToolsSubMenu.Text = "&Tools";
 			this.ToolsSubMenu.DropDownOpened += new System.EventHandler(this.ToolsSubMenu_DropDownOpened);
@@ -834,6 +836,11 @@ namespace Chimera.Client.GUI
 			// 
 			this.MacroToolMenuItem.Text = "&Macro Tool";
 			this.MacroToolMenuItem.Click += new System.EventHandler(this.MacroToolMenuItem_Click);
+			// 
+			// MediaMakerMenuItem
+			// 
+			this.MediaMakerMenuItem.Text = "Reproducible Media Maker...";
+			this.MediaMakerMenuItem.Click += new System.EventHandler(this.MediaMakerMenuItem_Click);
 			// 
 			// BatchRunnerMenuItem
 			// 
@@ -1265,6 +1272,7 @@ namespace Chimera.Client.GUI
 		private Chimera.WinForms.Controls.ToolStripSeparatorEx ShowMenuContextMenuSeparator;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx GenericCoreSubMenu;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx BatchRunnerMenuItem;
+		private Chimera.WinForms.Controls.ToolStripMenuItemEx MediaMakerMenuItem;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx DisplayConfigMenuItem;
 		private Chimera.WinForms.Controls.StatusLabelEx CoreNameStatusBarButton;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx toolStripMenuItem6;

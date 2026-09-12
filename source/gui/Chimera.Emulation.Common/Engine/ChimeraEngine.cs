@@ -503,6 +503,19 @@ namespace Chimera.Emulation.Common.Engine
 		[ChimeraImport(CallingConvention.Cdecl)]
 		public abstract void ce_progress_set(IntPtr fn, IntPtr user);
 
+		// the reproducible media maker: a folder packed into one file whose bytes
+		// depend on its contents and names and on nothing else (docs: a project
+		// stores names and SHA1s, never paths, so a folder has to become a file)
+		/// <summary>0 zip (stored), 1 ISO 9660 + Joliet, 2 FAT12 floppy. progress is a Cdecl (file, bytesDone, bytesTotal, filesDone, filesTotal, user) pointer returning 1 to carry on and 0 to cancel, or zero for none. Returns 1 when the file was written.</summary>
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract int ce_media_make(string folder, string outPath, int format, IntPtr progress, IntPtr user);
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract IntPtr ce_media_last_sha1();
+
+		[ChimeraImport(CallingConvention.Cdecl)]
+		public abstract IntPtr ce_media_last_error();
+
 		// the compile cache and precompile sessions (docs: a core's compiled
 		// objects, kept on the host; never machine state)
 		[ChimeraImport(CallingConvention.Cdecl)]
@@ -815,6 +828,44 @@ namespace Chimera.Emulation.Common.Engine
 			if (Instance.ce_sha1_file(path, buf, ref len) is 0) return null;
 			return (Encoding.ASCII.GetString(buf, 0, 40), (long)len);
 		}
+
+		/// <summary>
+		/// A folder packed into one file whose bytes depend on its contents and
+		/// names and on nothing else, so that two people packing the same dump
+		/// get the same SHA1. The packing itself is the engine's: this hands it
+		/// the folder and marshals the progress callback back.
+		/// </summary>
+		/// <param name="format">0 zip (stored), 1 ISO 9660 + Joliet, 2 FAT12 floppy.</param>
+		/// <param name="progress">
+		/// (file, bytesDone, bytesTotal, filesDone, filesTotal) -> keep going.
+		/// Returning false cancels, and a cancelled pack leaves no file behind.
+		/// Called on the calling thread, which is not the UI thread.
+		/// </param>
+		public static bool MakeMedia(string folder, string outPath, int format,
+			Func<string, ulong, ulong, ulong, ulong, bool>? progress,
+			out string sha1, out string error)
+		{
+			MediaProgressFn? shim = null;
+			var handle = IntPtr.Zero;
+			if (progress is not null)
+			{
+				shim = (file, done, total, filesDone, filesTotal, _) =>
+					progress(PtrToStringUtf8(file) ?? "", done, total, filesDone, filesTotal) ? 1 : 0;
+				handle = Marshal.GetFunctionPointerForDelegate(shim);
+			}
+
+			var ok = Instance.ce_media_make(folder, outPath, format, handle, IntPtr.Zero) is not 0;
+			// the delegate must outlive the call it was handed to
+			GC.KeepAlive(shim);
+
+			sha1 = ok ? PtrToStringUtf8(Instance.ce_media_last_sha1()) ?? "" : "";
+			error = ok ? "" : PtrToStringUtf8(Instance.ce_media_last_error()) ?? "the pack failed";
+			return ok;
+		}
+
+		[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+		private delegate int MediaProgressFn(IntPtr file, ulong bytesDone, ulong bytesTotal,
+			ulong filesDone, ulong filesTotal, IntPtr user);
 
 		public static unsafe string? PtrToStringUtf8(IntPtr p)
 		{

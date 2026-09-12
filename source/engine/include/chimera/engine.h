@@ -282,6 +282,42 @@ CE_API void ce_sha1_hex(const uint8_t *data, uint64_t len, char *out41);
  * session costs one read. Returns 1 when the file was read, 0 when it was not. */
 CE_API int ce_sha1_file(const char *utf8Path, char *out41, uint64_t *lenOut);
 
+/* ---- reproducible media ----
+ *
+ * A folder turned into ONE file whose bytes depend on the folder's contents and
+ * names and on nothing else - not the clock, not the modification times the
+ * files carry, not the mode bits a copy left behind, not the order a directory
+ * listing came back in. Two people packing the same dump get the same SHA1.
+ *
+ * That is the whole point of it: a project stores names and SHA1s and never
+ * paths (docs/project.md), so a game that was dumped as a FOLDER can only
+ * become a project by becoming a file first, and it has to become the SAME file
+ * for everyone or a movie made on it cannot be verified by anybody else. */
+enum
+{
+	CE_MEDIA_ZIP_STORED = 0, /* one file, no compression: read by seeking */
+	CE_MEDIA_ISO9660 = 1,    /* ISO 9660 + Joliet, the disc the cores read */
+	CE_MEDIA_FAT12 = 2,      /* a 1.44 MB floppy image */
+};
+
+/* Called as the pack runs, often enough to drive a bar and name the file being
+ * written. Return 1 to carry on, 0 to cancel - a cancelled pack deletes what it
+ * had written, because a half-written image that still looks like an image is
+ * worse than no image. */
+typedef int32_t (*ce_media_progress_fn)(const char *file, uint64_t bytes_done,
+	uint64_t bytes_total, uint64_t files_done, uint64_t files_total, void *user);
+
+/* Returns 1 when the file was written. On 0, ce_media_last_error says why (and
+ * says "cancelled" when that is why). One pack at a time: the last hash and the
+ * last error are the caller's until the next call. */
+CE_API int32_t ce_media_make(const char *folder, const char *out_path, int32_t format,
+	ce_media_progress_fn progress, void *user);
+
+/* The SHA1 of what the last successful ce_media_make wrote - what a project
+ * would record - or "" if it did not finish. */
+CE_API const char *ce_media_last_sha1(void);
+CE_API const char *ce_media_last_error(void);
+
 /* ---- firmware ----
  *
  * Whether a provided file is the firmware a core asked for. declared_size 0

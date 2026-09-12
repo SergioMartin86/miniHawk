@@ -881,6 +881,17 @@ namespace Chimera.Client.GUI
 			Tools.Load<MacroInputTool>();
 		}
 
+		/// <summary>
+		/// A folder becomes one file with a stable hash, so that a game dumped as
+		/// a directory can be named by a project at all (docs/project.md: names
+		/// and SHA1s, never paths).
+		/// </summary>
+		private void MediaMakerMenuItem_Click(object sender, EventArgs e)
+		{
+			using var form = new MediaMakerForm();
+			this.ShowDialogWithTempMute(form);
+		}
+
 		private void BatchRunnerMenuItem_Click(object sender, EventArgs e)
 		{
 			using var form = new BatchRun(this, Config, CreateCoreComm);

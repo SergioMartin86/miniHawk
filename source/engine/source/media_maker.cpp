@@ -1,6 +1,8 @@
 /* See media_maker.hpp. */
 #include "media_maker.hpp"
 
+#include "chimera/engine.h"
+
 #include "sha1.hpp"
 
 #include <algorithm>
@@ -417,3 +419,57 @@ bool mediaMake(const std::string &folder, const std::string &outPath, MediaForma
 }
 
 } // namespace chimera
+
+/* ---- the C ABI ----
+ *
+ * One pack at a time, which is what the window that drives this does: the last
+ * hash and the last error belong to the caller until the next call. */
+extern "C" {
+
+static std::string g_lastSha1;
+static std::string g_lastError;
+
+CE_API int32_t ce_media_make(const char *folder, const char *out_path, int32_t format,
+	ce_media_progress_fn progress, void *user)
+{
+	g_lastSha1.clear();
+	g_lastError.clear();
+	if (folder == nullptr || out_path == nullptr)
+	{
+		g_lastError = "no folder or no output file";
+		return 0;
+	}
+	chimera::MediaFormat fmt;
+	switch (format)
+	{
+		case CE_MEDIA_ZIP_STORED: fmt = chimera::MediaFormat::ZipStored; break;
+		case CE_MEDIA_ISO9660: fmt = chimera::MediaFormat::Iso9660; break;
+		case CE_MEDIA_FAT12: fmt = chimera::MediaFormat::Fat12; break;
+		default:
+			g_lastError = "unknown format";
+			return 0;
+	}
+
+	chimera::MediaProgress cb;
+	if (progress != nullptr)
+	{
+		cb = [progress, user](const char *file, uint64_t done, uint64_t total, uint64_t filesDone,
+				  uint64_t filesTotal) {
+			return progress(file, done, total, filesDone, filesTotal, user) != 0;
+		};
+	}
+
+	std::string sha, err;
+	if (!chimera::mediaMake(folder, out_path, fmt, cb, sha, err))
+	{
+		g_lastError = err;
+		return 0;
+	}
+	g_lastSha1 = sha;
+	return 1;
+}
+
+CE_API const char *ce_media_last_sha1(void) { return g_lastSha1.c_str(); }
+CE_API const char *ce_media_last_error(void) { return g_lastError.c_str(); }
+
+} // extern "C"
