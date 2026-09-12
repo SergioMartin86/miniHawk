@@ -2363,37 +2363,62 @@ that appears for several distinct causes will happily confirm whatever you
 already believe, and an A/B whose two legs stop before the code under test is
 not a test.
 
-## A killed session says nothing, so the count has to be right (user-reported, 2026-09-12)
+## The exit code was the evidence all along (user-reported, 2026-09-12)
 
 With the image booting, the same game failed the next step: "The compile stopped:
 3 of 8 sessions failed without saying why". The frontend precompiles a PS3 game's
-modules in several headless sessions at once, and it had been counting them
-against memory since the feature was written - one session per 8 GB the machine
-reported free.
+modules in several headless sessions at once, and three of eight died.
 
-Both halves of that were wrong. A session holds a machine's address space and an
-LLVM compiler at the same time; one of these, measured here compiling this game,
-peaked at 8.32 GB. So the budget was smaller than one session actually costs,
-and it was multiplied by ALL of what the machine said was free, leaving nothing
-for the frontend itself or for the operating system. Eight sessions wanted 66.6
-GB. The system resolves that the only way it can.
+The first thing this needs recording for is a wrong turn taken confidently. The
+orchestrator budgeted memory per session and spent all of what the machine
+reported free, so "too many sessions for the memory" was an easy story, and a
+measurement seemed to support it - 8.32 GB peak for one session. That figure was
+maximum resident set size on Linux, which counts the sandbox's arena as the guest
+touches it, and it is not what the machine has to find. On Windows, where this
+was reported, one session peaks at 1.75 GB of commit and a 3.0 GB working set,
+and eight of them together held 8.7 GB while the machine never dropped below 79
+GB free of 127.5. The memory story was not just unproven, it was false.
 
-The part worth a section is what came back to the user. A session the system
-kills does not get to print anything, so an orchestrator that reads sessions'
-OUTPUT to find out what happened learns nothing from a killed one - while
-holding, the whole time, the exit code that says exactly how it died. "Without
-saying why" was not a limit of what could be known; it was the evidence being
-discarded on the way to the message. Every code now names itself, the POSIX
-signals and the Windows status values both, and an unrecognised one at least
-reports its number.
+What settled it was the thing the orchestrator had been throwing away. A session
+that dies prints nothing on its way out, so its exit code is the only account of
+it there is - and "without saying why" was never a limit of what could be known.
+The code was 0xC0000005: an access violation. Not a kill, a crash. Windows Error
+Reporting had the same thing with more detail (three BEX64 entries, same fault
+offset at three different module bases, so one deterministic crash site, in
+"unknown" module because a sandboxed guest is mapped memory and not a loaded
+image). Every exit code now names itself, the POSIX signals and the Windows
+status values both, and an unrecognised one at least reports its number. That is
+the principle worth keeping: a report that says "no reason given" while holding
+a reason is a bug in the report, and the fix is not more guessing.
 
-Where every dead session died for want of memory and none of them refused out
-loud, the run halves the sessions and goes again. That is the right shape for
-this class of failure: too much at once is not a reason to stop, it is a reason
-to want less, and a slower success needs no message at all.
+The crash was reproduced exactly - twice on Windows, twice on Linux, one session
+at a time with 93 GB free - once the condition was understood: it needs a WARM
+cache. A cold session compiles its share and exits 0; a session that FETCHES a
+game's objects walks into it. That is why three of eight died for the user and
+one of eight for this workstation: it depends on which sessions find their work
+already done, not on which modules they own.
 
-What is NOT established is the failure itself. Eight sessions were never seen to
-die on this workstation and may not be reproducible here, since eight peaks need
-not coincide. The measurement is of one session's peak, and the old budget was
-smaller than it - that is the whole of the evidence, and it is enough to act on
-without pretending the crash was reproduced.
+The fault itself is in the rpcs3 core and is written up there (docs/PLAN.md, risk
+2). In short: a JIT memory manager whose allocator returns `block + (pos %
+c_max_size)` will, once its pointer passes the end of the region, hand out
+addresses that alias code already loaded - and the next relocation writes into
+somebody else's instructions. The core had lowered that bound to save arena
+space; this game's main module is 87.9 MB of generated code, and a stray 4-byte
+relocation turned a nop into `add %bl,(%rdi)`, a store to the first byte of the
+emulated machine's execution table. The bound is back and the wrap is refused
+with a sentence.
+
+Two things in the frontend came out of it and stay. The per-session figure is now
+4 GB of what is spare after 4 GB kept for the system, from the Windows
+measurement rather than from an inflated one. And where every dead session died
+for want of memory - and only then, which after all this means almost never - the
+run halves the sessions and goes again, because too much at once is a reason to
+want less rather than a reason to stop.
+
+The last lesson is about instruments. This was found by making the machine say
+where its regions are (the core prints its `vm`, `exec` and JIT bases when a
+precompile starts) and by making the sandbox print the faulting instruction's
+bytes and registers, not just its address (miniBox 5436126). The byte at the
+faulting rip was a nop, which is impossible for a write fault, and that single
+impossibility is what said the code had been modified underneath. A day of
+debugging bought that line; it now prints on both platforms.

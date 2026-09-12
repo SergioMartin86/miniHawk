@@ -47,14 +47,20 @@ namespace Chimera.Client.GUI
 		/// <summary>How much one session is assumed to need, measured rather than guessed.</summary>
 		/// <remarks>
 		/// A session holds a PlayStation 3's address space and an LLVM compiler at
-		/// once. One compiling Ultra Street Fighter IV was measured peaking at
-		/// 8.32 GB, so the old figure of 8 GB was under the real cost - and it was
-		/// multiplied by everything the machine said was free, leaving nothing for
-		/// this process or the system. Both halves of that end the same way: the
-		/// operating system kills a session, and a killed session says nothing on
-		/// its way out, which is how this came back as "failed without saying why".
+		/// once, but almost all of that is RESERVED and never touched: one
+		/// compiling Ultra Street Fighter IV, measured on Windows, peaked at
+		/// 1.75 GB of commit and a 3.0 GB working set, and eight of them together
+		/// held 8.7 GB while the machine never dropped below 79 GB free. So 4 GB
+		/// is a wide margin, and the figure it replaces (8 GB, times everything
+		/// the machine called free, with nothing kept back) was wrong in both
+		/// directions at once.
+		///
+		/// Do not measure this with maximum resident set size on Linux: the same
+		/// session reports 83 GB there, because the sandbox's arena is mapped and
+		/// its touched pages are counted. The Windows commit figure is the one
+		/// that means "what the machine has to find".
 		/// </remarks>
-		private const double GigabytesPerSession = 10;
+		private const double GigabytesPerSession = 4;
 
 		/// <summary>Left for the system and for this process, never handed to sessions.</summary>
 		private const double GigabytesReserved = 4;
@@ -77,10 +83,13 @@ namespace Chimera.Client.GUI
 		}
 
 		/// <summary>
-		/// What an exit code says about how a session ended. A session that the
-		/// system killed prints nothing, so its code is the only evidence there
+		/// What an exit code says about how a session ended. A session that dies
+		/// prints nothing on its way out, so its code is the only evidence there
 		/// is - and reporting "failed without saying why" while holding it was
-		/// throwing the evidence away.
+		/// throwing the evidence away. It was worth more than the sentence: the
+		/// code said 0xC0000005, which is what turned a supposed memory problem
+		/// into the real one (a JIT region that wrapped onto its own code, fixed
+		/// in the rpcs3 core, 2026-09-12).
 		/// </summary>
 		internal static string WhyItDied(int code) => code switch
 		{

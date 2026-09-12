@@ -249,9 +249,11 @@ namespace Chimera.Tests.Client.GUI
 	}
 	/// <summary>
 	/// Reported from use: "3 of 8 sessions failed without saying why". A session
-	/// the operating system kills prints nothing on its way out, so its exit code
-	/// is the only evidence there is - and the orchestrator was holding it while
-	/// telling the user nothing. Every code now says something.
+	/// that dies prints nothing on its way out, so its exit code is the only
+	/// evidence there is - and the orchestrator was holding it while telling the
+	/// user nothing. Every code now says something, and saying it is what found
+	/// the real fault: 0xC0000005, a crash, not the memory problem it was taken
+	/// for.
 	/// </summary>
 	[TestMethod]
 	public void ADeadSessionAlwaysSaysHowItDied()
@@ -285,10 +287,10 @@ namespace Chimera.Tests.Client.GUI
 	}
 
 	/// <summary>
-	/// One session compiling Ultra Street Fighter IV was measured peaking at
-	/// 8.32 GB, so the sessions have to be counted against memory with something
-	/// left over for the system - never none, never more than eight, never more
-	/// than half the cores.
+	/// One session compiling Ultra Street Fighter IV was measured on Windows at
+	/// 1.75 GB of commit and a 3.0 GB working set, so the sessions are counted
+	/// against memory at 4 GB each with something left over for the system -
+	/// never none, never more than eight, never more than half the cores.
 	/// </summary>
 	[TestMethod]
 	public void SessionsAreBoundedByTheMachine()

@@ -684,11 +684,26 @@ namespace Chimera.Client.GUI
 				StopAv();
 			}
 
-			TryAgainResult configSaveResult = this.DoWithTryAgainBox(() => SaveConfig(), "Failed to save config file.");
-			if (configSaveResult == TryAgainResult.Canceled)
+			// A precompile session does not rewrite the config. It was started to
+			// fill a cache, it changed nothing anybody asked to keep, and several
+			// of them run at once: eight closing together raced for
+			// config.saving.ini, and whichever lost it died with "the process
+			// cannot access the file", which is not a sentence about compiling a
+			// game (found 2026-09-12, one of eight).
+			//
+			// Only a precompile session, not every headless one. A headless run
+			// that opens a core DOES have something to keep - it adopts the
+			// package's default bindings into the config, which the synthetic
+			// witness reads back (K:box:keybinds), and skipping the write left the
+			// frontend with no bindings at all.
+			if (_argParser.cmdPrecompile is null)
 			{
-				closingArgs.Cancel = true;
-				return;
+				TryAgainResult configSaveResult = this.DoWithTryAgainBox(() => SaveConfig(), "Failed to save config file.");
+				if (configSaveResult == TryAgainResult.Canceled)
+				{
+					closingArgs.Cancel = true;
+					return;
+				}
 			}
 
 			if (!CloseGame())
