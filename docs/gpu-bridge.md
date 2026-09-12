@@ -244,27 +244,42 @@ anyway. RPCS3 took a fix - it died before its first frame on any disc carrying a
 boot jingle, because `play_music_during_boot` hands an overlay to a video source
 a headless build does not have and `overlay_audio.cpp` `ensure()`s it.
 
-## The fallback that does not fall back (Windows, 2026-09-11)
+## The fallback that did not fall back (Windows, 2026-09-11; cause found 2026-09-12)
 
 "When either fails the core draws the way it draws without a GPU" is what this
-document says a few sections up, and on Windows it is not true for PCSX2. With
+document says a few sections up, and on Windows it was not true for PCSX2. With
 `renderer` set to `opengl` - or to `opengl-hw` with no bridge to be had, which
-is the same path - the core runs for about a thousand frames and then takes an
+is the same path - the core ran for about a thousand frames and then took an
 access violation. Bisected on Marvel vs Capcom 2: 800 frames fine, 1200 dead,
 and dead at the same guest address every time, straight run or re-record.
 
 The address symbolises to `_x86_64_get_dispatch` in Mesa's glapi
 (`src/mapi/glapi/gen/glapi_x86-64.S`), which reads the GL dispatch table out of
-thread-local storage through **%fs** - and miniBox says, in the same log, that
-the guest's %fs was lost: "guest %fs was 0000000000000000 ... something outside
-a fault took it". It repairs %fs at syscall boundaries, which is where it
-notices; a GL call between two syscalls gets there first and dereferences zero.
+thread-local storage through **%fs**, and miniBox said in the same log that the
+guest's %fs was zero. The explanation first written here - that miniBox repairs
+%fs at syscall boundaries, and a GL call between two syscalls gets there first -
+had the WHEN wrong, and being wrong about when is what made it look unfixable.
 
-So it is not the bridge - it happens with no bridge at all, and the bridged path
-never touches Mesa's glapi, which is why a GPU run does not see it.
-`renderer=software` (PCSX2's own rasteriser, no Mesa) is fine. What it costs is
-exactly the promise above: a machine that cannot have a GPU cannot use this
-core's OpenGL renderer either, and falls back only as far as the software one.
+Measured on the Windows box on 2026-09-12 with a five-line program: `wrfsbase`,
+then plain arithmetic with no fault, no syscall and no yield of any kind. The
+base survived `SwitchToThread`, was gone after `Sleep(1)`, and was gone after
+47 ms and 16 million iterations of pure computation - one scheduler quantum.
+Windows does not keep a user-mode FS base across a context switch at all; it
+restores 0. So the loss has no boundary to be repaired at, and a guest that
+reads a thread local often is dead within a second of starting.
+
+The repair now happens at the fault instead (miniBox's Windows VEH): guest code
+that faults while %fs holds anything but its thread pointer gets the pointer put
+back and the instruction retried, which is safe because it faulted before it had
+any architectural effect. A fault that is really the guest's own comes back at
+once with %fs correct and is handled as it always was, which bounds the retry to
+a single pass.
+
+None of it is the bridge - it happens with no bridge at all, and the bridged
+path never touches Mesa's glapi, which is why a GPU run does not see it. It
+reaches any core that compiles Mesa into the guest, which since 2026-09-11
+includes Ruffle's default software renderer: that core died inside twenty frames
+on Windows before the repair, and runs after it.
 
 ## A pitch-black picture, looked for and not found (2026-09-11)
 

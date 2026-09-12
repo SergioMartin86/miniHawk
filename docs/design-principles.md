@@ -2112,3 +2112,60 @@ it was repacked with the key set to `false` and run beside the real one through
 the same frontend. Same picture, so not the flag. A package-level switch is
 often the cheapest bisect available, and it tests the shipped artefact rather
 than a build of it.
+
+## The crash text was already on disk, and it named the core (2026-09-12)
+
+Reported from use: a New Star Soccer project "crashes if you clear the greenzone
+and come back to frame 1", on the OLD Ruffle core, on a real GTX 1060. No crash
+text came with it, and the first job was not a theory but that text. It was
+already on the reporter's own disk - `minibox-diag.log` in their bundle, two
+faults two minutes apart, both:
+
+	[veh] unhandled fault: addr=ffffffffffffffd0 access=read rip=0000036f0012eb07
+
+Both halves of that line are guest addresses, so `objdump -d
+--start-address=<rip>` on the packaged `core.wbx` names the instruction with no
+debugger and nothing asked of anybody: `mov %fs:(%rax),%rax` at
+`_x86_64_get_dispatch+7`, with `%rax` holding -0x30 from the instruction before
+it. The faulting address IS `%fs_base + (-0x30)` for a base of zero, so the
+report carried its own diagnosis - the guest's thread pointer was gone.
+
+It also settled WHICH core, which the reporter had not. That symbol exists only
+in the NEW Ruffle package. The old one has no `PT_TLS` segment and not one
+`%fs:` reference in its entire text, and cannot fail this way; the new one
+gained both by compiling Mesa in for its software renderer, whose glapi keeps
+its dispatch table in a thread local.
+
+The cause was then measured rather than reasoned about, with five lines on the
+Windows box: `wrfsbase`, then arithmetic with no fault, no syscall and no yield.
+The base survived `SwitchToThread`, was gone after `Sleep(1)`, and was gone
+after 47 ms and 16 million iterations of plain computation - one scheduler
+quantum. Windows does not keep a user-mode FS base across a context switch.
+miniBox's repair, and this repository's own account of the PCSX2 version of the
+same crash, had both assumed the loss happened AT a fault; that assumption is
+why the repair ran on the way out of one and could not work. It is now taken on
+the way IN, and runs that died inside twenty frames complete.
+
+What the headless runners were worth here: `chimera-run` on the OLD core, on the
+same GPU, survived `--seek 1`, `--seek 0 --stop-at-seek` and `--rewind-loop 1,2`,
+and the frontend survived 600 frames of back-jumps and then 800 frames with the
+greenzone thrown away three times and replayed from power-on after each. The
+same runner on the NEW core died in twenty frames with no greenzone involved at
+all. The crash reported as the greenzone's was never the greenzone's, and no
+time was spent reading the state history.
+
+Worth carrying forward separately: the project stores `renderer` as `wgpu-hw`,
+a value the new package no longer declares. The guest's `cfg.choice` falls back
+to its default, so that project runs the SOFTWARE renderer on the new core -
+the very thing that was dying - while the frontend's `-hw` suffix test still
+sees a hardware name and asks for a GPU bridge. A setting value a package has
+stopped declaring is a silently different machine, and nothing says so.
+
+One trap that nearly became a second bug report. Driving "Clear Greenzone" from
+Lua the obvious way produced a `NullReferenceException` inside
+`emu.frameadvance()` that looked exactly like a frontend bug on the clear path.
+It was the binding. Every TAStudio Lua method that moves the emulator brackets
+it with `IsUpdateSupressed`, and without that the frontend resumes the very
+script that is still running: the coroutine is no longer suspended and
+`CurrentFile` is null. A new binding that skips the bracket manufactures a crash
+in the code it was written to exonerate.
