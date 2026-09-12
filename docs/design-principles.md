@@ -2169,3 +2169,43 @@ it with `IsUpdateSupressed`, and without that the frontend resumes the very
 script that is still running: the coroutine is no longer suspended and
 `CurrentFile` is null. A new binding that skips the bracket manufactures a crash
 in the code it was written to exonerate.
+
+## The Windows bundle broke on a file nobody had touched (2026-09-12)
+
+Release started failing on a docs-only commit. The step was "Build the Windows
+bundle", and the error was not ours:
+
+	during RTL pass: pro_and_epilogue
+	gl_bridge.cpp: In function '(static initializers for gl_bridge.cpp)':
+	internal compiler error: in choose_baseaddr, at config/i386/i386.cc:7119
+
+A compiler crash, in a file that had not changed, inside a function nobody
+wrote. The first guess - that the runner had resolved a different mingw variant
+than this box, posix against win32 - was wrong twice over. The log's own
+`update-alternatives` lines pick win32, and `apt policy` said this machine
+already had the runner's exact package, 13.2.0-6ubuntu1+26.1. Same compiler,
+same flags, and that is worth stating plainly: it turned a CI-only mystery into
+a local one. The ICE reproduced here in seconds, and every candidate fix could
+then be measured rather than pushed and waited on.
+
+What the compiler could not emit is the function C++ synthesises to construct a
+file's namespace-scope objects. At -O1, where it compiles, that function is
+thirty-nine instructions which realign the stack and call `atexit` three times,
+once per container; at -O2 and above `choose_baseaddr` cannot find a base
+register for that frame. The three containers were the object audit's lives and
+the buffer pool's two vectors.
+
+The cheap fix - build this one file at -O1 - was rejected. `ce_gl_dispatch` is
+the bridge's hot path, every opcode the guest sends crosses it, and
+de-optimising a whole translation unit to route around a bug in its
+initialisers pays for the workaround in the wrong place. The fix deletes the
+function the compiler cannot emit instead: the three containers became
+function-local statics behind accessors, constructed on first use, so the file
+has no static initialiser at all. `nm` confirms it - no `_GLOBAL__sub_I` - and
+the file compiles clean at both -O2 and -O3.
+
+The constraint left behind is the part to remember. `gl_bridge.cpp` must not
+gain a container, a string, or anything else needing dynamic construction at
+namespace scope, or the Windows Release breaks again the same way - in a
+compiler-synthesised function that no diff will ever point at. The comment on
+`auditLives()` says so where somebody about to add one would read it.

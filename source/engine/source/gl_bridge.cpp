@@ -531,13 +531,25 @@ enum { kAuditTexture = 0, kAuditBuffer = 1, kAuditFramebuffer = 2, kAuditKinds =
  * in. */
 struct AuditLife { int64_t born; int64_t died; };  /* died < 0 while it lives */
 
-static std::vector<std::vector<AuditLife>> g_auditLives[kAuditKinds];
+/* Lazily constructed on first use, and deliberately NOT a container at
+ * namespace scope. One of those makes this file a static-initialiser function,
+ * and mingw-w64 13.2 - what the Windows bundle is cross-built with - cannot
+ * emit this TU's: it ICEs in choose_baseaddr (ix86_expand_prologue) at -O2 and
+ * above, because the function realigns its frame to register the containers'
+ * destructors with atexit. A function-local static is initialised on first use,
+ * so there is no such function to emit and the bridge still gets -O3. */
+static std::vector<std::vector<AuditLife>> *auditLives()
+{
+	static std::vector<std::vector<AuditLife>> lives[kAuditKinds];
+	return lives;
+}
+
 static int64_t g_auditFrame;
 static uint64_t g_auditLoads, g_auditDead, g_auditReused, g_auditLeaked;
 
 static std::vector<AuditLife> &auditSlot(int kind, GLuint name)
 {
-	std::vector<std::vector<AuditLife>> &all = g_auditLives[kind];
+	std::vector<std::vector<AuditLife>> &all = auditLives()[kind];
 	if (all.size() <= name) all.resize((size_t)name + 1024);
 	return all[name];
 }
@@ -576,9 +588,9 @@ extern "C" void ce_gl_state_loaded(int64_t to)
 	uint64_t dead = 0, reused = 0, held = 0, leaked = 0;
 	for (int k = 0; k < kAuditKinds; k++)
 	{
-		for (size_t n = 1; n < g_auditLives[k].size(); n++)
+		for (size_t n = 1; n < auditLives()[k].size(); n++)
 		{
-			const std::vector<AuditLife> &lives = g_auditLives[k][n];
+			const std::vector<AuditLife> &lives = auditLives()[k][n];
 			if (lives.empty()) continue;
 			/* which interval was this name living in at frame `to`? */
 			int at = -1;
@@ -732,20 +744,33 @@ static bool glPool()
 	return on;
 }
 
-static std::vector<GLuint> g_bufferPool;
-static std::vector<bool> g_bufferOurs;   /* indexed by name: did we hand it out? */
+/* Both lazily constructed rather than namespace-scope globals: see auditLives()
+ * for why this file must not have a static initialiser. */
+static std::vector<GLuint> &bufferPool()
+{
+	static std::vector<GLuint> pool;
+	return pool;
+}
+
+/* indexed by name: did we hand it out? */
+static std::vector<bool> &bufferOurs()
+{
+	static std::vector<bool> ours;
+	return ours;
+}
+
 static const size_t kBufferPoolMax = 4096;
 
 static void poolMarkOurs(GLuint name)
 {
 	if (name == 0) return;
-	if (g_bufferOurs.size() <= (size_t)name) g_bufferOurs.resize((size_t)name + 1024, false);
-	g_bufferOurs[name] = true;
+	if (bufferOurs().size() <= (size_t)name) bufferOurs().resize((size_t)name + 1024, false);
+	bufferOurs()[name] = true;
 }
 
 static bool poolIsOurs(GLuint name)
 {
-	return name != 0 && (size_t)name < g_bufferOurs.size() && g_bufferOurs[name];
+	return name != 0 && (size_t)name < bufferOurs().size() && bufferOurs()[name];
 }
 
 
@@ -813,16 +838,16 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 	}
 
 	/* Recycled buffer names, before anything else looks at the opcode: see
-	 * g_bufferPool. Both of these answer without reaching the driver when the
+	 * bufferPool(). Both of these answer without reaching the driver when the
 	 * pool can serve them, which is the whole point. */
 	if (glPool() && op == CHIMERA_GL_OP_glGenBuffers)
 	{
 		struct ChimeraGlArgs_glGenBuffers *args = (struct ChimeraGlArgs_glGenBuffers *)a;
 		GLsizei served = 0;
-		while (served < args->n && !g_bufferPool.empty())
+		while (served < args->n && !bufferPool().empty())
 		{
-			args->buffers[served++] = g_bufferPool.back();
-			g_bufferPool.pop_back();
+			args->buffers[served++] = bufferPool().back();
+			bufferPool().pop_back();
 		}
 		if (served < args->n)
 		{
@@ -841,15 +866,15 @@ extern "C" uintptr_t BRIDGE_ABI ce_gl_dispatch(uintptr_t op, uintptr_t a, uintpt
 		for (GLsizei i = 0; i < args->n; i++)
 		{
 			const GLuint name = args->buffers[i];
-			if (poolIsOurs(name) && g_bufferPool.size() < kBufferPoolMax)
+			if (poolIsOurs(name) && bufferPool().size() < kBufferPoolMax)
 			{
-				g_bufferPool.push_back(name);
+				bufferPool().push_back(name);
 				continue;
 			}
 			/* not ours, or the pool is full: a real delete, so a guest bug
 			 * stays visible and a lopsided guest cannot leak */
 			glDeleteBuffers(1, &name);
-			if (name != 0 && (size_t)name < g_bufferOurs.size()) g_bufferOurs[name] = false;
+			if (name != 0 && (size_t)name < bufferOurs().size()) bufferOurs()[name] = false;
 		}
 		return 0;
 	}
