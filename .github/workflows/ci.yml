@@ -9,8 +9,16 @@ on:
     # daily, to catch environment drift even when nothing is committed
     - cron: '0 4 * * *'
 
+# Keyed by the EVENT as well as the ref. A push to main and the nightly
+# schedule are different runs of the same workflow on the same ref, so without
+# the event in the key whichever starts second cancels the first. That happened
+# on 2026-09-12: the nightly (cron says 04:00, GitHub actually started it at
+# 08:16) cancelled a push's CI six minutes in, and because Release only follows
+# a CI that CONCLUDED success, that push's Release was skipped - no failure
+# anywhere, just no release for the commit. A push still supersedes an older
+# push on the same ref, which is what cancel-in-progress is for.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:

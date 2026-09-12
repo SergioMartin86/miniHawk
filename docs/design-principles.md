@@ -2209,3 +2209,34 @@ gain a container, a string, or anything else needing dynamic construction at
 namespace scope, or the Windows Release breaks again the same way - in a
 compiler-synthesised function that no diff will ever point at. The comment on
 `auditLives()` says so where somebody about to add one would read it.
+
+## A release can be skipped without anything failing (2026-09-12)
+
+Found while watching the fix above go green. CI passed on the commit, and no
+Release came out of it. Nothing had failed: CI's run was CANCELLED, and Release
+follows `workflow_run` with `conclusion == 'success'`, so it skipped. A skipped
+run is not a red mark anywhere - the commit simply had no release, and only
+someone looking for one would notice.
+
+The cause is that CI's concurrency group was keyed on workflow and ref alone,
+with `cancel-in-progress: true`. A push to main and the nightly schedule are
+the same workflow on the same ref, so they shared a group and the second to
+start killed the first. They are only ever in the same window because GitHub
+runs these crons very late: CI asks for 04:00 and started at 08:16, Release
+asks for 05:00, and the core repos ask for 04:00 and start around 08:30 to
+08:50. The push that morning landed at 08:10, straight into the nightly's real
+window rather than its declared one. The same thing cancelled the Ruffle core
+gate twenty-one minutes in, after it had built its Mesa and its core, taking
+the publish with it.
+
+The fix is to put `github.event_name` in the key, so a schedule and a push no
+longer share a group while a push still supersedes an older push - which is the
+only thing `cancel-in-progress` is wanted for here. What makes this worth a
+section is not the one-line fix but the failure mode: a pipeline that reports
+success on every job it ran, and quietly produced nothing. The three Release
+failures before it were loud and got attention within the day; this one had
+been possible the whole time and would have gone unnoticed indefinitely.
+
+The same group shape is still in the core repos (ares, dolphin, dosbox-x,
+eka2l1, flycast, gpgx, opera, pcsx2, ppsspp, rpcs3, snes9x, stella, xemu,
+quickernes); Ruffle's is fixed here alongside Chimera's.
