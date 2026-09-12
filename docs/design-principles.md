@@ -2240,3 +2240,43 @@ been possible the whole time and would have gone unnoticed indefinitely.
 The same group shape is still in the core repos (ares, dolphin, dosbox-x,
 eka2l1, flycast, gpgx, opera, pcsx2, ppsspp, rpcs3, snes9x, stella, xemu,
 quickernes); Ruffle's is fixed here alongside Chimera's.
+
+## An unimplemented syscall is not a refusal (2026-09-12)
+
+The Ruffle core gate had been failing on a runner for two days, and it lied
+about why in three different ways. Every sandbox leg failed, which looked like
+the missing guest Mesa build. With Mesa built it still failed, which looked like
+the gate being too slow for its 150 minute budget - software rendering really
+does cost more than the bridge, and the gate really had gone from 26 minutes to
+58. Then the same commit gated GREEN, which looked like a cache race between
+concurrent runs. None of it was true, and none of it could be reproduced on a
+workstation even running CI's exact command.
+
+The gate ran every leg with stderr sent to /dev/null, so what it actually said
+was never once printed. A smoke step that runs ONE trace test with stderr left
+alone - added to the core gate, ten minutes in, before the gate is allowed to
+spend a runner - printed it immediately:
+
+	miniBox: unimplemented syscall 203 (1, 80, 36f02c3d0e0)
+
+203 is sched_setaffinity. miniBox answers sched_getaffinity (204) deliberately
+and honestly with one CPU, so that a guest's thread pools stay deterministic,
+and it had never implemented setting the mask back. Mesa does both during thread
+setup, so from the day a core linked Mesa into its guest the core could die on
+any frame - SIGILL, exit 132, intermittent because it depends on whether Mesa's
+threading path runs at all.
+
+The principle worth keeping is the one in the title. A syscall the host does not
+implement is not an error the guest can handle and carry on from: the guest is
+killed where it stands. Every syscall a linked library might reach for is
+therefore a liveness question, not a completeness one, and "we do not support
+that" has to be said with a return value. sched_setaffinity is now taken and
+ignored, which is the honest answer - guest threads are green threads on one
+host thread, so there is nothing to pin, and the mask read back is the same one
+CPU either way.
+
+Two things made this cost days rather than minutes, and both are now fixed. The
+gate swallowed the evidence, and a timeout CANCELS a job rather than failing it,
+so the "upload the work dir on failure" step never ran and nothing survived to
+read. A canary that fails fast produces an artifact; a gate that runs to the
+timeout produces nothing at all.
