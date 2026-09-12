@@ -264,6 +264,8 @@ namespace Chimera.Tests.Client.GUI
 		// the codes Windows gives, which is where this was reported
 		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(unchecked((int)0xC0000005)), "access violation");
 		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(unchecked((int)0xC0000017)), "out of memory");
+		// seen once in three eight-session runs, and it named itself
+		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(unchecked((int)0xC00000FD)), "stack");
 		// and anything unrecognised still names itself rather than saying nothing
 		StringAssert.Contains(PrecompileOrchestrator.WhyItDied(42), "42");
 		foreach (var code in new[] { 1, 2, 42, 134, 137, 139, -1, unchecked((int)0xC0000005) })

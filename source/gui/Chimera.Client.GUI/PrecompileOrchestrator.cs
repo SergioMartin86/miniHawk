@@ -99,6 +99,7 @@ namespace Chimera.Client.GUI
 			-1073741819 => "crashed (access violation)",            // 0xC0000005
 			-1073741801 => "out of memory",                         // 0xC0000017
 			-1073740791 => "crashed (stack buffer overrun)",        // 0xC0000409
+			-1073741571 => "crashed (ran out of stack)",            // 0xC00000FD
 			_ => $"exit code {code}",
 		};
 
