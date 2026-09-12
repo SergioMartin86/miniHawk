@@ -21,6 +21,13 @@
 --                        actually looks like, and the path the crash reports
 --                        that prompted this were on
 --   CHIMERA_SOAK_BACKBY  how far back to jump, default 60
+--   CHIMERA_SOAK_CLEAR   every N frames, throw the whole greenzone away (the
+--                        Clear Greenzone menu item), then play on from where it
+--                        leaves us. A back-jump still lands on a stored state;
+--                        this leaves the run with nothing but frame 0's anchor,
+--                        so play afterwards is a replay from power-on with a
+--                        renderer that has been running for thousands of frames
+--   CHIMERA_SOAK_CLEARTO where to resume from after a clear, default 1
 --
 -- It says what it did on every line it writes, because the interesting run is
 -- the one that DIES: the last line before the process disappears is the whole
@@ -32,6 +39,8 @@ local speed  = tonumber(os.getenv("CHIMERA_SOAK_SPEED") or "") or 6400
 local record = (os.getenv("CHIMERA_SOAK_RECORD") or "") == "1"
 local back   = tonumber(os.getenv("CHIMERA_SOAK_BACK") or "") or 0
 local backBy = tonumber(os.getenv("CHIMERA_SOAK_BACKBY") or "") or 60
+local clear  = tonumber(os.getenv("CHIMERA_SOAK_CLEAR") or "") or 0
+local clearTo = tonumber(os.getenv("CHIMERA_SOAK_CLEARTO") or "") or 1
 local logPath = os.getenv("CHIMERA_SOAK_LOG")
 
 local logFile = nil
@@ -87,6 +96,20 @@ for i = 1, frames do
 			pcall(function() client.unpause() end)
 			pcall(function() tastudio.setplayback(start + frames) end)
 		end
+	end
+	if clear > 0 and i % clear == 0 then
+		-- The greenzone thrown away entirely, which a back-jump never does: after
+		-- this the run holds nothing but frame 0's anchor, so playing on is a
+		-- replay from power-on into a machine that has been running for thousands
+		-- of frames - and, on a bridged core, into a renderer that has too.
+		local here = emu.framecount()
+		local ok = pcall(function() tastudio.cleargreenzone() end)
+		say(string.format("soak: CLEAR at %d (%s), landed %d",
+			here, ok and "ok" or "REFUSED", emu.framecount()))
+		pcall(function() tastudio.setplayback(clearTo) end)
+		pcall(function() client.unpause() end)
+		say(string.format("soak: resumed from %d", emu.framecount()))
+		pcall(function() tastudio.setplayback(start + frames) end)
 	end
 	if i % every == 0 then
 		local f = emu.framecount()

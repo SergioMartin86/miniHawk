@@ -512,12 +512,20 @@ namespace Chimera.Client.GUI
 		/// Frame 0's state survives the clear (it is reserved), so this is a load
 		/// rather than a reboot.
 		/// </summary>
-		private void ClearGreenzoneMenuItem_Click(object sender, EventArgs e)
+		public void ClearGreenzone()
 		{
 			CurrentTasMovie.States.InvalidateAfter(0);   // everything but the anchor
 			GoToFrame(0);
 			RefreshDialog();
 		}
+
+		/// <summary>
+		/// The menu item, and the Lua binding beside it (tastudio.cleargreenzone),
+		/// are the same action: a crash that only happens after the greenzone is
+		/// thrown away has no other way to be reproduced unattended, and the soak
+		/// script is where that reproduction has to live.
+		/// </summary>
+		private void ClearGreenzoneMenuItem_Click(object sender, EventArgs e) => ClearGreenzone();
 
 		private void StateHistoryIntegrityCheckMenuItem_Click(object sender, EventArgs e)
 		{

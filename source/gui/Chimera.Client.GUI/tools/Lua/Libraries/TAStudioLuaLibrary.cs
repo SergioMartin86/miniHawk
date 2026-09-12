@@ -142,6 +142,30 @@ namespace Chimera.Client.GUI
 			return false;
 		}
 
+		[LuaMethodExample("tastudio.cleargreenzone( );")]
+		[LuaMethod("cleargreenzone", "Throws away every savestate the run has accumulated and returns to frame 0, exactly as the Clear Greenzone menu item does")]
+		public void ClearGreenzone()
+		{
+			if (!Engaged()) return;
+			// The same guard setplayback carries, and for the same reason: this
+			// loads a state, and a state load inside an input or memory callback
+			// re-enters the machine while it is mid-frame.
+			if (_luaLibsImpl.ProhibitedApis.HasFlag(ApiGroup.STATES))
+			{
+				throw new InvalidOperationException("tastudio.cleargreenzone() is not allowed during input/memory callbacks");
+			}
+
+			// The bracket setplayback uses, and needed here for the same reason:
+			// this moves the emulator and repaints the piano roll, and without it
+			// the frontend resumes this very script while it is still running.
+			// The coroutine is then no longer suspended, CurrentFile goes null,
+			// and the next emu.frameadvance() dies with a NullReferenceException
+			// that looks for all the world like a bug in the greenzone.
+			_luaLibsImpl.IsUpdateSupressed = true;
+			Tastudio.ClearGreenzone();
+			_luaLibsImpl.IsUpdateSupressed = false;
+		}
+
 		[LuaMethodExample("tastudio.setplayback( 1500 );")]
 		[LuaMethod("setplayback", "Seeks the given frame (a number) or marker (a string)")]
 		public void SetPlayback(object frame)
