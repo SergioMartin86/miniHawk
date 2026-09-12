@@ -148,7 +148,10 @@ namespace Chimera.Client.GUI
 			Emulator.AsStatable().SaveStateBinary(new BinaryWriter(restore));
 			restore.Position = 0;
 
-			_encode = new(request, restore, MovieSession.ReadOnly, EmulatorPaused);
+			// Whether it was RECORDING is taken here, before the switch below turns
+			// it off: it is one of the things the encode borrows and has to give
+			// back.
+			_encode = new(request, restore, MovieSession.ReadOnly, EmulatorPaused, movie.IsRecording());
 
 			// A reproduction, not an authoring session: the movie plays, nothing is
 			// recorded over it, and no state is kept from the frames that go by.
@@ -314,6 +317,20 @@ namespace Chimera.Client.GUI
 			finally
 			{
 				job.RestoreState.Dispose();
+			}
+
+			// The movie mode, which the summary above has always promised to give
+			// back and nothing actually did (issue #49). BeginVideoEncode switches a
+			// recording movie to Play so the encode reproduces the run instead of
+			// recording over it, and the state load above cannot undo that: a mode
+			// is only restored for a state that arrives through
+			// MovieSession.HandleLoadState, and this one goes straight to the core.
+			// Left in Play the piano roll takes no input at all, which is why
+			// loading a branch or a savestate - both of which DO go through
+			// HandleLoadState - appeared to repair it.
+			if (job.WasRecording && MovieSession.Movie.IsActive() && !MovieSession.Movie.IsRecording())
+			{
+				MovieSession.Movie.SwitchToRecord();
 			}
 
 			if (job.WasPaused) PauseEmulator();

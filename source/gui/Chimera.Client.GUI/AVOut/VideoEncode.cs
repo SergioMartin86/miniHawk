@@ -116,12 +116,18 @@ namespace Chimera.Client.GUI
 	/// </summary>
 	internal sealed class VideoEncodeJob
 	{
-		internal VideoEncodeJob(VideoEncodeRequest request, Stream restoreState, bool wasReadOnly, bool wasPaused)
+		internal VideoEncodeJob(
+			VideoEncodeRequest request,
+			Stream restoreState,
+			bool wasReadOnly,
+			bool wasPaused,
+			bool wasRecording)
 		{
 			Request = request;
 			RestoreState = restoreState;
 			WasReadOnly = wasReadOnly;
 			WasPaused = wasPaused;
+			WasRecording = wasRecording;
 			Phase = VideoEncodePhase.Seeking;
 			_startedAt = DateTime.UtcNow;
 		}
@@ -134,6 +140,14 @@ namespace Chimera.Client.GUI
 		internal bool WasReadOnly { get; }
 
 		internal bool WasPaused { get; }
+
+		/// <summary>
+		/// Whether the movie was being RECORDED when the encode borrowed it. An
+		/// encode reproduces a run rather than authoring one, so it switches
+		/// recording off - and that has to be switched back on afterwards, because
+		/// a movie left in Play takes no input from the piano roll at all.
+		/// </summary>
+		internal bool WasRecording { get; }
 
 		internal VideoEncodePhase Phase { get; private set; }
 
