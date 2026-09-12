@@ -216,11 +216,17 @@ namespace Chimera.Client.GUI
 		private void AddRow(string text, NumericUpDown box, string unit, int margin, int y,
 			int labelWidth, int boxWidth, int unitWidth, int width)
 		{
+			// The row is indented under its caption, so the label starts `indent`
+			// past the margin - and it has to LOSE that much width too, or it runs
+			// on into where the box begins. A label is not transparent and is added
+			// ahead of the box, so the overrun painted the form's own grey over the
+			// left edge of the number and hid the first digit of it.
+			var indent = UIHelper.ScaleX(12);
 			Controls.Add(new Label
 			{
 				AutoSize = false,
-				Location = new(margin + UIHelper.ScaleX(12), y + UIHelper.ScaleY(3)),
-				Size = new(labelWidth, UIHelper.ScaleY(20)),
+				Location = new(margin + indent, y + UIHelper.ScaleY(3)),
+				Size = new(labelWidth - indent, UIHelper.ScaleY(20)),
 				Text = text,
 			});
 			box.Location = new(margin + labelWidth, y);

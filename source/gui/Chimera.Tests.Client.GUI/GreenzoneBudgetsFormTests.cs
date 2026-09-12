@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using System.Windows.Forms;
 
 using Chimera.Client.Common;
 using Chimera.Client.GUI;
@@ -78,6 +80,44 @@ namespace Chimera.Tests.Client.GUI
 			form.Config = new Config { UseStaticWindowTitles = true };
 			form.Show();
 			Assert.AreEqual("Greenzone budgets", form.Text);
+		}
+
+		/// <summary>
+		/// A row's label has to stop where its box starts. Reported from use: the
+		/// grey ran on over the number and hid the first digit of it. The rows are
+		/// indented under their caption, so the label began 12 past the margin and
+		/// kept its full width anyway, which put its right edge 12 into the box -
+		/// and a label is not transparent, so it painted the form's own grey there.
+		///
+		/// Every assert about this window until now was about behaviour, and a
+		/// control covering another one is invisible to all of them. This one is
+		/// about geometry, which is the only thing that could have caught it.
+		///
+		/// Every control here is a direct child of the form, so the bounds are all
+		/// in the one coordinate space and can be compared as they stand.
+		/// </summary>
+		[TestMethod]
+		public void ARowLabelDoesNotOverlapItsBox()
+		{
+			// with a project, so the four rows exist: two shared, two for it
+			using GreenzoneBudgetsForm form = new(
+				defaultMemoryMb: 1024,
+				defaultDiskMb: 4096,
+				projectLabel: "a finished run");
+			form.Show();
+
+			var boxes = form.Controls.OfType<NumericUpDown>().ToList();
+			Assert.AreEqual(4, boxes.Count, "two budgets for every project, two for this one");
+
+			foreach (var box in boxes)
+			{
+				foreach (var label in form.Controls.OfType<Label>())
+				{
+					Assert.IsFalse(
+						label.Bounds.IntersectsWith(box.Bounds),
+						$"the label \"{label.Text}\" at {label.Bounds} covers the box at {box.Bounds}");
+				}
+			}
 		}
 	}
 }
