@@ -82,10 +82,24 @@ name, SHA1, and whether the object is on disk and still what it was. What is
 already compiled is green when the step opens.
 
 **Compile** runs the sessions: `Chimera --headless --precompile=INDEX/COUNT`,
-this same frontend as child processes, as many as half the machine's cores up
-to eight, each compiling the modules whose names hash to its index. Rows
-appear as objects land, green, so the wait shows its work. The button is
-offered exactly while there is compiling left to do.
+this same frontend as child processes, each compiling the modules whose names
+hash to its index. Rows appear as objects land, green, so the wait shows its
+work. The button is offered exactly while there is compiling left to do.
+
+How many run at once is bounded by memory as well as by cores, because a
+session holds a machine's address space and an LLVM compiler at the same time:
+one measured compiling Ultra Street Fighter IV peaked at 8.32 GB. The count is
+one session per 10 GB of what the machine can spare AFTER 4 GB left for the
+frontend and the system, never more than half the cores, never more than eight,
+never fewer than one.
+
+A session the system kills prints nothing on its way out, so its exit code is
+the only account of it there is, and the orchestrator reports it: the POSIX
+signals and the Windows status values both, and an unrecognised code by number.
+Where every dead session died for want of memory and none of them refused out
+loud, the run halves the sessions and goes again - too much at once is a reason
+to want less, not a reason to stop. A partial manifest is never written: a list
+of what a game needs with holes in it is worse than no list.
 
 **Create stays unavailable until every listed module is green.** A project
 whose game is not compiled is a project that boots into a minutes-long stall,

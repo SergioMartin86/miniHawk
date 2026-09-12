@@ -48,7 +48,10 @@ themselves, which are named by their SHA1:
 
 Not in the project:
 
-- **Paths.** Never stored. Only names and SHA1s.
+- **Paths.** Never stored. Only names and SHA1s. A game that was dumped as a
+  FOLDER therefore cannot be named at all - a directory has no SHA1 - and has
+  to become one file first, reproducibly, so that everyone who packs it gets
+  the same hash (docs/media-maker.md).
 - **Greenzone / cached states.** Kept in the per-user cache, keyed by the
   project's id (docs/state-manager.md), not beside the project: a project
   folder is the folder people sync, and a multi-gigabyte sibling there is

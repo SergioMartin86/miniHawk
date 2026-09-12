@@ -2280,3 +2280,120 @@ gate swallowed the evidence, and a timeout CANCELS a job rather than failing it,
 so the "upload the work dir on failure" step never ran and nothing survived to
 read. A canary that fails fast produces an artifact; a gate that runs to the
 timeout produces nothing at all.
+
+## A folder has no hash, so it has to become a file (user-decided, 2026-09-12)
+
+A project stores names and SHA1s and never paths. That is the oldest promise in
+this frontend and the reason a movie travels: anyone holding files whose hashes
+match can replay it, wherever those files sit on their disk. miniBox goes
+further and binds every mounted file to the savestate by SHA-256.
+
+A game that arrived as a dumped FOLDER cannot be named that way, because a
+directory has no hash. A PlayStation 3 disc is a tree; so is a floppy's worth of
+DOS. The natural answer - let a core open a folder - breaks the promise rather
+than extending it: there is nothing to name, nothing to bind a state to, and
+nothing a second person can be asked to reproduce. So the folder has to become
+one file first, and the interesting requirement is not that it becomes A file
+but that it becomes the SAME file on anybody's machine. The precedent the user
+cited (TASEmulators/iso_maker, which drives xorriso) does exactly this.
+
+Reproducibility here is the whole design, and it is a matter of naming every
+channel through which the host can leak into the bytes and closing each one
+deliberately:
+
+- Timestamps. Fixed dates everywhere - a constant DOS date in the zip, a
+  constant date in the FAT12 directory - never the file's mtime and never now.
+- Mode bits. A constant external-attributes word in the zip, so a dump copied
+  off a FAT drive and one copied off ext4 pack identically. The ISO carries no
+  Rock Ridge, which is the other way to close the same channel: the format is
+  then unable to record a mode at all, including the DIRECTORY modes that are
+  easy to forget because nobody ever looks at them. That is a deliberate
+  difference from the xorriso precedent, which does write Rock Ridge and has to
+  be told what modes to put in it.
+- Order. Entries are sorted byte-wise, never by locale, so a machine with a
+  different collation does not produce a different image.
+- Identifiers the format invites you to invent. FAT12's volume serial is the
+  clearest case: DOS wrote the format time there, which is a timestamp wearing
+  a different hat. It is zero.
+- Symlinks. Collected with symlink_status and skipped, so what is written
+  describes the tree rather than wherever the tree points.
+
+Three shapes, chosen because they are the three things a core actually wants.
+Stored zip, so a core can seek inside it and read what it would have read
+loose, at the same size on disk. ISO 9660 with Joliet, because the disc cores
+want a disc and Joliet keeps long names - built as two directory trees over one
+node tree, and refusing any single file of 4 GiB or more by name rather than
+truncating it, since the format cannot describe one. FAT12, a 1.44 MB floppy
+with deterministic 8.3 names, refusing what does not fit rather than quietly
+leaving it out.
+
+The packing is the engine's (ce_media_make, and the hashing happens on the way
+out through a streaming SHA1) and the window only chooses, shows and cancels.
+That is the thin-C# rule applied to something it would have been very tempting
+to write in C#: every one of the channels above is a correctness question, and
+correctness lives in the engine where the tests are.
+
+Refusing is a feature in all three. An empty folder, a file too big for the
+format, a floppy that will not hold the tree - each is an error with a sentence,
+and a cancel leaves nothing behind rather than half an image that hashes to
+something.
+
+## The image was valid and the console refused it anyway (user-reported, 2026-09-12)
+
+The first real use of the tool was Ultra Street Fighter IV, and the image it
+produced would not boot: "RPCS3: boot failed: Invalid file or folder". The image
+was a correct ISO 9660 volume with a correct Joliet tree, and the EBOOT was
+where it should be. See the commit for the mechanism - sectors 0 to 15 are
+reserved and meaningless to ISO 9660, and a PlayStation 3 disc keeps its
+encryption region table there, which rpcs3 treats as mandatory.
+
+Two things are worth keeping from it. The first is that "reserved" in a
+container format is where the platform puts what it needs, so writing a valid
+volume is not the same as writing a disc that platform will accept, and the
+table is only written for an image that looks like a PS3 disc (PS3_DISC.SFB at
+the root) because it would mean nothing anywhere else.
+
+The second is about evidence, and it is the same lesson as the syscall above.
+This was nearly called fixed three times on no evidence at all: the first A/B
+ran both images without firmware, so both stopped before rpcs3's loader was
+reached; the second had a synthetic EBOOT that is not an executable, so the
+fixed image failed later for its own unrelated reason and printed the same
+sentence. Only --log-trace SYS,ISO showed what differed. A generic error message
+that appears for several distinct causes will happily confirm whatever you
+already believe, and an A/B whose two legs stop before the code under test is
+not a test.
+
+## A killed session says nothing, so the count has to be right (user-reported, 2026-09-12)
+
+With the image booting, the same game failed the next step: "The compile stopped:
+3 of 8 sessions failed without saying why". The frontend precompiles a PS3 game's
+modules in several headless sessions at once, and it had been counting them
+against memory since the feature was written - one session per 8 GB the machine
+reported free.
+
+Both halves of that were wrong. A session holds a machine's address space and an
+LLVM compiler at the same time; one of these, measured here compiling this game,
+peaked at 8.32 GB. So the budget was smaller than one session actually costs,
+and it was multiplied by ALL of what the machine said was free, leaving nothing
+for the frontend itself or for the operating system. Eight sessions wanted 66.6
+GB. The system resolves that the only way it can.
+
+The part worth a section is what came back to the user. A session the system
+kills does not get to print anything, so an orchestrator that reads sessions'
+OUTPUT to find out what happened learns nothing from a killed one - while
+holding, the whole time, the exit code that says exactly how it died. "Without
+saying why" was not a limit of what could be known; it was the evidence being
+discarded on the way to the message. Every code now names itself, the POSIX
+signals and the Windows status values both, and an unrecognised one at least
+reports its number.
+
+Where every dead session died for want of memory and none of them refused out
+loud, the run halves the sessions and goes again. That is the right shape for
+this class of failure: too much at once is not a reason to stop, it is a reason
+to want less, and a slower success needs no message at all.
+
+What is NOT established is the failure itself. Eight sessions were never seen to
+die on this workstation and may not be reproducible here, since eight peaks need
+not coincide. The measurement is of one session's peak, and the old budget was
+smaller than it - that is the whole of the evidence, and it is enough to act on
+without pretending the crash was reproduced.
