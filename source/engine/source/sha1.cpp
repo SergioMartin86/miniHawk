@@ -326,6 +326,28 @@ bool sha1HexOfFile(const char *utf8Path, uint64_t *lenOut, std::string &out)
 	return true;
 }
 
+Sha1Stream::Sha1Stream() : impl(new Sha1()) {}
+Sha1Stream::~Sha1Stream() { delete static_cast<Sha1 *>(impl); }
+
+void Sha1Stream::update(const uint8_t *data, uint64_t len)
+{
+	static_cast<Sha1 *>(impl)->update(data, len);
+}
+
+std::string Sha1Stream::finishHex()
+{
+	uint8_t digest[20];
+	static_cast<Sha1 *>(impl)->finish(digest);
+	static const char *hex = "0123456789ABCDEF";
+	std::string out(40, '0');
+	for (int i = 0; i < 20; i++)
+	{
+		out[i * 2] = hex[digest[i] >> 4];
+		out[i * 2 + 1] = hex[digest[i] & 0xF];
+	}
+	return out;
+}
+
 void sha1ForceSoftwareForTests(bool on) { forceSoftware = on; }
 
 std::string sha1Hex(const uint8_t *data, uint64_t len)

@@ -282,6 +282,7 @@ engine_src = files(
   'source/engine/source/movie_entry.cpp',
   'source/engine/source/session.cpp',
   'source/engine/source/state_history.cpp',
+  'source/engine/source/media_maker.cpp',
   'source/engine/source/gl_bridge.cpp',
   'extern/miniz/miniz.c',  # vendored (MIT): the zip half of the state container
   'extern/cjson/cJSON.c',  # vendored (MIT): bundle JSON
@@ -368,7 +369,7 @@ executable(
 )
 
 if not meson.is_cross_build()
-  foreach engine_test : ['sha1', 'movie_log', 'movie_text', 'movie_entry', 'state_container', 'package', 'multifile', 'project', 'firmware', 'state_history']
+  foreach engine_test : ['sha1', 'movie_log', 'movie_text', 'movie_entry', 'state_container', 'package', 'multifile', 'project', 'firmware', 'state_history', 'media']
     test(
       'engine_' + engine_test,
       executable(
