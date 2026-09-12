@@ -38,7 +38,6 @@ namespace Chimera.Client.GUI
 			this.CoreManagerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.CacheManagerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.toolStripSeparatorManagers = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
-			this.CoreManagerSeparator = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.ScreenshotSubMenu = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.ScreenshotMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.ScreenshotAsMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
@@ -124,7 +123,6 @@ namespace Chimera.Client.GUI
 			this.LuaConsoleMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.HexEditorMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.MacroToolMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
-			this.toolStripSeparator29 = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
 			this.BatchRunnerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.MediaMakerMenuItem = new Chimera.WinForms.Controls.ToolStripMenuItemEx();
 			this.toolStripSeparator22 = new Chimera.WinForms.Controls.ToolStripSeparatorEx();
@@ -205,7 +203,6 @@ namespace Chimera.Client.GUI
             this.toolStripMenuItem1,
             this.EncodeVideoMenuItem,
             this.ScreenshotSubMenu,
-            this.CoreManagerSeparator,
             this.toolStripSeparator4,
             this.ExitMenuItem});
 			this.FileSubMenu.Text = "&File";
@@ -800,14 +797,13 @@ namespace Chimera.Client.GUI
 			this.ToolsSubMenu.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.CoreManagerMenuItem,
             this.CacheManagerMenuItem,
+            this.MediaMakerMenuItem,
             this.toolStripSeparatorManagers,
             this.RamWatchMenuItem,
             this.RamSearchMenuItem,
             this.LuaConsoleMenuItem,
             this.HexEditorMenuItem,
             this.MacroToolMenuItem,
-            this.toolStripSeparator29,
-            this.MediaMakerMenuItem,
             this.BatchRunnerMenuItem});
 			this.ToolsSubMenu.Text = "&Tools";
 			this.ToolsSubMenu.DropDownOpened += new System.EventHandler(this.ToolsSubMenu_DropDownOpened);
@@ -1242,7 +1238,6 @@ namespace Chimera.Client.GUI
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx CacheManagerMenuItem;
 		private Chimera.WinForms.Controls.ToolStripSeparatorEx toolStripSeparatorManagers;
 
-		private Chimera.WinForms.Controls.ToolStripSeparatorEx CoreManagerSeparator;
 		private Chimera.WinForms.Controls.StatusLabelEx AVStatusLabel;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx RestartMovieContextMenuItem;
 		private Chimera.WinForms.Controls.StatusLabelEx CheatStatusButton;
@@ -1267,7 +1262,6 @@ namespace Chimera.Client.GUI
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx HkOverInputMenuItem;
 		private Chimera.WinForms.Controls.StatusLabelEx KeyPriorityStatusLabel;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx StopNoSaveContextMenuItem;
-		private Chimera.WinForms.Controls.ToolStripSeparatorEx toolStripSeparator29;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx ConfigContextMenuItem;
 		private Chimera.WinForms.Controls.ToolStripSeparatorEx ShowMenuContextMenuSeparator;
 		private Chimera.WinForms.Controls.ToolStripMenuItemEx GenericCoreSubMenu;
